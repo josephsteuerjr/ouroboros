@@ -20,6 +20,7 @@ Regressions of the same class are pinned here:
 
 from __future__ import annotations
 
+import json
 import subprocess
 from unittest.mock import MagicMock
 
@@ -27,7 +28,7 @@ import pytest
 
 from ouroboros.tools.core import _data_read, _read_file, _write_file
 from ouroboros.tools.edit_ops import _edit_batch
-from ouroboros.tools.registry import ToolContext
+from ouroboros.tools.registry import ToolContext, ToolRegistry
 
 _NUDGE = "This exact view is unchanged"
 
@@ -357,3 +358,24 @@ def test_declared_edit_batch_items_keep_count_and_sequential_edits(tmp_path):
     ])
     assert result.startswith("✅ edit_batch applied 2 edit(s)"), result
     assert target.read_text(encoding="utf-8") == "done\n"
+
+
+@pytest.mark.serial
+def test_write_file_registry_refuses_json_string_batch_once_and_keeps_list_valid(tmp_path, monkeypatch):
+    from ouroboros import safety
+
+    ctx = _ctx(tmp_path)
+    monkeypatch.setenv("OUROBOROS_RUNTIME_MODE", "cyber_pro")
+    monkeypatch.setattr(safety, "check_safety", lambda *_args, **_kwargs: (True, ""))
+    registry = ToolRegistry(repo_dir=ctx.repo_dir, drive_root=ctx.drive_root)
+    registry.set_context(ctx)
+    files = [{"path": "batch.txt", "content": "x" * 5000}]
+    result = registry.execute_result("write_file", {"root": "runtime_data", "files": json.dumps(files)})
+    assert result.text.count("TOOL_ARG_ERROR") == 1
+    assert result.status == "error"
+    assert not (ctx.drive_root / "batch.txt").exists()
+    assert not (ctx.repo_dir / "batch.txt").exists()
+
+    result = registry.execute_result("write_file", {"root": "runtime_data", "files": files})
+    assert result.status == "ok", result.text
+    assert (ctx.drive_root / "batch.txt").read_text(encoding="utf-8") == files[0]["content"]

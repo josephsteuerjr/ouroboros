@@ -110,7 +110,7 @@ def payload_item_key_refusal(
     Returns the typed refusal, or "" when every item is clean.
     """
     if not isinstance(items, list):
-        return ""
+        return f"⚠️ TOOL_ARG_ERROR: {item_label} payload must be an array of objects."
     offenders: List[str] = []
     for idx, item in enumerate(items, 1):
         if not isinstance(item, dict):
