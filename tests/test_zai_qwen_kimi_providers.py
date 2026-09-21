@@ -159,3 +159,34 @@ class TestSecretSurfaces:
     def test_settings_defaults(self, key):
         from ouroboros.config import SETTINGS_DEFAULTS
         assert SETTINGS_DEFAULTS[key] == ""
+
+
+class TestSafetyRouting:
+    @pytest.mark.parametrize("key", ["ZAI_API_KEY", "DASHSCOPE_API_KEY", "MOONSHOT_API_KEY"])
+    def test_new_provider_key_counts_as_remote_safety_backend(self, monkeypatch, key):
+        """A new-provider-only install must reach the real safety check, not fail open."""
+        from ouroboros import safety
+        _clear_provider_env(monkeypatch)
+        assert safety._any_remote_provider_configured() is False
+        monkeypatch.setenv(key, "sk-x")
+        assert safety._any_remote_provider_configured() is True
+        assert key in safety._REMOTE_PROVIDER_KEYS
+        assert safety._PROVIDER_KEY_ENV["zai"] == "ZAI_API_KEY"
+        assert safety._PROVIDER_KEY_ENV["qwen"] == "DASHSCOPE_API_KEY"
+        assert safety._PROVIDER_KEY_ENV["kimi"] == "MOONSHOT_API_KEY"
+
+    @pytest.mark.parametrize("model,provider", [
+        ("zai::glm-5.3-flash", "zai"),
+        ("qwen::qwen3-max", "qwen"),
+        ("kimi::kimi-k2-turbo-preview", "kimi"),
+    ])
+    def test_light_model_reaches_its_provider_key(self, monkeypatch, model, provider):
+        from ouroboros import safety
+        _clear_provider_env(monkeypatch)
+        key = {"zai": "ZAI_API_KEY", "qwen": "DASHSCOPE_API_KEY", "kimi": "MOONSHOT_API_KEY"}[provider]
+        monkeypatch.setenv(key, "sk-x")
+        # The routing resolver must classify the light model onto the configured
+        # new provider instead of the no-backend fail-open path.
+        from ouroboros.pricing import infer_api_key_type
+        provider_key = safety._PROVIDER_KEY_ENV.get(infer_api_key_type(model))
+        assert provider_key == key
