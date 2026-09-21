@@ -258,6 +258,9 @@ export const SECRET_KEYS = [
     ['ANTHROPIC_API_KEY', 'Anthropic API Key', 'sk-ant-...'],
     ['MINIMAX_API_KEY', 'MiniMax API Key', 'MiniMax key'],
     ['DEEPSEEK_API_KEY', 'DeepSeek API Key', 'sk-...'],
+    ['ZAI_API_KEY', 'Z.ai API Key (GLM)', 'Z.ai key'],
+    ['DASHSCOPE_API_KEY', 'Alibaba DashScope API Key (Qwen)', 'DashScope key'],
+    ['MOONSHOT_API_KEY', 'Moonshot API Key (Kimi)', 'sk-...'],
     ['GITHUB_TOKEN', 'GitHub Token', 'ghp_...'],
     ['OUROBOROS_NETWORK_PASSWORD', 'Network Password', 'Required for LAN/Docker binds'],
 ];

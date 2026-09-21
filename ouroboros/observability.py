@@ -190,7 +190,7 @@ _GENERIC_KV_SECRET_KEY_HINTS = (
     "passphrase", "apikey", "access_token", "openrouter", "openai", "anthropic",
     "cloudru", "cloud_ru", "gigachat", "groq", "deepseek", "together", "fireworks",
     "mistral", "cohere", "perplexity", "replicate", "huggingface", "azure", "xai",
-)
+    "zai", "dashscope", "moonshot")
 
 
 def _generic_kv_key_is_secretish(key_norm: str) -> bool:
