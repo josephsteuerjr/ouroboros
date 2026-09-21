@@ -607,6 +607,14 @@ def migrate_model_value(provider: str, value: str) -> str:
         if text.startswith("deepseek/"):
             return f"deepseek::{text[len('deepseek/'):]}"
         return text
+    if provider in ("zai", "qwen", "kimi"):
+        prefix = f"{provider}::"
+        slash = f"{provider}/"
+        if text.startswith(prefix):
+            return text
+        if text.startswith(slash):
+            return f"{prefix}{text[len(slash):]}"
+        return text
     return text
 
 
@@ -730,6 +738,12 @@ def normalize_model_identity(model: str) -> str:
         return f"minimax/{text[len('minimax::'):]}"
     if text.startswith("deepseek::"):
         return f"deepseek/{text[len('deepseek::'):]}"
+    if text.startswith("zai::"):
+        return f"zai/{text[len('zai::'):]}"
+    if text.startswith("qwen::"):
+        return f"qwen/{text[len('qwen::'):]}"
+    if text.startswith("kimi::"):
+        return f"kimi/{text[len('kimi::'):]}"
     if text.startswith("anthropic::"):
         return f"anthropic/{normalize_anthropic_model_id(text[len('anthropic::'):])}"
     if text.startswith("anthropic/"):

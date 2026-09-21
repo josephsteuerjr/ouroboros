@@ -54,9 +54,6 @@ def _exclusive_direct_remote_provider_env() -> str:
         ("zai", bool(str(runtime_setting("ZAI_API_KEY", "") or "").strip())),
         ("qwen", bool(str(runtime_setting("DASHSCOPE_API_KEY", "") or "").strip())),
         ("kimi", bool(str(runtime_setting("MOONSHOT_API_KEY", "") or "").strip())),
-        ("zai", bool(str(runtime_setting("ZAI_API_KEY", "") or "").strip())),
-        ("qwen", bool(str(runtime_setting("DASHSCOPE_API_KEY", "") or "").strip())),
-        ("kimi", bool(str(runtime_setting("MOONSHOT_API_KEY", "") or "").strip())),
     ) if present]
     return direct[0] if len(direct) == 1 else ""
 

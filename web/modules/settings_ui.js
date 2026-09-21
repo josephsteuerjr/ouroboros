@@ -136,6 +136,34 @@ const PROVIDER_CARDS = [
         note: 'Pick DeepSeek as the source in Models or Agents, then choose deepseek-v4-pro or deepseek-v4-flash.',
     },
     {
+        id: 'zai', title: 'Z.ai (GLM)', icon: '', hint: 'Direct OpenAI-compatible runtime', advanced: true,
+        fields: [
+            { id: 's-zai-key', settingKey: 'ZAI_API_KEY', label: 'API Key', placeholder: 'sk-...' },
+            { id: 's-zai-plan', label: 'Plan', placeholder: 'payg or coding' },
+        ],
+        testProvider: 'zai',
+        testInputs: { 's-zai-key': 'ZAI_API_KEY', 's-zai-plan': 'ZAI_PLAN' },
+        note: 'Pick Z.ai as the source in Models or Agents, then choose glm-5.3 or glm-5.3-flash. Coding Plan subscribers: set Plan to <code>coding</code> to use the subscription endpoint; the default <code>payg</code> uses pay-as-you-go.',
+    },
+    {
+        id: 'qwen', title: 'DashScope (Qwen)', icon: '', hint: 'Direct OpenAI-compatible runtime', advanced: true,
+        fields: [
+            { id: 's-qwen-key', settingKey: 'DASHSCOPE_API_KEY', label: 'API Key', placeholder: 'sk-...' },
+        ],
+        testProvider: 'qwen',
+        testInputs: { 's-qwen-key': 'DASHSCOPE_API_KEY' },
+        note: 'Pick DashScope as the source in Models or Agents, then choose qwen3-max or qwen3-flash. Keys are region-bound: an international key cannot call the China endpoint and vice versa.',
+    },
+    {
+        id: 'kimi', title: 'Moonshot (Kimi)', icon: '', hint: 'Direct OpenAI-compatible runtime', advanced: true,
+        fields: [
+            { id: 's-kimi-key', settingKey: 'MOONSHOT_API_KEY', label: 'API Key', placeholder: 'sk-...' },
+        ],
+        testProvider: 'kimi',
+        testInputs: { 's-kimi-key': 'MOONSHOT_API_KEY' },
+        note: 'Pick Moonshot as the source in Models or Agents, then choose kimi-k2-turbo-preview or moonshot-v1-8k.',
+    },
+    {
         id: 'gigachat', title: 'GigaChat', icon: '/static/providers/gigachat.svg', hint: 'Sber GigaChat via the gigachat library', advanced: true,
         fields: [
             { id: 's-gigachat-credentials', settingKey: 'GIGACHAT_CREDENTIALS', label: 'Authorization Key', placeholder: 'Base64 client_id:secret (OAuth)' },

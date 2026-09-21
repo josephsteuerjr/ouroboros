@@ -41,11 +41,9 @@ def _provider_label_from_model_id(model_id: str) -> str:
         "google": "Google",
         "meta-llama": "Meta",
         "x-ai": "xAI",
-        "qwen": "Qwen",
         "mistralai": "Mistral",
         "deepseek": "DeepSeek",
         "zai": "Z.ai (GLM)",
-        "qwen": "Alibaba DashScope (Qwen)",
         "kimi": "Moonshot (Kimi)",
         "perplexity": "Perplexity",
     }.get(prefix, prefix.title() if prefix else "Other")

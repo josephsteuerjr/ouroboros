@@ -182,6 +182,50 @@
         "stateKey": "deepseekKey"
       },
       {
+        "group": "more",
+        "id": "zai-key",
+        "inputType": "password",
+        "label": "Z.ai API Key (GLM)",
+        "note": "Optional. If this is the only remote key, the next step prefills Z.ai's own GLM model ids.",
+        "placeholder": "...",
+        "settingKey": "ZAI_API_KEY",
+        "settingsInputId": "s-zai-key",
+        "stateKey": "zaiKey"
+      },
+      {
+        "group": "more",
+        "id": "zai-plan",
+        "inputType": "text",
+        "label": "Z.ai Plan",
+        "note": "Choose payg (pay-as-you-go, default) or coding (Coding Plan endpoint; officially intended for supported coding tools only).",
+        "placeholder": "payg or coding",
+        "settingKey": "ZAI_PLAN",
+        "settingsInputId": "s-zai-plan",
+        "stateKey": "zaiPlan"
+      },
+      {
+        "group": "more",
+        "id": "qwen-key",
+        "inputType": "password",
+        "label": "Alibaba DashScope API Key (Qwen)",
+        "note": "Optional. If this is the only remote key, the next step prefills Qwen's own model ids.",
+        "placeholder": "sk-...",
+        "settingKey": "DASHSCOPE_API_KEY",
+        "settingsInputId": "s-qwen-key",
+        "stateKey": "qwenKey"
+      },
+      {
+        "group": "more",
+        "id": "kimi-key",
+        "inputType": "password",
+        "label": "Moonshot API Key (Kimi)",
+        "note": "Optional. If this is the only remote key, the next step prefills Kimi's own model ids.",
+        "placeholder": "sk-...",
+        "settingKey": "MOONSHOT_API_KEY",
+        "settingsInputId": "s-kimi-key",
+        "stateKey": "kimiKey"
+      },
+      {
         "group": "primary",
         "id": "anthropic-key",
         "inputType": "password",
@@ -236,6 +280,11 @@
         "modelCopy": "Multiple direct providers are configured. Start here, then split model slots across them if you want.",
         "providerCopy": "Multiple direct providers are present, so the next step keeps your model values editable without forcing one provider family."
       },
+      "kimi": {
+        "label": "Moonshot (Kimi)",
+        "modelCopy": "Moonshot-only setup detected. These defaults use kimi-k2-turbo-preview for main work and moonshot-v1-8k for the light lane.",
+        "providerCopy": "Moonshot is present, so the next step prefills Kimi's own model ids."
+      },
       "local": {
         "label": "Local-first",
         "modelCopy": "Local-only setup detected. Review the model values and local routing before launch.",
@@ -260,6 +309,16 @@
         "label": "OpenRouter",
         "modelCopy": "OpenRouter-style routing remains active. OpenRouter stays the source for ids such as openai/gpt-5.6-terra or anthropic/claude-sonnet-5.",
         "providerCopy": "OpenRouter is present, so the next step keeps router-style defaults while still saving any extra direct keys you paste here."
+      },
+      "qwen": {
+        "label": "Alibaba DashScope (Qwen)",
+        "modelCopy": "DashScope-only setup detected. These defaults use qwen3-max for main work and qwen3-flash for the light lane.",
+        "providerCopy": "DashScope is present, so the next step prefills Qwen's own model ids."
+      },
+      "zai": {
+        "label": "Z.ai (GLM)",
+        "modelCopy": "Z.ai-only setup detected. These defaults use glm-5.3 for main work and glm-5.3-flash for the light lane. The plan setting selects the pay-as-you-go or Coding Plan endpoint.",
+        "providerCopy": "Z.ai is present, so the next step prefills Z.ai's own GLM model ids."
       }
     },
     "reviewModes": [
@@ -371,6 +430,7 @@
     "consciousnessModel": "",
     "deepseekKey": "",
     "fallbackModel": "openai/gpt-5.6-luna",
+    "kimiKey": "",
     "lightModel": "openai/gpt-5.6-luna",
     "localChatFormat": "",
     "localContextLength": 16384,
@@ -390,11 +450,14 @@
     "perTaskCostUsd": 50.0,
     "processingPreference": "",
     "providerProfile": "openrouter",
+    "qwenKey": "",
     "reviewEnforcement": "advisory",
     "runtimeMode": "advanced",
     "skillsRepoPath": "",
     "totalBudget": 200.0,
-    "visionModel": ""
+    "visionModel": "",
+    "zaiKey": "",
+    "zaiPlan": ""
   },
   "localPresets": {
     "qwen25-7b": {
@@ -443,6 +506,13 @@
       "main": "deepseek::deepseek-v4-pro",
       "vision": ""
     },
+    "kimi": {
+      "consciousness": "",
+      "fallback": "kimi::moonshot-v1-8k",
+      "light": "kimi::moonshot-v1-8k",
+      "main": "kimi::kimi-k2-turbo-preview",
+      "vision": ""
+    },
     "local": {
       "consciousness": "",
       "fallback": "openai/gpt-5.6-luna",
@@ -477,6 +547,20 @@
       "fallback": "openai/gpt-5.6-luna",
       "light": "openai/gpt-5.6-luna",
       "main": "google/gemini-3.8-flash",
+      "vision": ""
+    },
+    "qwen": {
+      "consciousness": "",
+      "fallback": "qwen::qwen3-flash",
+      "light": "qwen::qwen3-flash",
+      "main": "qwen::qwen3-max",
+      "vision": ""
+    },
+    "zai": {
+      "consciousness": "",
+      "fallback": "zai::glm-5.3-flash",
+      "light": "zai::glm-5.3-flash",
+      "main": "zai::glm-5.3",
       "vision": ""
     }
   },

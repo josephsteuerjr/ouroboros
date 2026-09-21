@@ -176,6 +176,12 @@ PROVIDER_DRIVERS: Dict[str, ProviderDriver] = {
         "minimax", "minimax::model-x", {"MINIMAX_API_KEY": "minimax-conformance-key"}),
     "deepseek": _openai_family(
         "deepseek", "deepseek::model-x", {"DEEPSEEK_API_KEY": "deepseek-conformance-key"}),
+    "zai": _openai_family(
+        "zai", "zai::model-x", {"ZAI_API_KEY": "zai-conformance-key"}),
+    "qwen": _openai_family(
+        "qwen", "qwen::model-x", {"DASHSCOPE_API_KEY": "qwen-conformance-key"}),
+    "kimi": _openai_family(
+        "kimi", "kimi::model-x", {"MOONSHOT_API_KEY": "kimi-conformance-key"}),
     "anthropic": ProviderDriver(
         "anthropic", model="anthropic::claude-x",
         env={"ANTHROPIC_API_KEY": "anthropic-conformance-key"},

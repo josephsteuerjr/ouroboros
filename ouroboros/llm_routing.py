@@ -307,6 +307,12 @@ class _ProviderRoutingMixin:
             return f"minimax/{resolved_model}"
         if provider == "deepseek":
             return f"deepseek/{resolved_model}"
+        if provider == "zai":
+            return f"zai/{resolved_model}"
+        if provider == "qwen":
+            return f"qwen/{resolved_model}"
+        if provider == "kimi":
+            return f"kimi/{resolved_model}"
         if provider == "claudexor":
             return f"claudexor::{resolved_model}"
         return f"openai-compatible/{resolved_model}"
