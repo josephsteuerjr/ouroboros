@@ -29,6 +29,9 @@ MASKED_SECRET_SETTING_KEYS = frozenset(
         "ANTHROPIC_API_KEY",
         "MINIMAX_API_KEY",
         "DEEPSEEK_API_KEY",
+        "ZAI_API_KEY",
+        "DASHSCOPE_API_KEY",
+        "MOONSHOT_API_KEY",
         "GITHUB_TOKEN",
         "OUROBOROS_NETWORK_PASSWORD",
     }

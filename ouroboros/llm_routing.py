@@ -22,6 +22,9 @@ from ouroboros.model_wait import dispatch_deadline_remaining_sec
 from ouroboros.openrouter_attribution import OPENROUTER_APP_HEADERS
 from ouroboros.provider_models import (
     DEEPSEEK_BASE_URL,
+    DASHSCOPE_BASE_URL,
+    MOONSHOT_BASE_URL,
+    resolve_zai_base_url,
     PROVIDER_PREFIXES,
     normalize_anthropic_model_id,
     normalize_model_identity,
@@ -387,6 +390,47 @@ class _ProviderRoutingMixin:
                 # previous assistant turn's reasoning_content (v4-pro enforces
                 # with a 400; "" is accepted for foreign turns — probed 2026-09-01).
                 "requires_reasoning_echo": True,
+                "supports_openrouter_extensions": False,
+                "supports_generation_cost": False,
+            }
+
+        if provider == "zai":
+            return {
+                "provider": provider,
+                "resolved_model": resolved_model,
+                "usage_model": usage_model,
+                "api_key": configured("ZAI_API_KEY", ""),
+                # Plan-selected official endpoint (PAYG default; the Coding
+                # Plan endpoint is intended for supported tools only).
+                "base_url": resolve_zai_base_url(configured("ZAI_PLAN", "")),
+                "default_headers": {},
+                "supports_openrouter_extensions": False,
+                "supports_generation_cost": False,
+            }
+
+        if provider == "qwen":
+            return {
+                "provider": provider,
+                "resolved_model": resolved_model,
+                "usage_model": usage_model,
+                "api_key": configured("DASHSCOPE_API_KEY", ""),
+                # DashScope OpenAI-compatible mode; one official endpoint.
+                "base_url": DASHSCOPE_BASE_URL,
+                "default_headers": {},
+                "supports_openrouter_extensions": False,
+                "supports_generation_cost": False,
+            }
+
+        if provider == "kimi":
+            return {
+                "provider": provider,
+                "resolved_model": resolved_model,
+                "usage_model": usage_model,
+                "api_key": configured("MOONSHOT_API_KEY", ""),
+                # One official endpoint; thinking/named-tool interactions are
+                # documented provider behavior and out of scope here.
+                "base_url": MOONSHOT_BASE_URL,
+                "default_headers": {},
                 "supports_openrouter_extensions": False,
                 "supports_generation_cost": False,
             }

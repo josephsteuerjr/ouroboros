@@ -281,6 +281,9 @@ def _exclusive_direct_remote_provider(settings: dict) -> str:
     has_anthropic = bool(_setting_text(settings, "ANTHROPIC_API_KEY"))
     has_minimax = bool(_setting_text(settings, "MINIMAX_API_KEY"))
     has_deepseek = bool(_setting_text(settings, "DEEPSEEK_API_KEY"))
+    has_zai = bool(_setting_text(settings, "ZAI_API_KEY"))
+    has_qwen = bool(_setting_text(settings, "DASHSCOPE_API_KEY"))
+    has_kimi = bool(_setting_text(settings, "MOONSHOT_API_KEY"))
     has_legacy_openai_base = bool(_setting_text(settings, "OPENAI_BASE_URL"))
     has_compatible = bool(_setting_text(settings, "OPENAI_COMPATIBLE_BASE_URL"))
     has_cloudru = bool(_setting_text(settings, "CLOUDRU_FOUNDATION_MODELS_API_KEY"))
@@ -301,6 +304,9 @@ def _exclusive_direct_remote_provider(settings: dict) -> str:
             ("cloudru", has_cloudru),
             ("gigachat", has_gigachat),
             ("deepseek", has_deepseek),
+            ("zai", has_zai),
+            ("qwen", has_qwen),
+            ("kimi", has_kimi),
         ) if present
     ]
     return direct[0] if len(direct) == 1 else ""
@@ -415,6 +421,9 @@ def has_remote_provider(settings: dict) -> bool:
             "ANTHROPIC_API_KEY",
             "MINIMAX_API_KEY",
             "DEEPSEEK_API_KEY",
+            "ZAI_API_KEY",
+            "DASHSCOPE_API_KEY",
+            "MOONSHOT_API_KEY",
             "OPENAI_COMPATIBLE_BASE_URL",
             "CLOUDRU_FOUNDATION_MODELS_API_KEY",
             "GIGACHAT_CREDENTIALS",

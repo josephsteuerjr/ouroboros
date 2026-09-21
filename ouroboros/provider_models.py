@@ -34,6 +34,32 @@ def resolve_minimax_base_url(region: str = "") -> str:
 # the fingerprint is already unique per provider+model).
 DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
 
+# Z.ai (Zhipu / GLM) serves one OpenAI-compatible API surface on two plans that
+# share the same key: pay-as-you-go and the subscription Coding Plan. The plan
+# selects the endpoint (analogous to MiniMax regions); the PAYG endpoint is the
+# default because the Coding Plan endpoint is officially intended for supported
+# coding tools only.
+ZAI_PLAN_ENDPOINTS: dict[str, str] = {
+    "payg": "https://api.z.ai/api/paas/v4",
+    "coding": "https://api.z.ai/api/coding/paas/v4",
+}
+ZAI_DEFAULT_PLAN = "payg"
+
+
+def resolve_zai_base_url(plan: str = "") -> str:
+    """Return the configured Z.ai OpenAI-compatible endpoint for the plan."""
+    selected = str(plan or "").strip().lower() or ZAI_DEFAULT_PLAN
+    return ZAI_PLAN_ENDPOINTS.get(selected, ZAI_PLAN_ENDPOINTS[ZAI_DEFAULT_PLAN])
+
+
+# Alibaba DashScope international serves an OpenAI-compatible mode (region-bound
+# keys, thinking toggles stay out of scope — the generic canonical request is
+# sent as-is). One official endpoint; proxies belong to openai-compatible.
+DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
+# Moonshot (Kimi) serves one official OpenAI-compatible endpoint.
+MOONSHOT_BASE_URL = "https://api.moonshot.cn/v1"
+
 # DeepSeek's Chat Completions ``reasoning_effort`` enum is low/high/max
 # (medium/xhigh are documented aliases of high) and thinking is switched off by
 # ``thinking.type=disabled``, not by an effort value. This is the wire dialect
@@ -64,6 +90,9 @@ PROVIDER_PREFIXES: tuple[tuple[str, str], ...] = (
     ("cloudru::", "cloudru"),
     ("gigachat::", "gigachat"),
     ("deepseek::", "deepseek"),
+    ("zai::", "zai"),
+    ("qwen::", "qwen"),
+    ("kimi::", "kimi"),
     ("openai-compatible::", "openai-compatible"),
     ("openrouter::", "openrouter"),
 )
@@ -75,6 +104,9 @@ PROVIDER_ENV_KEYS: dict[str, str] = {
     "minimax": "MINIMAX_API_KEY",
     "cloudru": "CLOUDRU_FOUNDATION_MODELS_API_KEY",
     "deepseek": "DEEPSEEK_API_KEY",
+    "zai": "ZAI_API_KEY",
+    "qwen": "DASHSCOPE_API_KEY",
+    "kimi": "MOONSHOT_API_KEY",
     "openrouter": "OPENROUTER_API_KEY",
 }
 
@@ -101,6 +133,9 @@ PROVIDER_CREDENTIAL_GROUPS: dict[str, tuple[str, ...]] = {
     "minimax": ("MINIMAX_API_KEY", "MINIMAX_REGION"),
     "cloudru": ("CLOUDRU_FOUNDATION_MODELS_API_KEY", "CLOUDRU_FOUNDATION_MODELS_BASE_URL"),
     "deepseek": ("DEEPSEEK_API_KEY",),
+    "zai": ("ZAI_API_KEY", "ZAI_PLAN"),
+    "qwen": ("DASHSCOPE_API_KEY",),
+    "kimi": ("MOONSHOT_API_KEY",),
     "gigachat": (
         "GIGACHAT_CREDENTIALS", "GIGACHAT_PASSWORD", "GIGACHAT_USER",
         "GIGACHAT_BASE_URL", "GIGACHAT_SCOPE", "GIGACHAT_VERIFY_SSL_CERTS",
@@ -268,7 +303,7 @@ def local_only_review_route_env() -> bool:
         provider_has_credentials(provider)
         for provider in (
             "openrouter", "openai", "anthropic", "minimax", "cloudru", "gigachat",
-            "deepseek", "openai-compatible",
+            "deepseek", "zai", "qwen", "kimi", "openai-compatible",
         )
     )
 
@@ -440,6 +475,30 @@ MINIMAX_DIRECT_DEFAULTS = {
     # the Cloud.ru/GigaChat clear-instead-of-fill path; owners can opt in manually.
 }
 
+ZAI_DIRECT_DEFAULTS = {
+    "main": "zai::glm-5.3",
+    "heavy": "",
+    "light": "zai::glm-5.3-flash",
+    "vision": "",
+    "fallback": "zai::glm-5.3-flash",
+}
+
+QWEN_DIRECT_DEFAULTS = {
+    "main": "qwen::qwen3-max",
+    "heavy": "",
+    "light": "qwen::qwen3-flash",
+    "vision": "",
+    "fallback": "qwen::qwen3-flash",
+}
+
+KIMI_DIRECT_DEFAULTS = {
+    "main": "kimi::kimi-k2-turbo-preview",
+    "heavy": "",
+    "light": "kimi::moonshot-v1-8k",
+    "vision": "",
+    "fallback": "kimi::moonshot-v1-8k",
+}
+
 DEEPSEEK_DIRECT_DEFAULTS = {
     "main": "deepseek::deepseek-v4-pro",
     "heavy": "",
@@ -475,6 +534,9 @@ DIRECT_PROVIDER_DEFAULTS = {
     "gigachat": GIGACHAT_DIRECT_DEFAULTS,
     "minimax": MINIMAX_DIRECT_DEFAULTS,
     "deepseek": DEEPSEEK_DIRECT_DEFAULTS,
+    "zai": ZAI_DIRECT_DEFAULTS,
+    "qwen": QWEN_DIRECT_DEFAULTS,
+    "kimi": KIMI_DIRECT_DEFAULTS,
 }
 
 # Review panels are declared as provider ROLE sequences, then compiled against
@@ -492,6 +554,9 @@ DIRECT_PROVIDER_REVIEW_ROLES = {
     # Strongest-main ×3 policy (same as OpenAI/Anthropic): an exclusive
     # DeepSeek install reviews with three independent thinking v4-pro calls.
     "deepseek": ("main", "main", "main"),
+    "zai": ("main", "main", "main"),
+    "qwen": ("main", "main", "main"),
+    "kimi": ("main", "main", "main"),
 }
 
 DIRECT_PROVIDER_SCOPE_DEFAULTS = {
