@@ -204,6 +204,29 @@ def _error_facts(exc: BaseException) -> tuple[Optional[int], str, str]:
     return status, code, error_type
 
 
+def _error_facts_body_message(exc: BaseException) -> str:
+    """Best-effort sanitized provider error BODY message for probe reasons.
+
+    Mirrors the loop's ``_exception_provider_message`` read (``exc.body`` /
+    nested ``error.message``) but stays inside the probe module: the probe
+    never imports the loop's classification machinery. Bounded to 300 chars;
+    never changes routing — only the owner-facing reason string."""
+    from ouroboros.utils import sanitize_tool_result_for_log
+
+    body = getattr(exc, "body", None)
+    message = ""
+    if isinstance(body, dict):
+        nested = body.get("error")
+        if isinstance(nested, dict):
+            message = str(nested.get("message") or "")
+        elif isinstance(nested, str):
+            message = nested
+        if not message:
+            message = str(body.get("message") or "")
+    message = str(message or "").strip()
+    return sanitize_tool_result_for_log(message)[:300] if message else ""
+
+
 def controlled_probe_error(exc: BaseException) -> dict[str, Any]:
     """Map typed transport facts to one bounded, provider-neutral reason."""
     status, code, error_type = _error_facts(exc)
@@ -225,7 +248,20 @@ def controlled_probe_error(exc: BaseException) -> dict[str, Any]:
     elif status == 404 or code in model_codes or error_type in model_codes:
         reason = "Model unavailable"
     elif status == 429:
-        reason = "Rate limited"
+        # Z.ai answers 429 code 1113 ("Insufficient balance") when a Coding
+        # Plan key hits the default PAYG endpoint — that is a PLAN mismatch,
+        # not a rate limit, and collapsing it to "Rate limited" sends the
+        # owner hunting for the wrong knob. Surface the provider's own
+        # message plus a plan hint when we have one (best-effort read of the
+        # exception body, sanitized and bounded).
+        body_message = _error_facts_body_message(exc)
+        if code == "1113" or (body_message and "insufficient balance" in body_message.lower()):
+            reason = (
+                f"Provider says: {body_message}" if body_message else "Provider says: insufficient balance"
+            )
+            reason += " — this looks like a Coding Plan key on the PAYG endpoint; set ZAI_PLAN=coding"
+        else:
+            reason = f"Rate limited — provider says: {body_message}" if body_message else "Rate limited"
     elif status is not None and 500 <= status < 600:
         reason = "Provider unavailable"
     else:

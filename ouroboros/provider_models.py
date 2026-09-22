@@ -80,6 +80,39 @@ def normalize_deepseek_reasoning_effort(value: str) -> str:
     return DEEPSEEK_REASONING_EFFORT_ALIASES.get(normalized, normalized)
 
 
+# Z.ai (GLM) serves the same Chat Completions ``reasoning_effort`` shape but a
+# DIFFERENT enum mapping than DeepSeek — do not reuse the DeepSeek table. The
+# provider has exactly three tiers (low | high | max); ``medium`` does not
+# exist, thinking cannot be disabled (``thinking={"type":"disabled"}`` answers
+# 400 code 1210 "please use low, high or max" on PAYG), and an ABSENT
+# parameter is served at MAX — so a silently dropped tier means every call
+# runs (and bills) at max. Projection of the canonical scale, measured live
+# 2026-09-21 on the Coding Plan endpoint: none/minimal/low -> low,
+# medium/high -> high, xhigh/ultra -> max.
+ZAI_REASONING_EFFORT_ALIASES = {
+    "none": "low",
+    "minimal": "low",
+    "low": "low",
+    "medium": "high",
+    "high": "high",
+    "xhigh": "max",
+    "max": "max",
+    "ultra": "max",
+}
+
+
+def normalize_zai_reasoning_effort(value: str) -> str:
+    """Project one canonical effort tier onto Z.ai's Chat wire enum.
+
+    Every canonical tier maps to a concrete provider tier; unlike DeepSeek
+    there is no "off" arm — GLM reasoning cannot be disabled, so an unmapped
+    value still resolves to a tier rather than being dropped (a dropped tier
+    is served at max).
+    """
+    normalized = str(value or "").strip().lower()
+    return ZAI_REASONING_EFFORT_ALIASES.get(normalized, "low")
+
+
 # Direct-provider prefix → canonical provider name. Un-prefixed models route
 # through OpenRouter. Order matters only for readability; prefixes are disjoint.
 PROVIDER_PREFIXES: tuple[tuple[str, str], ...] = (

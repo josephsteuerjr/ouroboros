@@ -525,11 +525,23 @@ export function selectHtml(attrs, groups, selected) {
     return `<select class="ui-control" ${attrs}>${options}</select>`;
 }
 
+// The owner-facing subset of the canonical effort scale, mirroring
+// EFFORT_OPTIONS in settings_ui.js: `minimal` is deliberately NOT offered —
+// sub-low thinking is a per-call tactical choice, not a standing slot
+// configuration. Callers who need the full internal scale for round-tripping
+// stored values read EFFORT_CHOICES directly.
+export const SLOT_EFFORT_OPTIONS = ['none', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
+
 export function effortSelectHtml(attrs, selected, surfaceDefault = 'route default') {
     const options = [
-        { value: '', label: 'Default effort' },
-        ...EFFORT_CHOICES.map((effort) => ({ value: effort, label: effort })),
+        { value: '', label: `Default effort (${surfaceDefault})` },
+        ...SLOT_EFFORT_OPTIONS.map((effort) => ({ value: effort, label: effort })),
     ];
+    // A stored value outside the owner-facing set (e.g. legacy `minimal`)
+    // stays selectable rather than being silently dropped on save.
+    if (selected && !SLOT_EFFORT_OPTIONS.includes(selected)) {
+        options.push({ value: selected, label: selected });
+    }
     return selectHtml(
         `${attrs} title="Reasoning effort — default: ${escapeHtml(surfaceDefault)}"`,
         [{ label: '', options }],
