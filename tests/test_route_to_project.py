@@ -87,6 +87,7 @@ def test_route_to_existing_project_emits_event_and_receipt(tmp_path):
         "origin_message_ref": origin_ref,
         "origin_message_text": "continue the engine tuning",
     })
+    ctx.task_id = "drafter"
     out = _route_to_project(ctx, "racer", "paraphrased: keep tuning the engine", reason="follow-up", predecessor_task_id="")
     assert out.startswith("⚠️ ROUTE_UNCONFIRMED:")
     assert "do not retry automatically" in out.lower()
@@ -102,6 +103,8 @@ def test_route_to_existing_project_emits_event_and_receipt(tmp_path):
     assert evt["routing_token"]
     assert evt["source_ref"] == origin_ref
     assert evt["source_text"] == "continue the engine tuning"
+    assert evt["objective_author"] == {"kind": "task", "task_id": ctx.task_id}
+    assert evt["owner_corpus"] == [{"source": "origin_message", "content": "continue the engine tuning"}]
     assert ctx._typed_routing_action_emitted == "route_to_project"
 
 

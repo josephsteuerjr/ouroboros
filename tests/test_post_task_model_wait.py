@@ -31,6 +31,9 @@ def phase(tmp_path, monkeypatch):
     monkeypatch.setenv("TOTAL_BUDGET", "100")
     monkeypatch.setenv("OUROBOROS_DATA_DIR", str(root))
     monkeypatch.setenv("OUROBOROS_SETTINGS_PATH", str(root / "settings.json"))
+    # Foreground pytest may inherit the calling agent worker's environment;
+    # these tests model detached post-work except where a test opts into a pool worker.
+    monkeypatch.delenv("OUROBOROS_IN_WORKER", raising=False)
     monkeypatch.setattr(config, "CLAUDEXOR_MODEL_POLL_INTERVAL_SEC", 0.005)
     monkeypatch.setattr(config, "NETWORK_WAIT_BACKOFF_START_SEC", 0.005)
     monkeypatch.setattr(config, "NETWORK_WAIT_BACKOFF_MAX_SEC", 0.01)
@@ -165,6 +168,53 @@ def test_detached_decision_mailbox_and_activity_remain_live_after_task_done(phas
     assert len(forwarded) == 1  # An ended post owner cannot be resurrected.
 
 
+@pytest.mark.parametrize("cause", ["budget", "deadline", "unknown", "ordinary"])
+def test_paid_stage_interruption_closes_checkpoint_without_buying_following_stages(phase, monkeypatch, cause):
+    from ouroboros.usage_accounting import BudgetExceeded
+
+    f = phase
+    failures = {
+        "budget": BudgetExceeded("root wallet spent"),
+        "deadline": model_wait.ModelWaitInterrupted("deadline"),
+        "unknown": transport.ClaudexorModelError({"code": "model_outcome_unknown", "message": "unknown"}, unknown=True),
+        "ordinary": RuntimeError("one stage failed"),
+    }
+    def chat(*_args):
+        f.stages.append("chat")
+        raise failures[cause]
+    monkeypatch.setattr(pipeline, "_run_chat_consolidation", chat)
+    monkeypatch.setattr(pipeline, "_run_reflection", lambda *a, **k: f.stages.append("reflection") or None)
+    launch(f)
+    assert f.done.wait(5)
+    stored = load_task_result(f.root, f.task["id"])
+    checkpoint = stored["root_phase_checkpoint"]
+    assert checkpoint["post_task_synthesis"] == "degraded"
+    if cause == "ordinary":
+        assert f.stages == ["facts", "chat", "scratch", "reflection", "backlog"]
+    else:
+        assert f.stages == ["facts", "chat"]
+        assert checkpoint["post_task_stop_reason"].startswith({
+            "budget": "budget_exhausted", "deadline": "deadline", "unknown": "model_outcome_unknown"}[cause])
+        assert "scratchpad_consolidation,reflection,promotion" in checkpoint["post_task_stop_reason"]
+    assert not f.engine.creates  # no provider send after the first interrupted stage
+
+
+def test_completed_reflection_actions_survive_a_later_paid_stage_interruption(phase, monkeypatch):
+    f = phase
+    applied = []
+    monkeypatch.setattr(pipeline, "_run_reflection", lambda *a, **k: {"memory_actions": [{"type": "knowledge_write"}]})
+    monkeypatch.setattr(pipeline, "_apply_reflection_memory_actions", lambda *a, **k: applied.append(1))
+    def stop_promotion(*_args):
+        raise model_wait.ModelWaitInterrupted("deadline")
+    monkeypatch.setattr(pipeline, "_update_improvement_backlog", stop_promotion)
+    launch(f)
+    assert f.done.wait(5)
+    assert applied == [1]
+    checkpoint = load_task_result(f.root, f.task["id"])["root_phase_checkpoint"]
+    assert checkpoint["post_task_synthesis"] == "degraded"
+    assert checkpoint["post_task_stop_reason"].startswith("deadline:")
+
+
 @pytest.mark.parametrize("unknown", [False, True])
 def test_stop_or_unknown_never_marks_post_work_completed(phase, unknown):
     f = phase
@@ -179,6 +229,24 @@ def test_stop_or_unknown_never_marks_post_work_completed(phase, unknown):
     assert load_task_result(f.root, f.task["id"])["root_phase_checkpoint"]["post_task_synthesis"] == "degraded"
     assert len(f.engine.creates) == 1 and "backlog" not in f.stages
     assert ledger(f.root)[-1]["state"] == ("unresolved" if unknown else "released")
+
+
+def test_blocking_post_work_exempts_solve_ceiling_only_within_its_scope(phase, monkeypatch):
+    f = phase
+    monkeypatch.setattr(config, "get_task_abs_ceiling_sec", lambda: 1)
+    monkeypatch.setattr(pipeline, "_run_reflection", lambda *a, **k: None)
+    observed = []
+    def check(*_args):
+        observed.append(model_wait.current_model_wait().control_reason())
+    monkeypatch.setattr(pipeline, "_run_chat_consolidation", check)
+    with model_wait.task_model_wait_scope(task=f.task, drive_root=f.root, event_queue=f.events,
+                                          worker_slot_held=True) as owner:
+        monkeypatch.setattr(owner, "executed_seconds", lambda **_kwargs: 100)
+        assert owner.control_reason() == "absolute_ceiling"
+        pipeline._run_post_task_processing_async(f.env, f.task, {}, {}, {}, f.root / "logs", blocking=True)
+        assert owner.control_reason() == "absolute_ceiling"  # restored for the solve owner
+    assert observed == [None]
+    assert load_task_result(f.root, f.task["id"])["root_phase_checkpoint"]["post_task_synthesis"] == "completed"
 
 
 def test_pooled_post_work_holds_return_but_delivers_answer_early_once(phase, monkeypatch):

@@ -425,6 +425,20 @@ def test_the_root_nomination_never_runs_the_builder_and_records_the_stance(tmp_p
     assert len(payload["evidence_revision"]) == 64
 
 
+def test_action_only_nomination_does_not_invent_partial_stance(tmp_path, monkeypatch):
+    from ouroboros.tools.review import _handle_task_acceptance_review
+
+    monkeypatch.setenv("OUROBOROS_TASK_REVIEW_MODE", "auto")
+    payload = json.loads(_handle_task_acceptance_review(
+        _tool_ctx(tmp_path), claim="saved result", goal="deliver result",
+        rationale="Informed advisory finish with open critic notes", author_action="finish",
+    ))
+    assert payload["status"] == "deferred_to_host_acceptance"
+    assert payload["agent_decision"]["disposition"] == ""
+    assert payload["agent_decision"]["author_action"] == "finish"
+    assert payload["agent_decision"]["explicit_finish"] is True
+
+
 def test_the_child_path_still_builds_its_packet_and_a_broken_builder_still_raises(tmp_path, monkeypatch):
     import ouroboros.review_evidence as re_mod
     from ouroboros.tools.review import _handle_task_acceptance_review

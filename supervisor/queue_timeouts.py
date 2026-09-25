@@ -257,6 +257,22 @@ def _enforce_task_timeouts_locked(
                        or model_waiting(meta) or waiting_on_owner
                        or _active_operation_progressing(meta, now))
         ceiling_reached = abs_ceiling is not None and runtime_sec >= float(abs_ceiling)
+        if (ceiling_reached and not task.get("parent_task_id")
+                and task_id == str(task.get("root_task_id") or task_id)):
+            # A settled answer may still own post-task memory work in this
+            # RUNNING worker. The solve ceiling cannot turn that work into a
+            # failed answer; idle, per-call, deadline and cancellation remain.
+            from ouroboros.task_results import load_task_result
+            from ouroboros.task_status import SETTLED_STATUSES
+
+            try:
+                stored = load_task_result(_queue().DRIVE_ROOT, str(task_id)) or {}
+            except Exception:
+                stored = {}  # unreadable terminal proof never widens the ceiling
+            checkpoint = stored.get("root_phase_checkpoint") or {}
+            if (stored.get("status") in SETTLED_STATUSES and isinstance(checkpoint, dict)
+                    and checkpoint.get("post_task_synthesis") == "running"):
+                ceiling_reached = False
 
         if (
             str(task_id) in owner_stop_held

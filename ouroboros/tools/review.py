@@ -259,7 +259,7 @@ def _handle_task_acceptance_review(
     agent_decision = {}
     if disposition or agent_rationale or normalized_ob or author_action:
         agent_decision = {
-            "disposition": disposition or "partial",
+            "disposition": disposition,
             "explicit_finish": bool(disposition or author_action),
             "author_action": author_action or "finish",
             "rationale": agent_rationale[:1000],

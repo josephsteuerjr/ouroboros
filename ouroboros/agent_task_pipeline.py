@@ -170,6 +170,7 @@ def _run_post_task_processing_async(
     def _run_scoped() -> None:
         checkpoint_status = "degraded"
         skipped: list[str] = []
+        interrupted = ""
         try:
             # The free facts row precedes every paid stage, so neither Stop nor a
             # failed paid stage costs the card its facts; it is not a stage.
@@ -181,11 +182,7 @@ def _run_post_task_processing_async(
             task_memory = Memory(drive_root=env.drive_root, repo_dir=env.repo_dir)
 
             def _promotion() -> None:
-                from ouroboros.project_facts import resolve_project_id
-
                 reflection_entry = result.get("reflection_entry")
-                _pid = resolve_project_id(task_snapshot)
-                _apply_reflection_memory_actions(env, reflection_entry, project_id=_pid)
                 if is_presence_task(task_snapshot):
                     return
                 # Project facts stay scoped; generic process lessons remain global.
@@ -213,21 +210,50 @@ def _run_post_task_processing_async(
                     review_evidence_snapshot, sealed_final=sealed_snapshot))),
                 ("promotion", _promotion),
             ]
-            for index, (_name, run_stage) in enumerate(stages):
+            from ouroboros.usage_accounting import BudgetExceeded
+
+            stage_errors = False
+            for index, (name, run_stage) in enumerate(stages):
                 if _owner_stop_requested():
-                    # Stop-now: the remaining paid stages are skipped and NAMED
-                    # in the typed disclosure below; what already ran stays.
-                    skipped = [name for name, _run in stages[index:]]
+                    interrupted = "owner_stopped"
+                    skipped = [stage for stage, _run in stages[index:]]
                     break
-                run_stage()
-            if not skipped:
+                try:
+                    run_stage()
+                except Exception as error:
+                    if isinstance(error, BudgetExceeded):
+                        interrupted = "budget_exhausted"
+                    else:
+                        try:
+                            propagate_model_error(error)
+                        except Exception as control:
+                            interrupted = str(getattr(control, "control_reason", "") or
+                                              getattr(control, "code", "") or "provider_outcome_unknown")
+                    if interrupted:
+                        skipped = [stage for stage, _run in stages[index + 1:]]
+                        log.warning("Post-task paid stage %s interrupted for %s: %s",
+                                    name, stage_task_id, interrupted)
+                        break
+                    stage_errors = True
+                    log.warning("Post-task stage %s failed for %s", name, stage_task_id, exc_info=True)
+            if not interrupted and not stage_errors:
                 checkpoint_status = "completed"
         except Exception:
-            log.warning("Async post-task processing failed", exc_info=True)
+            log.warning("Post-task setup failed for %s", stage_task_id, exc_info=True)
         finally:
+            # Applying actions already produced by reflection is free and must
+            # survive a later paid-stage refusal; never run the paid promotion here.
+            if (result.get("reflection_entry") is not None
+                    and interrupted not in {"owner_stopped", "cancelled", "finalize_requested"}):
+                try:
+                    from ouroboros.project_facts import resolve_project_id
+                    _apply_reflection_memory_actions(
+                        env, result["reflection_entry"], project_id=resolve_project_id(task_snapshot))
+                except Exception:
+                    log.warning("Completed reflection actions could not be applied for %s", stage_task_id, exc_info=True)
             _set_root_post_task_checkpoint(
                 env, task_snapshot, checkpoint_status,
-                stop_reason=f"owner_stopped:skipped={','.join(skipped)}" if skipped else "",
+                stop_reason=(f"{interrupted}:skipped={','.join(skipped)}" if interrupted else ""),
             )
             if post_task_key is not None:
                 with _POST_TASK_SYNTHESIS_LOCK:
@@ -250,7 +276,17 @@ def _run_post_task_processing_async(
                 if post_task_key is not None and parent_wait is not None and not parent_wait.worker_slot_held:
                     with _POST_TASK_SYNTHESIS_LOCK:
                         _POST_TASK_SYNTHESIS_INFLIGHT[post_task_key] = parent_wait
-                _run_scoped()
+                # The task's optional absolute execution ceiling ends the solve
+                # phase, not already-started post-work. Calendar deadlines and
+                # logical call bounds remain checked before owner_control.
+                prior_control = parent_wait.owner_control if parent_wait is not None else None
+                if parent_wait is not None:
+                    parent_wait.owner_control = lambda: "owner_stopped" if _owner_stop_requested() else None
+                try:
+                    _run_scoped()
+                finally:
+                    if parent_wait is not None:
+                        parent_wait.owner_control = prior_control
             else:
                 # A detached thread must not inherit its parent's closing scope.
                 with task_model_wait_scope(task=task_snapshot, drive_root=env.drive_root,

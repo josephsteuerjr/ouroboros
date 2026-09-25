@@ -61,6 +61,17 @@ def _attach_origin_from_metadata(ctx: ToolContext, evt: Dict[str, Any]) -> None:
         evt["origin_suppressed"] = True
 
 
+def _attach_drafted_objective(ctx: ToolContext, evt: Dict[str, Any]) -> None:
+    """Keep the routed objective's author separate from the ingress owner corpus."""
+    evt["objective_author"] = {"kind": "task", "task_id": str(getattr(ctx, "task_id", "") or "")}
+    owner_rows = [dict(row) for row in (getattr(ctx, "_owner_directives", None) or [])
+                  if isinstance(row, dict) and row.get("source") in {
+                      "owner_mailbox", "owner_quiz_answer", "origin_message", "owner_corpus", "direct_incoming"}]
+    if evt.get("source_text") and not any(row.get("source") == "origin_message" for row in owner_rows):
+        owner_rows.insert(0, {"source": "origin_message", "content": evt["source_text"]})
+    evt["owner_corpus"] = owner_rows
+
+
 def _durable_project_of_request(ctx: ToolContext) -> str:
     """The project this request's work ALREADY has, durably: the promoting task's
     own binding — the one truth about a task's project, which a "Turn into
@@ -461,14 +472,7 @@ def _promote_chat_to_task(
 
     evt.update(consciousness_origin_metadata(metadata))
     _attach_origin_from_metadata(ctx, evt)
-    # A model-drafted objective has a different author from its owner source.
-    evt["objective_author"] = {"kind": "task", "task_id": str(getattr(ctx, "task_id", "") or "")}
-    owner_rows = [dict(row) for row in (getattr(ctx, "_owner_directives", None) or [])
-                  if isinstance(row, dict) and row.get("source") in {
-                      "owner_mailbox", "owner_quiz_answer", "origin_message", "owner_corpus", "direct_incoming"}]
-    if evt.get("source_text") and not any(row.get("source") == "origin_message" for row in owner_rows):
-        owner_rows.insert(0, {"source": "origin_message", "content": evt["source_text"]})
-    evt["owner_corpus"] = owner_rows
+    _attach_drafted_objective(ctx, evt)
     predecessor_error = _attach_predecessor_authority_from_metadata(
         ctx, evt, predecessor_task_id,
     )
@@ -758,6 +762,7 @@ def _route_to_project(
 
     evt.update(consciousness_origin_metadata(metadata))
     _attach_origin_from_metadata(ctx, evt)
+    _attach_drafted_objective(ctx, evt)
     evt.update(predecessor_event)
     _attach_client_surface(ctx, evt)
     # Owner 3=A holds on this verb too: a route starts a NEW root exactly like a

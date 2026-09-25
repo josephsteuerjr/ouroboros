@@ -640,7 +640,7 @@ def _finish_advisory_author(ctx: _TaskAcceptanceContext) -> bool:
     disposition = str(stance.get("agent_disposition") or "")
     from ouroboros.loop_delivery import delivery_evidence_fingerprint
 
-    if (not intent or disposition not in {"accepted", "rejected", "partial", "deferred"}
+    if (not intent or (disposition and disposition not in {"accepted", "rejected", "partial", "deferred"})
             or (action != "stop" and (not feedback or intent.get("review_binding_hash") != feedback.get("binding_hash")))
             or intent.get("tool_count") != len(ctx.llm_trace.get("tool_calls") or [])
             or intent.get("owner_directives") != len(getattr(ctx.tools._ctx, "_owner_directives", []) or [])
@@ -653,8 +653,8 @@ def _finish_advisory_author(ctx: _TaskAcceptanceContext) -> bool:
         subject_hash=ctx.review_binding["binding_hash"],
         reviewer_signal=str((feedback or {}).get("aggregate_signal") or ""),
         enforcement="blocking" if review_enforcement_blocks(_loop().get_review_enforcement()) else "advisory",
+        action=action,
     )
-    author["action"] = action
     from ouroboros.task_results import project_task_acceptance_review_capacity
 
     capacity = project_task_acceptance_review_capacity(ctx.tools._ctx, task_id=ctx.task_id) if action == "stop" else {}
