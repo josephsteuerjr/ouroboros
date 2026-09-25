@@ -4,10 +4,10 @@ and "Finalizing…" only as the secondary phase — live, after a reload, after 
 real WebSocket reconnect and on a narrow light page — then settles once.
 
 Only model judgment is a fixture. The provider refusal is a real HTTP 401 on
-the model wire, the host's own provider-unavailable rail salvages the answer,
+the model wire, the host's provider-unavailable rail preserves intermediate work,
 and the one event-held call is the post-task reflection (identified by the first
-line of the production prompt; the fixture's one tool round reads a missing
-file, so the typed reflection trigger fires — there is no paid summary), so
+line of the production prompt; the fixture's tool round exits nonzero, so
+the typed reflection trigger fires — there is no paid summary), so
 synthesis is provably open while the browser looks. Nothing is timed: every
 wait is an event or a bounded DOM poll.
 """
@@ -30,7 +30,6 @@ pytestmark = [pytest.mark.serial, pytest.mark.browser]
 MARKER = "FAILED_FINALIZING_REAL_ACTOR"
 REFLECTION_MARKER = _REFLECTION_PROMPT_HEAD.splitlines()[0]
 SALVAGE_MARKER = "[PROVIDER_UNAVAILABLE]"  # ouroboros/loop.py::_provider_unavailable_result
-SALVAGE = "The provider refused the next request; the work before the outage is retained."
 NEUTRAL = "Nothing further to record for this fixture."
 TITLE = "Provider outage proof"
 CARD = '#chat-messages .chat-live-card[data-task-id="{}"]'
@@ -70,11 +69,12 @@ OBSERVE_JS = """tid => { const card = document.querySelector(`#chat-messages .ch
 class _OutageModel(ScriptedStubModel):
     """One real (failing) tool round, then a provider refusal (HTTP 401, a permanent
     class, so no backoff retries) on every later tool round of the marked task. The
-    host's salvage call gets its own answer; the post-task reflection is the one
-    call the gate holds."""
+    host's terminal incident preserves the intermediate output if a later call
+    cannot land; the post-task reflection is the one call the gate holds."""
 
     def __init__(self, gate):
-        super().__init__([{"tool": "read_file", "arguments": {"path": "MISSING_BEFORE_OUTAGE.txt"}}],
+        super().__init__([{"tool": "run_command", "arguments": {
+            "cmd": ["python", "-c", "import sys; sys.exit(7)"]}}],
                          final_answer=NEUTRAL, gate=gate)
         self.refused = 0
         outer, base = self, self._server.RequestHandlerClass
@@ -106,12 +106,6 @@ class _OutageModel(ScriptedStubModel):
             self.refused += 1
             self.calls.append(("refused_401", body))
         return True
-
-    def _answer(self, body, seq):
-        text = body_text(body)
-        if SALVAGE_MARKER in text:
-            return "salvage", {"role": "assistant", "content": SALVAGE}
-        return super()._answer(body, seq)
 
 
 def _open(browser, url, *, theme, viewport):
@@ -180,7 +174,7 @@ def test_failed_root_reads_failed_then_finalizing(wait_clone, tmp_path, monkeypa
                     # An owner's open Main: the admission name frame must reach a live socket.
                     desk.wait_for_function("() => window.__ouroWs?.ws?.readyState === 1", timeout=60000)
                     created = _api(server.base_url, "POST", "/api/tasks", {
-                        "description": f"{MARKER}: read MISSING_BEFORE_OUTAGE.txt, then report what it says.",
+                        "description": f"{MARKER}: run one diagnostic command, then report its outcome.",
                         "title": TITLE, "chat_id": WEB_UI_CHAT_ID, "source": "web",
                         "memory_mode": "forked", "metadata": {"delegation_role": "root"}})
                     task_id = str(created.get("task_id") or "")
@@ -204,8 +198,10 @@ def test_failed_root_reads_failed_then_finalizing(wait_clone, tmp_path, monkeypa
                     assert desk.evaluate("window.__beforeReload === undefined"), "reload kept the old document"
                     card.screenshot(animations="disabled", path=str(shots / "chromium-failed-finalizing-reload.png"))
 
-                    # A real socket close through the production client: its own reconnect
-                    # re-reads history in place (same document, new socket).
+                    # A real socket close through the production client: first bind the
+                    # serving SHA after reload, so an unknown-SHA recovery is not
+                    # mistaken for a same-document reconnect (the #1196 test seam).
+                    desk.wait_for_function("() => Boolean(window.__ouroWs?._lastSha)", timeout=30000)
                     desk.wait_for_function("() => window.__ouroWs?.ws?.readyState === 1", timeout=30000)
                     desk.evaluate("window.__sameDocument = true; window.__oldSocket = window.__ouroWs.ws")
                     with desk.expect_response(lambda r: "/api/chat/history" in r.url, timeout=60000):
@@ -245,7 +241,14 @@ def test_failed_root_reads_failed_then_finalizing(wait_clone, tmp_path, monkeypa
                     assert {chip for chip, _second, _finished in log} <= {"Failed"}, log
                     finished = [f for _c, _s, f in log]
                     assert "1" in finished and "0" not in finished[finished.index("1"):], log
-                    assert desk.locator("#chat-messages").get_by_text(SALVAGE).count() == 1
+                    # Provider death preserves intermediate work as a host incident,
+                    # not as a model-authored salvage answer. The fixture does not
+                    # assert a forced call returned when the provider cannot answer.
+                    assert settled.get("terminal_origin") == "host_salvage", settled
+                    assert not settled.get("final_answer"), settled
+                    incidents = [row for row in oracle._jsonl("logs/chat.jsonl", type_filter="terminal_incident")
+                                 if row.get("task_id") == task_id]
+                    assert len(incidents) == 1 and "intermediate output" in incidents[0]["text"], incidents
                     card.screenshot(animations="disabled", path=str(shots / "chromium-failed-settled.png"))
 
                     # Replay after synthesis closed settles too: no stale Finalizing….
