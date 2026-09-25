@@ -194,6 +194,11 @@ def record_answered(
     task itself received. First-wins is untouched — an already ``answered``
     block stays a refusal on any other ``request_id``.
 
+    ``wait_for_answer`` stays on the answered block on purpose: the answer
+    frame (``gateway.task_decision._quiz_answer_frame``) reads it to say the
+    task was waiting rather than proceeding under its assumption, and every
+    surface settles the card on ``answered`` regardless of wait facts.
+
     Returns ``{"ok", "state", "duplicate", "error", "block"}``:
     - unknown quiz_id → ``error="quiz_not_found"``;
     - open (or expired with ``allow_expired``) + valid index (or no index +
@@ -247,9 +252,11 @@ def record_answered(
 
 
 def mark_wait_ended(drive_root: Any, task_id: str, quiz_id: str) -> bool:
-    """The bounded wait behind an OPEN card closed and the task resumed: the block stops
+    """The wait behind an OPEN card ended and the task resumed: the block stops
     saying ``wait_for_answer`` (replay renders the truth) and keeps the instant for audit.
-    The card stays open and answerable. Returns whether a block changed."""
+    The card stays open and answerable. Returns whether a block changed — and it
+    changes ONLY an open, still-waiting block (F10): a card answered a second before
+    the wake is never rolled back, and the callers announce nothing unless this is True."""
     changed: List[bool] = []
 
     def _mutator(quizzes: Dict[str, Dict[str, Any]]) -> Any:

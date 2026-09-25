@@ -635,8 +635,8 @@ def _escalate(
                  "continues with a notice" if bound else "the task waits after this tool batch")
         return (f"OK: quiz {quiz_id} {delivered}; {limit}, "
                 "preserving its live browser and releasing active execution capacity. "
-                "Any incoming mail ends the wait; only an owner answer answers the question. "
-                "Other mail leaves the card open. Stop and task deadlines still apply.")
+                "Any incoming mail or an owner hurry request ends the wait; only an owner answer "
+                "answers the question. Other mail leaves the card open. Stop and task deadlines still apply.")
     return (f"OK: quiz {quiz_id} {delivered}; continuing under assumption: "
             f"{payload['assumption']}. The answer (if any) arrives as an owner "
             "quiz answer in a later round; the card stays answerable after this "

@@ -40,7 +40,7 @@ def test_native_wait_retains_source_and_leaves_answer_delivery_to_loop(tmp_path,
     wait_after_tools(ctx, messages, {}, {}, 4, [], set())
     assert len(waits) == 1 and waits[0]["state"] == "waiting"
     after = load_task_result(tmp_path, ctx.task_id)["owner_wait"]
-    assert after == {**waits[0], "state": "resumed", "resume_reason": "owner_input"}
+    assert after == {**waits[0], "state": "resumed", "resume_reason": "owner_text"}
     assert after["source_ref"] and "restart_transaction_id" not in after
     assert ctx.pending_events == [] and ctx._owner_wait_requested == ""
     assert ctx._loop_mailbox_seen_ids == set()
@@ -69,7 +69,7 @@ def test_peer_mail_wakes_but_does_not_answer_an_open_question(tmp_path, monkeypa
     monkeypatch.setattr("ouroboros.owner_wait.time.sleep", wake)
     messages = []
     wait_after_tools(ctx, messages, {}, {}, 1, [], set())
-    assert load_task_result(tmp_path, ctx.task_id)["owner_wait"]["resume_reason"] == "mail"
+    assert load_task_result(tmp_path, ctx.task_id)["owner_wait"]["resume_reason"] == "mail:peer-1"
     assert quiz_states(tmp_path, ctx.task_id)["q1"]["state"] == "open"
     assert "wait_for_answer" not in quiz_states(tmp_path, ctx.task_id)["q1"]
     assert len([frame for frame in frames if frame.get("type") == "quiz_state"]) == 1
@@ -100,9 +100,9 @@ def test_answer_before_capacity_grant_replaces_a_stale_timeout(tmp_path):
     from ouroboros.owner_wait import _fresh_wake, classify_wake
 
     ctx = native_context(tmp_path)
-    assert classify_wake([{"kind": "hurry", "msg_id": "h"}], "q1") == "mail"
+    assert classify_wake([{"kind": "hurry", "msg_id": "h"}], "q1") == "hurry"
     assert classify_wake([{"kind": "task_message", "provenance": "ancestor_task"}], "q1") == "mail"
-    assert classify_wake([{"kind": KIND_QUIZ_ANSWER, "msg_id": "quiz_answer:other"}], "q1") == "owner_input"
+    assert classify_wake([{"kind": KIND_QUIZ_ANSWER, "msg_id": "quiz_answer:other"}], "q1") == "owner_text"
     assert write_owner_message(tmp_path, "Owner answered", ctx.task_id,
                                msg_id="quiz_answer:q1", kind=KIND_QUIZ_ANSWER)
     assert _fresh_wake(ctx, "q1", "timeout") == "answer"
@@ -212,7 +212,7 @@ def test_an_answer_before_the_bound_resumes_without_a_timeout_notice(tmp_path, m
     messages = []
     wait_after_tools(ctx, messages, {}, {}, 1, [], set())
     assert messages == []  # the owner answered; the loop delivers it as usual
-    assert load_task_result(tmp_path, ctx.task_id)["owner_wait"]["resume_reason"] == "owner_input"
+    assert load_task_result(tmp_path, ctx.task_id)["owner_wait"]["resume_reason"] == "owner_text"
 
 
 @pytest.mark.parametrize("reason", ["cancelled", "finalize_requested", "deadline", "absolute_ceiling"])
