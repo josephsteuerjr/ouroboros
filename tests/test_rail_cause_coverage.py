@@ -151,14 +151,21 @@ def test_the_salvage_line_names_the_cause_after_the_supervisor_stop(tmp_path, mo
     task = {"id": "r1", "chat_id": 4}
     task_reaper._deliver_reap_salvage(q, task, "r1", "absolute_ceiling")
     (call,) = delivered
-    assert call["outcome"] == "stopped by the supervisor. The task reached its maximum running time"
-    # The real builder frames it as one owner line, the code nowhere in it.
+    # TZ-2 C1: the reaper hands over the TYPED rail, not a prose string.
+    assert call["reason_code"] == "absolute_ceiling" and call["outcome"] == ""
+    # The real builder frames it as one owner line, the code nowhere in the chat text.
     event = terminal_delivery.build_unreviewed_salvage_event(
-        tmp_path, task, "r1", outcome=call["outcome"], salvaged_text=call["salvaged_text"])
+        tmp_path, task, "r1", outcome=call["outcome"], reason_code=call["reason_code"],
+        salvaged_text=call["salvaged_text"])
     assert event["text"].startswith(
         "⚠️ Task r1 was stopped by the supervisor. The task reached its maximum running time. "
         "Below is the last persisted intermediate model message")
     assert "absolute_ceiling" not in event["text"]
+    assert event["reason_code"] == "absolute_ceiling"  # the code rides the event, not the prose
+    # An unknown rail stays raw rather than borrowing a sentence.
+    raw = terminal_delivery.build_unreviewed_salvage_event(
+        tmp_path, task, "r1", outcome="", reason_code="some_future_rail", salvaged_text="")
+    assert raw["text"].startswith("⚠️ Task r1 was stopped by the supervisor. some_future_rail.")
 
 
 def test_the_kill_notice_leads_with_the_cause_and_keeps_the_typed_task_done(qenv, monkeypatch):  # noqa: F811

@@ -1131,14 +1131,14 @@ def _deliver_reap_salvage(
         return
     try:
         from ouroboros.observability import latest_llm_response_text, preserved_salvage_path
-        from ouroboros.project_dialogue import TASK_CAUSE_PHRASES
         from supervisor.terminal_delivery import deliver_unreviewed_salvage
 
         salvage_text = latest_llm_response_text(pathlib.Path(_q._task_drive_for_task(task, task_id)), task_id)
         deliver_unreviewed_salvage(
             pathlib.Path(_q.DRIVE_ROOT), task, task_id,
-            # Reads "was stopped by the supervisor. <owner sentence>."; an unknown rail stays raw.
-            outcome=f"stopped by the supervisor. {TASK_CAUSE_PHRASES.get(terminal_reason, terminal_reason)}",
+            # TZ-2 C1: the typed rail travels; the builder speaks the owner sentence
+            # from the one cause table and keeps the code on the durable receipt.
+            outcome="", reason_code=terminal_reason,
             salvaged_text=salvage_text,
             preserved_path=preserved_salvage_path(pathlib.Path(_q.DRIVE_ROOT), task_id),
             unreconciled_runs=list(unreconciled_runs or []),
