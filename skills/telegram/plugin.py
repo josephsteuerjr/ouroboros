@@ -1352,6 +1352,22 @@ def _make_quiz(api):
     return handle
 
 
+def _make_quiz_state(api):
+    """Telegram has no reload: a sent card follows its question's lifecycle (TZ-2 B2)."""
+    async def handle(event: Dict[str, Any]) -> None:
+        try:
+            target = telegram_quiz.lifecycle_target(api, event, _poller_preferences(api)[4])
+            if target is None:
+                return
+            protected_settings = api.get_settings(["TELEGRAM_BOT_TOKEN"])
+            client = TelegramClient(protected_settings.get("TELEGRAM_BOT_TOKEN", ""), trust_env=_HONOR_ENV_PROXIES)
+            if not await client.edit_message_text_with_inline_keyboard(*target, parse_mode=""):
+                api.log("warning", f"Telegram quiz card edit failed ({event.get('state')}).")  # never retried
+        except Exception as exc:
+            api.log("error", f"Telegram quiz state error: {exc}")
+    return handle
+
+
 def register(api):
     api.register_supervised_task("poller", _make_poller(api), restart_policy="on_failure", max_restarts=10)
     api.register_supervised_task("notifier", _make_notifier(api, trust_env=_HONOR_ENV_PROXIES), restart_policy="on_failure", max_restarts=10)
@@ -1362,6 +1378,7 @@ def register(api):
     api.subscribe_event("chat.document", _make_document(api))
     api.subscribe_event("chat.links", _make_links(api))
     api.subscribe_event("chat.quiz", _make_quiz(api))
+    api.subscribe_event("chat.quiz_state", _make_quiz_state(api))
     # GET hydrates the declarative form with what is stored; POST saves it.
     api.register_route("settings/save", handler=_make_settings_save(api), methods=("GET", "POST"))
     api.register_route("miniapp/status", handler=_make_status(api), methods=("POST",))

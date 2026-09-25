@@ -9,8 +9,10 @@ accepted exactly as it is for the browser card: the host records it and delivers
 it into the card's chat as an ordinary owner message, and the toast says which
 of those happened. The only state kept here maps a
 short callback token and the sent message to that identity: Telegram caps
-``callback_data`` at 64 bytes, too short for the ids themselves. Nothing here
-parses the owner's words; a reply is delivered verbatim as their own answer.
+``callback_data`` at 64 bytes, too short for the ids themselves. A card also
+remembers its settled lifecycle state, so the host's ``chat.quiz_state`` facts
+edit it forward only. Nothing here parses the owner's words; a reply is
+delivered verbatim as their own answer.
 """
 
 from __future__ import annotations
@@ -41,6 +43,10 @@ _TEXTS = {
         "gone": "This question is no longer known to Ouroboros.",
         "failed": "Could not deliver the answer (HTTP {status}). Try again.",
         "answered_line": "Answered: {answer}",
+        "answered_plain": "Answered.",
+        "resumed": "The task continued; an answer is still accepted.",
+        "expired_terminal": "The task finished; a late answer is accepted as your message.",
+        "superseded": "Replaced by a newer question.",
     },
     "ru": {
         "hint": "Нажмите вариант или ответьте на это сообщение своим текстом.",
@@ -53,8 +59,16 @@ _TEXTS = {
         "gone": "Этот вопрос Ouroboros больше не знает.",
         "failed": "Не удалось передать ответ (HTTP {status}). Попробуйте ещё раз.",
         "answered_line": "Ответ: {answer}",
+        "answered_plain": "Ответ получен.",
+        "resumed": "Задача продолжила работу; ответ всё ещё принимается.",
+        "expired_terminal": "Задача завершилась; поздний ответ придёт как ваше сообщение.",
+        "superseded": "Вопрос заменён более новым.",
     },
 }
+
+# A remembered card's lifecycle only moves forward, as on the web card: a closed
+# wait or an expiry never reopens a settled card, and nothing downgrades an answer.
+_LIFECYCLE_RANK = {"open": 0, "expired_terminal": 1, "superseded": 2, "answered": 3}
 
 
 def _texts(lang: str) -> Dict[str, str]:
@@ -122,6 +136,12 @@ def quiz_for_token(api, token: str) -> Optional[Dict[str, Any]]:
     return dict(record) if isinstance(record, dict) else None
 
 
+def remember_state(api, token: str, record: Dict[str, Any], state: str) -> None:
+    """Persist a settled lifecycle state on the card: the no-rollback evidence."""
+    if _LIFECYCLE_RANK.get(state, 0) and str(record.get("state") or "") != state:
+        remember_quiz(api, token, {**record, "state": state})
+
+
 def quiz_for_message(api, chat_id: int, message_id: int) -> Optional[Dict[str, Any]]:
     """The card sent as ``message_id`` in ``chat_id`` (for reply-to answers)."""
     if not message_id:
@@ -165,13 +185,83 @@ def _outcome_text(status: int, payload: Dict[str, Any], lang: str) -> str:
     return texts["failed"].format(status=status)
 
 
-async def _mark_answered(client, record: Dict[str, Any], answer: str, lang: str) -> None:
+def _echo(answer: str) -> str:
+    return answer if len(answer) <= _ANSWER_ECHO_MAX else answer[:_ANSWER_ECHO_MAX] + "…"
+
+
+def _answered_text(record: Dict[str, Any], answer: str, lang: str) -> str:
+    texts = _texts(lang)
+    line = texts["answered_line"].format(answer=answer) if answer else texts["answered_plain"]
+    return f"{record.get('text') or ''}\n{line}"
+
+
+def lifecycle_edit(
+    record: Dict[str, Any], event: Dict[str, Any], lang: str,
+) -> Optional[Tuple[str, List[List[dict]]]]:
+    """The (text, keyboard) edit a host ``chat.quiz_state`` fact asks of a sent card.
+
+    ``None`` when the fact changes nothing here: a state this card cannot show, an
+    ``open`` that does not close a wait, or a fact older than the card's own state.
+    The card mirrors the web one (``web/modules/question_presentation.js``): an
+    answer settles it on the recorded option and/or the owner's own words; a closed
+    wait drops the waiting line; an expired card stays answerable, because a late
+    answer is still accepted as the owner's message (В17a=A); a superseded card is
+    a read-only record. An answer is always re-applied — the edit is idempotent.
+    """
+    state = str(event.get("state") or "")
+    if state not in _LIFECYCLE_RANK or (state == "open" and event.get("wait_for_answer") is not False):
+        return None
+    if _LIFECYCLE_RANK[state] < _LIFECYCLE_RANK.get(str(record.get("state") or "open"), 0):
+        return None
+    texts = _texts(lang)
+    base = str(record.get("text") or "")
+    if state == "answered":
+        options = list(record.get("options") or [])
+        index = event.get("answered_index")
+        parts = []
+        if isinstance(index, int) and not isinstance(index, bool):
+            parts.append(f"{index + 1}. {options[index]}" if 0 <= index < len(options) else f"{index + 1}.")
+        if str(event.get("comment") or ""):
+            parts.append(_echo(str(event["comment"])))
+        return _answered_text(record, " — ".join(parts), lang), []
+    if state == "superseded":
+        return f"{base}\n{texts['superseded']}", []
+    status = texts["resumed" if state == "open" else "expired_terminal"]
+    labels = [str(label) for label in record.get("options") or []]
+    if not labels:
+        return f"{base}\n{status}\n{texts['hint_open']}", []
+    token = mint_token(str(record.get("task_id") or ""), str(record.get("quiz_id") or ""))
+    return f"{base}\n{status}\n{texts['hint']}", quiz_keyboard(token, labels)
+
+
+def lifecycle_target(
+    api, event: Dict[str, Any], lang: str,
+) -> Optional[Tuple[int, int, str, List[List[dict]]]]:
+    """``(chat_id, message_id, text, keyboard)`` for a card sent here, else ``None``.
+
+    A card never sent to Telegram has nothing to edit. A settled state is
+    remembered before the edit: it is the host's fact, whatever the edit does.
+    """
+    task_id = str(event.get("task_id") or "").strip()
+    quiz_id = str(event.get("quiz_id") or "").strip()
+    token = mint_token(task_id, quiz_id)
+    record = quiz_for_token(api, token) if task_id and quiz_id else None
+    message_id = int((record or {}).get("message_id") or 0)
+    edit = lifecycle_edit(record, event, lang) if record and message_id else None
+    if record is None or edit is None:
+        return None
+    remember_state(api, token, record, str(event.get("state") or ""))
+    return int(record.get("chat_id") or 0), message_id, edit[0], edit[1]
+
+
+async def _mark_answered(api, client, record: Dict[str, Any], answer: str, lang: str) -> None:
+    token = mint_token(str(record.get("task_id") or ""), str(record.get("quiz_id") or ""))
+    remember_state(api, token, record, "answered")
     message_id = int(record.get("message_id") or 0)
     if not message_id:
         return
-    text = f"{record.get('text') or ''}\n{_texts(lang)['answered_line'].format(answer=answer)}"
     await client.edit_message_text_with_inline_keyboard(
-        int(record.get("chat_id") or 0), message_id, text, [], parse_mode="",
+        int(record.get("chat_id") or 0), message_id, _answered_text(record, answer, lang), [], parse_mode="",
     )
 
 
@@ -195,7 +285,7 @@ async def answer_from_callback(
     if status < 400 or (status == 409 and isinstance(recorded, int)):
         # Settle the card on the RECORDED option (a first-wins loser learns the winner).
         chosen = recorded if isinstance(recorded, int) and 0 <= recorded < len(options) else index
-        await _mark_answered(client, record, f"{chosen + 1}. {options[chosen]}", lang)
+        await _mark_answered(api, client, record, f"{chosen + 1}. {options[chosen]}", lang)
 
 
 async def answer_from_reply(
@@ -206,5 +296,4 @@ async def answer_from_reply(
     status, payload = await _deliver(api, post, record, option_index=None, comment=answer_text, update_id=update_id)
     await client.send_message(chat_id, _outcome_text(status, payload, lang))
     if status < 400:
-        echo = answer_text if len(answer_text) <= _ANSWER_ECHO_MAX else answer_text[:_ANSWER_ECHO_MAX] + "…"
-        await _mark_answered(client, record, echo, lang)
+        await _mark_answered(api, client, record, _echo(answer_text), lang)
