@@ -664,8 +664,6 @@ def emit_task_results(
         })
     except Exception:
         log.warning("Failed to log task eval event", exc_info=True)
-        pass
-
     pending_events.append({
         "type": "task_metrics",
         "task_id": task.get("id"), "task_type": task.get("type"),
