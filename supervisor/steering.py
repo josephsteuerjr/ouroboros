@@ -346,6 +346,16 @@ def _handle_steer_task(evt: Dict[str, Any], ctx: Any) -> None:
                     status="needs_manual_target", reason="target_finished",
                 )
                 return
+            # The worker can remain RUNNING solely for post-task work after
+            # its solve loop and last mailbox drain. Never promise a delivery
+            # to an actor whose own result is already terminal.
+            from ouroboros.task_results import load_task_result
+            from ouroboros.task_status import SETTLED_STATUSES
+
+            if (load_task_result(drive, target) or {}).get("status") in SETTLED_STATUSES:
+                _steer_receipt(ctx, evt, target, target_label=target_label,
+                               status="needs_manual_target", reason="target_finished")
+                return
             fence_root = str(task.get("root_task_id") or target)
             active_fence = ACCEPTANCE_FENCES.get(fence_root)
             if isinstance(active_fence, dict) and str(active_fence.get("status") or "") == "sealed":

@@ -100,7 +100,7 @@ def test_answers_survive_eighteen_quizzes_mailbox_gc_and_rotation(runtime):
         assert quiz["comment"] == f"  Verbatim choice {index}\nsecond line  "
         assert quiz["request_id"] == f"answer-{index}"
         if index % 2:
-            assert "answered_index" not in quiz and "rejected all offered options" in row["text"]
+            assert "answered_index" not in quiz and "No option was selected; the owner wrote verbatim:" in row["text"]
         else:
             assert quiz["answered_index"] == 0 and "chose option 1: First" in row["text"]
     assert len([frame for frame in runtime.frames if frame.get("type") == "quiz"]) == 18

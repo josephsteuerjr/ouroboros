@@ -91,3 +91,30 @@ def test_settled_project_followup_enters_new_decision_turn(tmp_path, monkeypatch
     assert not any(isinstance(call, tuple) and call[1].get("action") == "mailbox_delivery"
                    for call in calls)
     assert drain_owner_entries(tmp_path, task["id"]) == []
+
+
+def test_decision_manifest_and_steer_refuse_settled_post_work_root(tmp_path):
+    from ouroboros.owner_mailbox import drain_owner_entries
+    from ouroboros.projects_registry import create_project
+    from ouroboros.server_routing_context import _addressable_root_tasks
+    from ouroboros.task_results import write_task_result
+    from supervisor.steering import _handle_steer_task
+    from ouroboros.project_dialogue import latest_chat_annotations
+
+    project = create_project(tmp_path, "settled-steer")
+    chat_id = int(project["chat_id"])
+    task = {"id": "settled-steer-root", "chat_id": chat_id, "root_task_id": "settled-steer-root",
+            "delegation_role": "root", "drive_root": str(tmp_path)}
+    ctx = _ctx(tmp_path, running={task["id"]: {"task": task}})
+    write_task_result(tmp_path, task["id"], "running")
+    assert [row["task_id"] for row in _addressable_root_tasks(ctx, chat_id)] == [task["id"]]
+    write_task_result(tmp_path, task["id"], "completed", result="answer",
+                      root_phase_checkpoint={"post_task_synthesis": "running"})
+    assert _addressable_root_tasks(ctx, chat_id) == []
+    # A stale decision turn may still call steer_task: the delivery owner must
+    # independently refuse, not just rely on the manifest it saw at start.
+    _handle_steer_task({"target_task_id": task["id"], "message": "late owner input",
+                        "chat_id": chat_id, "client_message_id": "late-steer-1",
+                        "routing_token": "t1", "issuer": {"kind": "owner_turn"}}, ctx)
+    assert drain_owner_entries(tmp_path, task["id"]) == []
+    assert latest_chat_annotations(tmp_path)["late-steer-1"]["reason"] == "target_finished"

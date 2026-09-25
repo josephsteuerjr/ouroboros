@@ -171,6 +171,7 @@ def _run_post_task_processing_async(
         checkpoint_status = "degraded"
         skipped: list[str] = []
         interrupted = ""
+        free_actions_applied = False
         try:
             # The free facts row precedes every paid stage, so neither Stop nor a
             # failed paid stage costs the card its facts; it is not a stage.
@@ -181,8 +182,22 @@ def _run_post_task_processing_async(
             llm_client = LLMClient()
             task_memory = Memory(drive_root=env.drive_root, repo_dir=env.repo_dir)
 
+            def _apply_free_reflection() -> None:
+                nonlocal free_actions_applied
+                entry = result.get("reflection_entry")
+                if entry is None or free_actions_applied:
+                    return
+                # An action may partially apply before raising; never replay it.
+                free_actions_applied = True
+                try:
+                    from ouroboros.project_facts import resolve_project_id
+                    _apply_reflection_memory_actions(env, entry, project_id=resolve_project_id(task_snapshot))
+                except Exception:
+                    log.warning("Completed reflection actions could not be applied for %s", stage_task_id, exc_info=True)
+
             def _promotion() -> None:
                 reflection_entry = result.get("reflection_entry")
+                _apply_free_reflection()
                 if is_presence_task(task_snapshot):
                     return
                 # Project facts stay scoped; generic process lessons remain global.
@@ -244,13 +259,9 @@ def _run_post_task_processing_async(
             # Applying actions already produced by reflection is free and must
             # survive a later paid-stage refusal; never run the paid promotion here.
             if (result.get("reflection_entry") is not None
-                    and interrupted not in {"owner_stopped", "cancelled", "finalize_requested"}):
-                try:
-                    from ouroboros.project_facts import resolve_project_id
-                    _apply_reflection_memory_actions(
-                        env, result["reflection_entry"], project_id=resolve_project_id(task_snapshot))
-                except Exception:
-                    log.warning("Completed reflection actions could not be applied for %s", stage_task_id, exc_info=True)
+                    and interrupted not in {"owner_stopped", "cancelled", "finalize_requested"}
+                    and not free_actions_applied):
+                _apply_free_reflection()
             _set_root_post_task_checkpoint(
                 env, task_snapshot, checkpoint_status,
                 stop_reason=(f"{interrupted}:skipped={','.join(skipped)}" if interrupted else ""),
@@ -281,7 +292,7 @@ def _run_post_task_processing_async(
                 # logical call bounds remain checked before owner_control.
                 prior_control = parent_wait.owner_control if parent_wait is not None else None
                 if parent_wait is not None:
-                    parent_wait.owner_control = lambda: "owner_stopped" if _owner_stop_requested() else None
+                    parent_wait.owner_control = lambda: "cancelled" if _owner_stop_requested() else None
                 try:
                     _run_scoped()
                 finally:
@@ -291,7 +302,7 @@ def _run_post_task_processing_async(
                 # A detached thread must not inherit its parent's closing scope.
                 with task_model_wait_scope(task=task_snapshot, drive_root=env.drive_root,
                                            event_queue=event_queue, worker_slot_held=False,
-                                           owner_control=lambda: "owner_stopped" if _owner_stop_requested() else None) as owner:
+                                           owner_control=lambda: "cancelled" if _owner_stop_requested() else None) as owner:
                     owner.overrides.update(role_overrides)
                     if post_task_key is not None:
                         with _POST_TASK_SYNTHESIS_LOCK:
