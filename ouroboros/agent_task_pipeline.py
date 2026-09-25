@@ -594,7 +594,9 @@ def emit_task_results(
     if ctx is not None and failed_or_forced:
         ctx._presence_completion_accepted = False
     reason_code = str(loop_outcome.get("reason_code") or "")
-    _root_outbox = _is_root_post_task(task)   # durable outbox (no model call): pre-marker predicate
+    # Root identity survives a Stop marker already copied onto the task: it
+    # suppresses paid synthesis, not the durable final outbox or free facts.
+    _root_outbox = _is_root_post_task({k: v for k, v in task.items() if k != "_skip_post_task_synthesis"})
     if getattr(ctx, "_skip_post_task_synthesis", False):   # "Stop now": paid root predicates see it
         task["_skip_post_task_synthesis"] = True
     _presence = is_presence_task(task)
