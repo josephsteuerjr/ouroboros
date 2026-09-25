@@ -52,6 +52,10 @@ form shows saved values before Save, and shortens the four long option labels.
 Version 1.2.4 always sends one short line when a task does not finish cleanly, with
 the same status word and reason sentence the task card shows; the task-completion
 toggle now only adds the clean finishes.
+Version 1.2.5 edits a sent question card when the host publishes its lifecycle
+(`chat.quiz_state`): an answer given on the web settles it, a closed wait drops the
+waiting line while the buttons stay, and a finished task says a late answer still
+counts as your message. The card only moves forward — nothing reopens an answer.
 
 The Mini App exposes the unchanged Ouroboros SPA through the established
 owner-authenticated sidecar and a pinned Cloudflare Quick Tunnel. It is enabled
