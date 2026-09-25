@@ -224,6 +224,17 @@ def _route_project_chat_to_running_task(
                 )
                 if live_meta is None and not still_pending:
                     return ""
+                # A worker may remain RUNNING to finish paid post-work after its
+                # answer/result settled. Its solve loop no longer drains this
+                # mailbox; accepting an owner follow-up here would label it
+                # delivered, then terminal cleanup would erase it unread.
+                # Check the actor's own drive: split-root copyback can lag the
+                # already-settled result while the worker still owns this slot.
+                from ouroboros.task_results import load_task_result
+                from ouroboros.task_status import SETTLED_STATUSES
+
+                if (load_task_result(task_drive, tid) or {}).get("status") in SETTLED_STATUSES:
+                    return ""
                 # Phase A: a task whose cancellation is PENDING must not accept a
                 # new owner message — same refusal the steer_task route makes,
                 # checked inside this admission transaction. Falling through to

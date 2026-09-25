@@ -421,7 +421,7 @@ def test_stopped_direct_turn_pays_no_post_task_synthesis(tmp_path, monkeypatch):
     ``root_phase_checkpoint`` is seeded for the boot reconciler to re-pay. A
     positive control (the same turn, not stopped) proves the recording model
     would have seen the paid reflection call. Neither turn buys a narrative:
-    the dispatched worker writes one free host facts row, the stopped turn none."""
+    both keep free host facts even when Stop prevents the worker from starting."""
     import ouroboros.llm as llm_mod
     from ouroboros.outcomes import REASON_OWNER_REQUESTED_FINALIZATION
     from supervisor.owner_stop import REASON_OWNER_STOPPED_DIRECT_TURN
@@ -507,8 +507,8 @@ def test_stopped_direct_turn_pays_no_post_task_synthesis(tmp_path, monkeypatch):
         rows = [json.loads(line) for line in chat_log.read_text(encoding="utf-8").splitlines()] if chat_log.exists() else []
         return [row.get("summary_kind") for row in rows if row.get("type") == "task_summary" and row.get("task_id") == task_id]
 
-    stopped_kinds = _summary_kinds("stopped1")  # no post-task worker was dispatched at all
-    assert "host_task_facts" not in stopped_kinds and "authored_root_summary" not in stopped_kinds
+    stopped_kinds = _summary_kinds("stopped1")  # no paid post-task worker was dispatched
+    assert stopped_kinds == ["host_task_facts"]  # free facts still reach pruned-result readers
 
     _task, _events, control_calls = _turn("control1", stopped=False)
     assert len(control_calls) >= 1, control_calls
