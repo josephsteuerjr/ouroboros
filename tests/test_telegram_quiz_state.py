@@ -257,3 +257,78 @@ def test_lifecycle_edit_is_a_pure_forward_only_decision(record_state, event, exp
     if record_state:
         record["state"] = record_state
     assert telegram_quiz.lifecycle_edit(record, event, "en") == expected
+
+
+def _fact(**fields):
+    return {"type": "quiz_state", "quiz_id": "q1", "task_id": "task-1", "state": "answered",
+            "ts": "2026-09-25T20:00:00+00:00", "chat_id": 1, "transport": {},
+            "topic": "chat.quiz_state", **fields}
+
+
+def _all_edits():
+    return [edit for client in Client.instances for edit in client.edits]
+
+
+def test_a_lifecycle_fact_that_outruns_the_cards_creation_is_applied_after_it(card, monkeypatch):
+    """Finding 5: the host can publish ``quiz_state`` (a web answer) while the card's
+    send is still in flight and nothing is remembered yet; the fact was dropped as an
+    unknown card and the card kept its buttons. Creation and lifecycle edits are
+    serialized per card, and a fact that arrives during creation is retained and
+    applied once the card is remembered."""
+    plugin, api = card.plugin, card.api
+    gate = asyncio.Event()
+
+    async def slow_send(self, chat_id, text, keyboard, parse_mode="HTML"):
+        self.panels.append((chat_id, text, keyboard))
+        await gate.wait()
+        return 555
+
+    monkeypatch.setattr(Client, "send_message_with_inline_keyboard", slow_send)
+
+    async def scenario():
+        creation = asyncio.ensure_future(plugin._make_quiz(api)(dict(_QUIZ)))
+        await asyncio.sleep(0)
+        assert card.record() is None  # the send is in flight, nothing remembered yet
+        fact = asyncio.ensure_future(plugin._make_quiz_state(api)(_fact(answered_index=1)))
+        await asyncio.sleep(0)
+        gate.set()
+        await asyncio.gather(creation, fact)
+
+    asyncio.run(scenario())
+    assert _all_edits() == [(42, 555,
+        "Question: Which db?\n1. sqlite\n2. postgres\nContinuing meanwhile: sqlite meanwhile"
+        "\nAnswered: 2. postgres", [])]
+    assert card.record()["state"] == "answered"
+    assert card.api.logs == []
+
+
+def test_concurrent_edits_are_serialized_so_an_expiry_never_lands_over_an_answer(card, monkeypatch):
+    """Finding 5: two facts in flight finished out of order — an expiry edit landing
+    after the answered edit restored the buttons while the stored state said
+    ``answered``. Per-card serialization makes each edit re-read the stored state
+    before it is sent: the expiry lands first, the answer settles the card last."""
+    card.send(wait_for_answer=True)
+    plugin, api = card.plugin, card.api
+    gate = asyncio.Event()
+    sent = []  # every edit in the order Telegram would receive it (one log, not per client)
+
+    async def slow_edit(self, chat_id, message_id, text, keyboard, parse_mode="HTML"):
+        if keyboard:  # the expiry edit (buttons restored) is the slow one
+            await gate.wait()
+        sent.append((chat_id, message_id, text, keyboard))
+        return True
+
+    monkeypatch.setattr(Client, "edit_message_text_with_inline_keyboard", slow_edit)
+
+    async def scenario():
+        expiry = asyncio.ensure_future(plugin._make_quiz_state(api)(_fact(state="expired_terminal")))
+        await asyncio.sleep(0)
+        answer = asyncio.ensure_future(plugin._make_quiz_state(api)(_fact(answered_index=1)))
+        await asyncio.sleep(0)
+        gate.set()
+        await asyncio.gather(expiry, answer)
+
+    asyncio.run(scenario())
+    assert [bool(edit[3]) for edit in sent] == [True, False]  # expiry first, then the answer
+    assert sent[-1][2].endswith("\nAnswered: 2. postgres")
+    assert card.record()["state"] == "answered"

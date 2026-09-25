@@ -40,8 +40,9 @@ def classify_wake(entries: list[dict], quiz_id: str) -> str:
     Closed vocabulary (TZ-2 B2): ``answer`` (this card), ``owner_text`` (the
     owner's own words, or an answer to another card), ``hurry`` (the owner's
     typed acceleration control: a request to finish sooner, never an answer),
-    ``mail:<task_id>`` (task mail, naming its sender), ``unknown`` (nothing
-    observed); the callers add ``timeout`` and ``control:<reason>``.
+    ``mail:<task_id>`` (task mail, naming its sender; ``mail:unknown`` when it
+    names none), ``unknown`` (nothing observed); the callers add ``timeout``
+    and ``control:<reason>``.
     Precedence: control, this card's answer, owner words, hurry, mail.
     """
     from ouroboros.owner_mailbox import (
@@ -61,8 +62,8 @@ def classify_wake(entries: list[dict], quiz_id: str) -> str:
     for kind, row in zip(kinds, entries):
         if kind == KIND_TASK_MESSAGE:  # the first mail is the one that woke the task
             source = str(row.get("source_task_id") or "").strip()
-            return f"mail:{source}" if source else "mail"
-    return "mail" if entries else "unknown"
+            return f"mail:{source}" if source else "mail:unknown"
+    return "mail:unknown" if entries else "unknown"
 
 
 def _wait_entries(ctx: Any) -> list[dict]:

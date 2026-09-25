@@ -195,22 +195,27 @@ def _run_post_task_processing_async(
                 except Exception:
                     log.warning("Completed reflection actions could not be applied for %s", stage_task_id, exc_info=True)
 
-            def _promotion() -> None:
+            def _promotion() -> str:
                 reflection_entry = result.get("reflection_entry")
                 _apply_free_reflection()
                 if is_presence_task(task_snapshot):
-                    return
+                    return ""
                 # Project facts stay scoped; generic process lessons remain global.
                 _update_improvement_backlog(env, reflection_entry)
+                failure = ""
                 try:
                     from ouroboros.post_task_evolution import maybe_promote
 
                     maybe_promote(env, task_snapshot, reflection_entry, llm_client)
                 except Exception as error:
                     propagate_paid_interruption(error)
-                    log.debug("Post-task evolution promotion failed", exc_info=True)
+                    # An ordinary chooser failure is this stage's own typed failure
+                    # (degraded, nothing skipped); the global callback still runs.
+                    failure = "promotion_failed"
+                    log.warning("Post-task evolution promotion failed", exc_info=True)
                 if on_reflection is not None:
                     on_reflection(reflection_entry, llm_client)
+                return failure
 
             # All late model work belongs to this one scoped worker.  This keeps
             # the root checkpoint non-final until consolidation, reflection,
@@ -225,7 +230,9 @@ def _run_post_task_processing_async(
                     review_evidence_snapshot, sealed_final=sealed_snapshot))),
                 ("promotion", _promotion),
             ]
-            from ouroboros.post_task_synthesis import POST_TASK_INTERRUPT_KINDS, propagate_paid_interruption
+            from ouroboros.post_task_synthesis import (
+                POST_TASK_INTERRUPT_KINDS, post_task_interruption, propagate_paid_interruption,
+            )
             from ouroboros.usage_accounting import BudgetExceeded
 
             stage_errors = False
@@ -257,8 +264,7 @@ def _run_post_task_processing_async(
                         try:
                             propagate_model_error(error)
                         except Exception as control:
-                            interrupted = str(getattr(control, "control_reason", "") or
-                                              getattr(control, "code", "") or "provider_outcome_unknown")
+                            interrupted = post_task_interruption(control)
                     if interrupted:
                         skipped = [stage for stage, _run in stages[index + 1:]]
                         log.warning("Post-task paid stage %s interrupted for %s: %s",
@@ -436,41 +442,39 @@ def _run_global_backlog_promotion_only(
     reflection_entry: Dict[str, Any] | None,
     llm: Any,
 ) -> None:
-    """Feed canonical improvement backlog/promotion without leaking project memory."""
+    """Feed canonical improvement backlog/promotion without leaking project memory.
+
+    Runs inside the promotion stage; a failure raises to that stage's coordinator."""
 
     if not reflection_entry:
         return
-    try:
-        candidates = [
-            item for item in (reflection_entry.get("backlog_candidates") or [])
-            if isinstance(item, dict) and str(item.get("summary") or "").strip()
-        ]
-        if not candidates:
-            return
-        sanitized_entry = {
-            "reflection": "\n".join(f"- {str(item.get('summary') or '').strip()}" for item in candidates),
-            "backlog_candidates": candidates,
-            "memory_actions": [],
-        }
-        _update_improvement_backlog(env, sanitized_entry)
-        from ouroboros.consciousness_authority import consciousness_origin_metadata
-        from ouroboros.post_task_evolution import maybe_promote
+    candidates = [
+        item for item in (reflection_entry.get("backlog_candidates") or [])
+        if isinstance(item, dict) and str(item.get("summary") or "").strip()
+    ]
+    if not candidates:
+        return
+    sanitized_entry = {
+        "reflection": "\n".join(f"- {str(item.get('summary') or '').strip()}" for item in candidates),
+        "backlog_candidates": candidates,
+        "memory_actions": [],
+    }
+    _update_improvement_backlog(env, sanitized_entry)
+    from ouroboros.consciousness_authority import consciousness_origin_metadata
+    from ouroboros.post_task_evolution import maybe_promote
 
-        global_task = {
-            "id": str(task.get("id") or ""),
-            "type": str(task.get("type") or "task"),
-            "source": "project_scoped_global_improvement",
-            # The origin survives the sanitized view: a campaign a consciousness tree
-            # promotes stays inside the consciousness limits.
-            "metadata": {"globalized_from_project_task": True, **consciousness_origin_metadata(task.get("metadata"))},
-            # The eligibility probe reads the contract (disabled_tools), so the
-            # globalized view keeps it: a level that may not evolve stays that way.
-            **({"task_contract": dict(task["task_contract"])} if isinstance(task.get("task_contract"), dict) else {}),
-        }
-        maybe_promote(env, global_task, sanitized_entry, llm)
-    except Exception as error:
-        propagate_model_error(error)
-        log.debug("Canonical post-task promotion-only path failed", exc_info=True)
+    global_task = {
+        "id": str(task.get("id") or ""),
+        "type": str(task.get("type") or "task"),
+        "source": "project_scoped_global_improvement",
+        # The origin survives the sanitized view: a campaign a consciousness tree
+        # promotes stays inside the consciousness limits.
+        "metadata": {"globalized_from_project_task": True, **consciousness_origin_metadata(task.get("metadata"))},
+        # The eligibility probe reads the contract (disabled_tools), so the
+        # globalized view keeps it: a level that may not evolve stays that way.
+        **({"task_contract": dict(task["task_contract"])} if isinstance(task.get("task_contract"), dict) else {}),
+    }
+    maybe_promote(env, global_task, sanitized_entry, llm)
 
 
 def _attach_host_mutation_projection(

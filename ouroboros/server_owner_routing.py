@@ -227,13 +227,11 @@ def _route_project_chat_to_running_task(
                 # A worker may remain RUNNING to finish paid post-work after its
                 # answer/result settled. Its solve loop no longer drains this
                 # mailbox; accepting an owner follow-up here would label it
-                # delivered, then terminal cleanup would erase it unread.
-                # Check the actor's own drive: split-root copyback can lag the
-                # already-settled result while the worker still owns this slot.
-                from ouroboros.task_results import load_task_result
-                from ouroboros.task_status import SETTLED_STATUSES
+                # delivered, then terminal cleanup would erase it unread. One
+                # predicate with the quiz ingress (TZ-2 D15).
+                from ouroboros.owner_mailbox import mailbox_drain_ended
 
-                if (load_task_result(task_drive, tid) or {}).get("status") in SETTLED_STATUSES:
+                if mailbox_drain_ended(task_drive, tid):
                     return ""
                 # Phase A: a task whose cancellation is PENDING must not accept a
                 # new owner message — same refusal the steer_task route makes,

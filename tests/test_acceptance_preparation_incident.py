@@ -769,3 +769,37 @@ def test_artifact_and_receipt_content_change_material_not_delivery_multiplicity(
     verification_receipts_path(tmp_path, tool_ctx.task_id).write_text("{broken receipt")
     unknown = preparation_source_identity(tool_ctx, ctx.llm_trace)
     assert unknown["identity"] == "unknown" and not unknown["known"]
+
+
+@pytest.mark.parametrize("action,enforcement", [("finish", "advisory"), ("stop", "blocking")])
+def test_an_action_only_informed_author_finish_or_stop_is_honored_with_no_invented_stance(
+    tmp_path, monkeypatch, action, enforcement,
+):
+    """Finding 3: tools/review.py preserves an EMPTY disposition for an action-only
+    nomination (C4), but both preparation gates still demanded one of the four
+    stance words, so an author who said only finish|stop after an exposed
+    preparation failure was refused. Both gates accept the explicit act; the
+    recorded author disposition carries the act and no invented stance."""
+    from ouroboros import acceptance_preparation as prep, loop as loop_mod
+    from ouroboros.loop_acceptance import merge_agent_acceptance_stance
+    from ouroboros.loop_delivery import DeliveryCandidate
+    from ouroboros.loop_messages import owner_source_sha256
+
+    ctx = _ctx(tmp_path)
+    tool_ctx = ctx.tools._ctx
+    monkeypatch.setattr(loop_mod, "get_task_review_mode", lambda: "required")
+    monkeypatch.setattr(loop_mod, "get_review_enforcement", lambda: enforcement)
+    tool_ctx._delivery_candidate = DeliveryCandidate("saved answer", "saved-hash", 1, 1, "prior-fp", {})
+    tool_ctx._delivery_candidate.owner_source_sha256 = owner_source_sha256(tool_ctx)
+    record = _expose(_fail(prep.begin_preparation(ctx.llm_trace, tool_ctx)))
+    merge_agent_acceptance_stance(ctx.llm_trace, {
+        "explicit_finish": True, "author_action": action, "disposition": "", "rationale": "the act alone",
+    }, tool_ctx)
+    assert ctx.llm_trace["acceptance_decision"]["agent_finish_intent"]["author_action"] == action
+    assert prep.preparation_delivery_choice(tool_ctx, ctx.llm_trace)
+    assert prep.finish_exposed_preparation_author(ctx, record) is True
+    decision = ctx.llm_trace["acceptance_decision"]
+    assert decision["reason"] == ("author_stop" if action == "stop" else "author_finish")
+    assert decision["author_disposition"]["action"] == action
+    assert decision["author_disposition"]["disposition"] == ""      # nothing invented
+    assert decision["author_disposition"]["subject_hash"] == f"{record['incident_id']}:attempt-1"

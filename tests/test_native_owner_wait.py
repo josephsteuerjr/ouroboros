@@ -101,7 +101,7 @@ def test_answer_before_capacity_grant_replaces_a_stale_timeout(tmp_path):
 
     ctx = native_context(tmp_path)
     assert classify_wake([{"kind": "hurry", "msg_id": "h"}], "q1") == "hurry"
-    assert classify_wake([{"kind": "task_message", "provenance": "ancestor_task"}], "q1") == "mail"
+    assert classify_wake([{"kind": "task_message", "provenance": "ancestor_task"}], "q1") == "mail:unknown"
     assert classify_wake([{"kind": KIND_QUIZ_ANSWER, "msg_id": "quiz_answer:other"}], "q1") == "owner_text"
     assert write_owner_message(tmp_path, "Owner answered", ctx.task_id,
                                msg_id="quiz_answer:q1", kind=KIND_QUIZ_ANSWER)

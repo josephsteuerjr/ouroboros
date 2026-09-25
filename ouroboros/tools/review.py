@@ -103,7 +103,7 @@ def get_tools():
                         "rationale": {
                             "type": "string",
                             "default": "",
-                            "description": "Rationale required for an explicit Advisory author finish. Rationale without agent_disposition records a partial stance only and does not end review.",
+                            "description": "Rationale required for an explicit author finish or stop. Rationale alone (no agent_disposition and no author_action) is evidence only and does not end review; with author_action it records the act and no invented stance.",
                         },
                         "author_action": {
                             "type": "string", "enum": ["finish", "stop"],

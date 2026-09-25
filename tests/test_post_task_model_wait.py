@@ -55,6 +55,8 @@ def phase(tmp_path, monkeypatch):
     monkeypatch.setattr(pipeline, "_record_task_facts", lambda *a, **k: stages.append("facts"))
     monkeypatch.setattr(pipeline, "_update_improvement_backlog", lambda *a: stages.append("backlog"))
     monkeypatch.setattr(pipeline, "_apply_reflection_memory_actions", lambda *a, **k: None)
+    from ouroboros import post_task_evolution
+    real_promote = post_task_evolution.maybe_promote
     monkeypatch.setattr("ouroboros.post_task_evolution.maybe_promote", lambda *a: None)
 
     def reflect(_env, llm, *args, **kwargs):
@@ -73,7 +75,7 @@ def phase(tmp_path, monkeypatch):
 
     monkeypatch.setattr(pipeline, "_set_root_post_task_checkpoint", checkpoint)
     yield SimpleNamespace(root=root, env=env, task=task, events=events, engine=engine,
-                          ready=ready, done=done, stages=stages)
+                          ready=ready, done=done, stages=stages, real_promote=real_promote)
     task["_skip_post_task_synthesis"] = True
     ready.set()
     done.wait(5)
@@ -194,7 +196,7 @@ def test_paid_stage_interruption_closes_checkpoint_without_buying_following_stag
     else:
         assert f.stages == ["facts", "chat"]
         assert checkpoint["post_task_stop_reason"].startswith({
-            "budget": "budget_exhausted", "deadline": "deadline", "unknown": "model_outcome_unknown"}[cause])
+            "budget": "budget_exhausted", "deadline": "deadline", "unknown": "provider_outcome_unknown"}[cause])
         assert "scratchpad_consolidation,reflection,promotion" in checkpoint["post_task_stop_reason"]
     assert not f.engine.creates  # no provider send after the first interrupted stage
 
@@ -412,7 +414,9 @@ def test_outer_paid_stage_cannot_swallow_typed_unknown(tmp_path, monkeypatch, st
     assert raised.value is error
 
 
-def test_promotion_outer_wrapper_propagates_typed_control_but_keeps_ordinary_fallback(tmp_path, monkeypatch):
+def test_promotion_outer_wrapper_propagates_typed_control_and_ordinary_failure_alike(tmp_path, monkeypatch):
+    """A typed control keeps propagating; an ordinary chooser failure now reaches the
+    stage too instead of returning the same None a genuine "no promotion" returns."""
     from ouroboros import post_task_evolution as promotion
 
     monkeypatch.setattr(config, "get_post_task_evolution_enabled", lambda: True)
@@ -427,7 +431,8 @@ def test_promotion_outer_wrapper_propagates_typed_control_but_keeps_ordinary_fal
     with pytest.raises(model_wait.ModelWaitInterrupted):
         promotion.maybe_promote(env, {"id": "task"}, None)
     monkeypatch.setattr(promotion, "_decide_promotion", lambda *a, **k: 1 / 0)
-    assert promotion.maybe_promote(env, {"id": "task"}, None) is None
+    with pytest.raises(ZeroDivisionError):
+        promotion.maybe_promote(env, {"id": "task"}, None)
 
 
 def _controlled_worker(input_queue, output_queue, data_root, repo_root, resume):
@@ -569,3 +574,112 @@ def test_mailbox_survives_until_both_attachment_and_post_work_custody_settle(tmp
             post = "completed"
         else:
             pending, post = [], "completed"
+
+
+def test_budget_refusal_inside_the_promotion_chooser_degrades_the_checkpoint(phase, monkeypatch):
+    """Finding 2: `_decide_promotion` caught the wallet's BudgetExceeded with
+    `propagate_model_error` and returned None, so `maybe_promote` read as "no
+    promotion" and the coordinator wrote `completed`. Raised by the chooser's own
+    LLM call through the REAL adapters (`maybe_promote`, the promotion stage), the
+    refusal reaches the coordinator: degraded, the typed stop reason, and no
+    global callback afterwards."""
+    from ouroboros import llm_observability, post_task_evolution as promotion
+    from ouroboros.usage_accounting import BudgetExceeded
+
+    f = phase
+    monkeypatch.setattr("ouroboros.post_task_evolution.maybe_promote", f.real_promote)
+    monkeypatch.setattr(config, "get_post_task_evolution_enabled", lambda: True)
+    monkeypatch.setattr(config, "get_runtime_mode", lambda: "advanced")
+    monkeypatch.setattr(config, "get_post_task_evolution_cadence", lambda: "llm")
+    monkeypatch.setattr(promotion, "_eligible", lambda *_: True)
+    monkeypatch.setattr(promotion, "_is_canonical_run", lambda *_: True)
+    monkeypatch.setattr(promotion, "_closed_objectives_digest", lambda *_: "")
+
+    def refuse(*_args, **_kwargs):
+        f.stages.append("chooser")
+        raise BudgetExceeded("root wallet spent")
+
+    monkeypatch.setattr(llm_observability, "chat_observed", refuse)
+    callbacks = []
+    f.ready.set()
+    pipeline._run_post_task_processing_async(
+        f.env, f.task, {"rounds": 3}, {}, {}, f.root / "logs", event_queue=f.events,
+        on_reflection=lambda *args: callbacks.append(args))
+    assert f.done.wait(5)
+    checkpoint = load_task_result(f.root, f.task["id"])["root_phase_checkpoint"]
+    assert checkpoint["post_task_synthesis"] == "degraded"
+    assert checkpoint["post_task_stop_reason"] == "budget_exhausted:skipped="
+    assert f.stages[-2:] == ["backlog", "chooser"] and callbacks == []
+
+
+@pytest.mark.parametrize("seam", ["groom_backlog", "global_promotion"])
+def test_budget_refusal_below_the_backlog_adapters_is_re_raised(tmp_path, monkeypatch, seam):
+    """Finding 2: the grooming call and the split-root global promotion-only path
+    caught BudgetExceeded with `propagate_model_error` too."""
+    from ouroboros import improvement_backlog, llm_observability
+    from ouroboros.usage_accounting import BudgetExceeded
+
+    def refuse(*_args, **_kwargs):
+        raise BudgetExceeded("root wallet spent")
+
+    if seam == "groom_backlog":
+        assert improvement_backlog.append_backlog_items(tmp_path, [
+            {"summary": "one auto item", "category": "process", "source": "execution_reflection"}]) == 1
+        monkeypatch.setattr(llm_observability, "chat_observed", refuse)
+        with pytest.raises(BudgetExceeded):
+            improvement_backlog.groom_backlog(tmp_path, cap=0)
+    else:
+        monkeypatch.setattr("ouroboros.post_task_evolution.maybe_promote", refuse)
+        with pytest.raises(BudgetExceeded):
+            pipeline._run_global_backlog_promotion_only(
+                SimpleNamespace(drive_root=tmp_path), {"id": "t"},
+                {"backlog_candidates": [{"summary": "s", "category": "process"}]}, None)
+
+
+@pytest.mark.parametrize("outcome", ["failure", "no_op"])
+def test_ordinary_reflection_failure_degrades_the_checkpoint_and_keeps_later_stages(phase, monkeypatch, outcome):
+    """Finding 6: `_run_reflection` logged an ordinary failure and returned None —
+    the same None a genuine "nothing to reflect on" returns — so the coordinator
+    kept stage_errors=False and wrote `completed`. Through the REAL adapter the
+    failure reaches the stage-level catch: degraded, no skipped list, promotion
+    still runs. A genuine no-op still completes."""
+    from ouroboros import post_task_synthesis, reflection
+
+    f = phase
+    monkeypatch.setattr(pipeline, "_run_reflection", post_task_synthesis._run_reflection)
+    monkeypatch.setattr(reflection, "should_generate_reflection", lambda *a, **k: outcome == "failure")
+
+    def fail(*_args, **_kwargs):
+        f.stages.append("reflection-model")
+        raise RuntimeError("reflection provider failed")
+
+    monkeypatch.setattr(reflection, "generate_reflection", fail)
+    launch(f)
+    assert f.done.wait(5)
+    checkpoint = load_task_result(f.root, f.task["id"])["root_phase_checkpoint"]
+    assert checkpoint["post_task_synthesis"] == ("degraded" if outcome == "failure" else "completed")
+    assert not checkpoint.get("post_task_stop_reason")
+    assert f.stages == ["facts", "chat", "scratch"] + (["reflection-model"] if outcome == "failure" else []) + ["backlog"]
+
+
+def test_ordinary_promotion_failure_degrades_the_checkpoint_but_keeps_the_global_callback(phase, monkeypatch):
+    """Finding 6: the promotion stage logged an ordinary chooser failure at debug and
+    completed. It now returns a typed stage failure (degraded, nothing skipped); the
+    split-root global callback is still run — only a paid interruption stops it."""
+    f = phase
+
+    def fail(*_args, **_kwargs):
+        f.stages.append("promotion-model")
+        raise RuntimeError("chooser provider failed")
+
+    monkeypatch.setattr("ouroboros.post_task_evolution.maybe_promote", fail)
+    callbacks = []
+    f.ready.set()
+    pipeline._run_post_task_processing_async(
+        f.env, f.task, {"rounds": 3}, {}, {}, f.root / "logs", event_queue=f.events,
+        on_reflection=lambda *args: callbacks.append(args))
+    assert f.done.wait(5)
+    checkpoint = load_task_result(f.root, f.task["id"])["root_phase_checkpoint"]
+    assert checkpoint["post_task_synthesis"] == "degraded"
+    assert not checkpoint.get("post_task_stop_reason")
+    assert f.stages[-2:] == ["backlog", "promotion-model"] and len(callbacks) == 1

@@ -17,8 +17,10 @@ delivered verbatim as their own answer.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
+import weakref
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from .telegram_state import _read_json_file, _state_file
@@ -69,6 +71,17 @@ _TEXTS = {
 # A remembered card's lifecycle only moves forward, as on the web card: a closed
 # wait or an expiry never reopens a settled card, and nothing downgrades an answer.
 _LIFECYCLE_RANK = {"open": 0, "expired_terminal": 1, "superseded": 2, "answered": 3}
+
+# The host publishes ``chat.quiz`` and ``chat.quiz_state`` as independent
+# coroutines on the extension loop, so a fact could outrun the card's own send
+# (nothing remembered yet) or two edits could land out of order. One lock per
+# card on the running loop orders creation and every edit, so each edit re-reads
+# the stored state before it is sent; a fact that finds no card yet is retained
+# and applied right after the card is remembered. Locks live per loop (weakly),
+# so a closed loop takes its locks with it.
+_CARD_LOCKS: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, Dict[str, asyncio.Lock]]" = (
+    weakref.WeakKeyDictionary())
+_RETAINED_FACTS: Dict[str, Dict[str, Any]] = {}
 
 
 def _texts(lang: str) -> Dict[str, str]:
@@ -252,6 +265,57 @@ def lifecycle_target(
         return None
     remember_state(api, token, record, str(event.get("state") or ""))
     return int(record.get("chat_id") or 0), message_id, edit[0], edit[1]
+
+
+def card_lock(token: str) -> asyncio.Lock:
+    """The running loop's lock for one card (bounded like the remembered cards)."""
+    locks = _CARD_LOCKS.setdefault(asyncio.get_running_loop(), {})
+    lock = locks.get(token)
+    if lock is None:
+        idle = [key for key, held in locks.items() if not held.locked()]
+        for stale in idle[:max(0, len(locks) - _MAX_REMEMBERED)]:
+            locks.pop(stale, None)
+        lock = locks[token] = asyncio.Lock()
+    return lock
+
+
+def _retain_fact(token: str, event: Dict[str, Any]) -> None:
+    """Keep the highest-ranked fact that arrived before its card was remembered."""
+    held = _RETAINED_FACTS.get(token) or {}
+    if _LIFECYCLE_RANK.get(str(event.get("state") or ""), 0) >= _LIFECYCLE_RANK.get(str(held.get("state") or ""), 0):
+        _RETAINED_FACTS.pop(token, None)
+        _RETAINED_FACTS[token] = dict(event)
+    for stale in list(_RETAINED_FACTS)[:-_MAX_REMEMBERED]:
+        _RETAINED_FACTS.pop(stale, None)
+
+
+async def _apply_fact(api, token: str, event: Dict[str, Any], lang: str, client_factory) -> None:
+    if quiz_for_token(api, token) is None:
+        _retain_fact(token, event)  # the card's send may still be in flight
+        return
+    target = lifecycle_target(api, event, lang)
+    if target is None:
+        return
+    if not await client_factory().edit_message_text_with_inline_keyboard(*target, parse_mode=""):
+        api.log("warning", f"Telegram quiz card edit failed ({event.get('state')}).")  # never retried
+
+
+async def follow_lifecycle(api, event: Dict[str, Any], lang: str, *, client_factory) -> None:
+    """Apply one ``chat.quiz_state`` fact under its card's lock (see ``_CARD_LOCKS``)."""
+    task_id = str(event.get("task_id") or "").strip()
+    quiz_id = str(event.get("quiz_id") or "").strip()
+    if not task_id or not quiz_id:
+        return
+    token = mint_token(task_id, quiz_id)
+    async with card_lock(token):
+        await _apply_fact(api, token, event, lang, client_factory)
+
+
+async def apply_retained_fact(api, token: str, lang: str, *, client_factory) -> None:
+    """Right after ``remember_quiz``, under the same lock: the fact that outran creation."""
+    event = _RETAINED_FACTS.pop(token, None)
+    if event is not None:
+        await _apply_fact(api, token, event, lang, client_factory)
 
 
 async def _mark_answered(api, client, record: Dict[str, Any], answer: str, lang: str) -> None:

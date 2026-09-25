@@ -562,6 +562,25 @@ def propagate_paid_interruption(error: BaseException) -> None:
         raise error
 
 
+def post_task_interruption(control: BaseException) -> str:
+    """The closed stop-reason word for a control that ended paid post-work.
+
+    A model wait carries its ``control_reason``; a typed provider fact keeps its
+    code; an unknown outcome (a dispatched attempt without a terminal provider
+    fact) is always ``provider_outcome_unknown`` — the transport's own
+    ``model_outcome_unknown`` spelling never reaches the checkpoint.
+    """
+    reason = str(getattr(control, "control_reason", "") or "")
+    if reason:
+        return reason
+    code = str(getattr(control, "code", "") or "")
+    capture = getattr(control, "physical_attempt_capture", None)
+    if (not code or code == "model_outcome_unknown"
+            or getattr(capture, "state", None) in {"dispatched", "unresolved"}):
+        return "provider_outcome_unknown"
+    return code
+
+
 def _post_task_paid_interruption(errors: Any) -> str:
     """The stage's typed outcome from returned error facts: '' when clean.
 
@@ -680,54 +699,51 @@ def _run_reflection(env: Any, llm: Any, task: Dict[str, Any],
                     usage: Dict[str, Any], llm_trace: Dict[str, Any],
                     review_evidence: Dict[str, Any],
                     sealed_final: Dict[str, Any] | None = None) -> Dict[str, Any] | None:
-    """Run execution reflection synchronously (process memory, Bible P1)."""
-    try:
-        from ouroboros.reflection import (
-            should_generate_reflection, generate_reflection, append_reflection_routed,
-        )
-        synthesis_cost = _synthesis_cost_usd(usage)
-        # The one walk happens BEFORE the decision, because a root whose only
-        # failures are its children cannot be recognized without it: children do
-        # not reflect, so their classes have to reach this gate to be learned
-        # from at all. Still one walk, and its rows serve the prompt below.
-        child_evidence, child_rows = _child_task_evidence(env, task)
-        child_classes = _child_failure_classes(child_rows)
-        if should_generate_reflection(
-            llm_trace,
-            task=task,
-            rounds=int(usage.get("rounds", 0)),
-            cost_usd=synthesis_cost,
+    """Run execution reflection synchronously (process memory, Bible P1).
+
+    Returns the entry, or None only when there is nothing to reflect on; a
+    failure raises to the post-task stage coordinator, which degrades the
+    checkpoint and still runs the later stages (TZ-2 C3).
+    """
+    from ouroboros.reflection import (
+        should_generate_reflection, generate_reflection, append_reflection_routed,
+    )
+    synthesis_cost = _synthesis_cost_usd(usage)
+    # The one walk happens BEFORE the decision, because a root whose only
+    # failures are its children cannot be recognized without it: children do
+    # not reflect, so their classes have to reach this gate to be learned
+    # from at all. Still one walk, and its rows serve the prompt below.
+    child_evidence, child_rows = _child_task_evidence(env, task)
+    child_classes = _child_failure_classes(child_rows)
+    if should_generate_reflection(
+        llm_trace,
+        task=task,
+        rounds=int(usage.get("rounds", 0)),
+        cost_usd=synthesis_cost,
+        child_failure_classes=child_classes,
+    ):
+        trace_summary = build_trace_summary(llm_trace, all_calls=True)
+        reflection_usage = dict(usage)
+        # Reflection's legacy durable cost_usd field now records this
+        # same subtree snapshot instead of silently reverting to own cost.
+        reflection_usage["cost"] = synthesis_cost
+        from ouroboros.tools.registry import ToolContext
+        knowledge_context = ToolContext(
+            repo_dir=getattr(env, "repo_dir", env.drive_root),
+            drive_root=pathlib.Path(task.get("budget_drive_root") or env.drive_root),
+            project_id=str(task.get("project_id") or ""),
+            task_id=str(task.get("id") or ""))
+        entry = generate_reflection(
+            task, llm_trace, trace_summary,
+            llm, reflection_usage,
+            review_evidence=review_evidence,
+            child_evidence=child_evidence,
+            usage_snapshot_text=_synthesis_usage_snapshot_text(usage),
+            sealed_final_text=sealed_final_prompt_section(sealed_final),
             child_failure_classes=child_classes,
-        ):
-            trace_summary = build_trace_summary(llm_trace, all_calls=True)
-            try:
-                reflection_usage = dict(usage)
-                # Reflection's legacy durable cost_usd field now records this
-                # same subtree snapshot instead of silently reverting to own cost.
-                reflection_usage["cost"] = synthesis_cost
-                from ouroboros.tools.registry import ToolContext
-                knowledge_context = ToolContext(
-                    repo_dir=getattr(env, "repo_dir", env.drive_root),
-                    drive_root=pathlib.Path(task.get("budget_drive_root") or env.drive_root),
-                    project_id=str(task.get("project_id") or ""),
-                    task_id=str(task.get("id") or ""))
-                entry = generate_reflection(
-                    task, llm_trace, trace_summary,
-                    llm, reflection_usage,
-                    review_evidence=review_evidence,
-                    child_evidence=child_evidence,
-                    usage_snapshot_text=_synthesis_usage_snapshot_text(usage),
-                    sealed_final_text=sealed_final_prompt_section(sealed_final),
-                    child_failure_classes=child_classes,
-                    knowledge_context=knowledge_context,
-                )
-                entry = {**entry, **presence_provenance_fields(task)}
-                append_reflection_routed(env, task, entry)
-                return entry
-            except Exception as error:
-                propagate_paid_interruption(error)
-                log.warning("Execution reflection failed (non-critical)", exc_info=True)
-    except Exception as error:
-        propagate_paid_interruption(error)
-        log.debug("Execution reflection setup failed", exc_info=True)
+            knowledge_context=knowledge_context,
+        )
+        entry = {**entry, **presence_provenance_fields(task)}
+        append_reflection_routed(env, task, entry)
+        return entry
     return None

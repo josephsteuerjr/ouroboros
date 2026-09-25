@@ -770,6 +770,21 @@ def cleanup_task_mailbox(drive_root: pathlib.Path, task_id: str) -> None:
             log.debug("Failed to cleanup mailbox for task %s", task_id, exc_info=True)
 
 
+def mailbox_drain_ended(task_drive: pathlib.Path, task_id: str) -> bool:
+    """The actor's own result row is settled: no solve loop drains this mailbox.
+
+    A worker may stay RUNNING to finish paid post-work after its answer settled
+    (TZ-2 D15). Its mailbox is then only cleaned up, never read again, so owner
+    mail and quiz answers must not be labelled delivered into it — the routing
+    guard and the quiz ingress both ask this one fact. The actor's drive is read,
+    not the canonical row: split-root copyback can lag the settlement.
+    """
+    from ouroboros.task_results import load_task_result
+    from ouroboros.task_status import SETTLED_STATUSES
+
+    return str((load_task_result(task_drive, task_id) or {}).get("status") or "") in SETTLED_STATUSES
+
+
 def settled_mailbox_cleanup_allowed(result: Dict[str, Any]) -> bool:
     """A settled task still owns its mailbox while post-work or input copy is owed."""
     from ouroboros.post_task_checkpoint import post_task_synthesis_is_open

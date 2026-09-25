@@ -260,7 +260,8 @@ def _initialize_owner_directives(ctx: Any, messages: List[Dict[str, Any]]) -> No
     if isinstance(author, dict) and author.get("kind") == "task":
         for row in metadata.get("owner_corpus") or []:
             if isinstance(row, dict) and row.get("source") in {
-                    "owner_mailbox", "owner_quiz_answer", "origin_message", "owner_corpus", "direct_incoming"}:
+                    "owner_mailbox", "owner_quiz_answer", "origin_message", "owner_corpus", "direct_incoming",
+                    "initial_user"}:  # the routing turn's own stamped owner row (a suppressed origin)
                 _loop()._record_owner_directive(
                     ctx, source=str(row["source"]), content=row.get("content"),
                     msg_id=str(row.get("msg_id") or ""),

@@ -1330,39 +1330,41 @@ def _make_quiz(api):
                 question, labels, stake, assumption, wait_for_answer=wait_for_answer)
             token = telegram_quiz.mint_token(task_id, quiz_id)
             # One button per option; a reply to the card is a free-form answer.
-            # Both reach the host's decision ingress (#472).
-            if labels:
-                message_id = await client.send_message_with_inline_keyboard(
-                    chat_id, f"{body}\n{telegram_quiz.hint(lang)}",
-                    telegram_quiz.quiz_keyboard(token, labels), parse_mode="",
-                )
-            else:
-                message_id = await client.send_message(
-                    chat_id, f"{body}\n{telegram_quiz.hint_open(lang)}", parse_mode="",
-                )
-            telegram_quiz.remember_quiz(api, token, {
-                "task_id": task_id, "quiz_id": quiz_id, "chat_id": chat_id,
-                "message_id": int(message_id or 0), "options": labels,
-                # The answer edit keeps optional history, not a live waiting claim.
-                "text": (telegram_quiz.render_quiz_text(question, labels, stake, "")
-                         if wait_for_answer else body),
-            })
+            # Both reach the host's decision ingress (#472). Creation holds the
+            # card's lock so a lifecycle fact cannot edit (or miss) a card mid-send.
+            async with telegram_quiz.card_lock(token):
+                if labels:
+                    message_id = await client.send_message_with_inline_keyboard(
+                        chat_id, f"{body}\n{telegram_quiz.hint(lang)}",
+                        telegram_quiz.quiz_keyboard(token, labels), parse_mode="",
+                    )
+                else:
+                    message_id = await client.send_message(
+                        chat_id, f"{body}\n{telegram_quiz.hint_open(lang)}", parse_mode="",
+                    )
+                telegram_quiz.remember_quiz(api, token, {
+                    "task_id": task_id, "quiz_id": quiz_id, "chat_id": chat_id,
+                    "message_id": int(message_id or 0), "options": labels,
+                    # The answer edit keeps optional history, not a live waiting claim.
+                    "text": (telegram_quiz.render_quiz_text(question, labels, stake, "")
+                             if wait_for_answer else body),
+                })
+                await telegram_quiz.apply_retained_fact(api, token, lang, client_factory=lambda: client)
         except Exception as exc:
             api.log("error", f"Telegram quiz error: {exc}")
     return handle
 
 
 def _make_quiz_state(api):
-    """Telegram has no reload: a sent card follows its question's lifecycle (TZ-2 B2)."""
+    """Telegram has no reload: a sent card follows its question's lifecycle (TZ-2 B2),
+    one fact at a time per card and never before the card itself is remembered."""
     async def handle(event: Dict[str, Any]) -> None:
         try:
-            target = telegram_quiz.lifecycle_target(api, event, _poller_preferences(api)[4])
-            if target is None:
-                return
-            protected_settings = api.get_settings(["TELEGRAM_BOT_TOKEN"])
-            client = TelegramClient(protected_settings.get("TELEGRAM_BOT_TOKEN", ""), trust_env=_HONOR_ENV_PROXIES)
-            if not await client.edit_message_text_with_inline_keyboard(*target, parse_mode=""):
-                api.log("warning", f"Telegram quiz card edit failed ({event.get('state')}).")  # never retried
+            await telegram_quiz.follow_lifecycle(
+                api, event, _poller_preferences(api)[4],
+                client_factory=lambda: TelegramClient(
+                    api.get_settings(["TELEGRAM_BOT_TOKEN"]).get("TELEGRAM_BOT_TOKEN", ""),
+                    trust_env=_HONOR_ENV_PROXIES))
         except Exception as exc:
             api.log("error", f"Telegram quiz state error: {exc}")
     return handle

@@ -219,3 +219,66 @@ def test_a_second_answer_to_a_settled_card_is_still_a_first_wins_409(tmp_path, m
     assert loser.json()["state"] == STATE_ANSWERED
     assert loser.json()["answered_index"] == 1
     assert _inbox(bridge) == []
+
+
+def _real_liveness_app(tmp_path, monkeypatch):
+    """The decision app with the REAL queue-backed liveness read (no lambda stub)."""
+    from starlette.applications import Starlette
+    from starlette.routing import Route
+
+    from ouroboros.gateway import task_decision as td
+
+    monkeypatch.setattr(td, "request_drive_root", lambda request: tmp_path)
+    return Starlette(routes=[Route("/api/decisions", endpoint=td.api_decision_answer, methods=["POST"])])
+
+
+@pytest.mark.parametrize("settled", [True, False])
+def test_an_answer_during_settled_post_work_takes_the_late_path_not_the_dead_mailbox(
+    tmp_path, monkeypatch, settled,
+):
+    """TZ-2 D15 at quiz ingress: a root whose result settled while its worker still
+    runs paid post-work is still in RUNNING, but its solve loop no longer drains
+    the mailbox — terminal cleanup would erase an answer written there unread.
+    The same actor-drive settlement fact the owner-mail routing guard reads sends
+    the answer through the late path instead: accepted with the audit flag and
+    delivered into the card's chat as the owner's own message. A root whose
+    result has not settled still receives the answer as its mailbox control."""
+    import supervisor.queue as q
+
+    from ouroboros.owner_mailbox import KIND_QUIZ_ANSWER, drain_owner_entries
+    from ouroboros.task_results import write_task_result
+
+    task = {"id": "task-3", "chat_id": 1, "root_task_id": "task-3", "delegation_role": "root",
+            "metadata": {}, "drive_root": str(tmp_path)}
+    monkeypatch.setattr(q, "RUNNING", {"task-3": {"task": task}}, raising=False)
+    monkeypatch.setattr(q, "PENDING", [], raising=False)
+    record_asked(tmp_path, "task-3", quiz_id="q1", question="Which db?",
+                 options=["sqlite", "postgres"], assumption="sqlite meanwhile", chat_id=1)
+    record_asked(tmp_path, "task-3", quiz_id="q2", question="Which cache?",
+                 options=["redis", "none"], assumption="none meanwhile", chat_id=1)
+    write_task_result(tmp_path, "task-3", "completed" if settled else "running", result="answer",
+                      root_phase_checkpoint={"post_task_synthesis": "running" if settled else "pending_once"})
+    bridge, frames = _late_bridge(tmp_path, monkeypatch)
+    app = _real_liveness_app(tmp_path, monkeypatch)
+    resp = _post(app, {"request_id": "r3", "decision_id": "quiz:task-3:q1", "option_index": 1})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    block = quiz_states(tmp_path, "task-3")["q1"]
+    mailbox = drain_owner_entries(tmp_path, "task-3")
+    if settled:
+        assert body["answered_after_terminal"] is True and body["forwarded"] is True
+        assert block["state"] == STATE_ANSWERED and block["answered_after_terminal"] is True
+        assert mailbox == []  # nothing is labelled delivered into a mailbox nobody drains
+        [queued] = _inbox(bridge)
+        assert queued["client_message_id"] == "quiz_late_answer:task-3:q1"
+        assert queued["task_metadata"]["late_answer"] == {"task_id": "task-3", "quiz_id": "q1"}
+        # The sibling card healed here is told now: the task-done seam announces
+        # only what it expires itself.
+        assert quiz_states(tmp_path, "task-3")["q2"]["state"] == "expired_terminal"
+        states = [(f["quiz_id"], f["state"]) for f in frames if f.get("type") == "quiz_state"]
+        assert states == [("q2", "expired_terminal"), ("q1", STATE_ANSWERED)]
+    else:
+        assert "answered_after_terminal" not in body and "answered_after_terminal" not in block
+        assert [row["kind"] for row in mailbox] == [KIND_QUIZ_ANSWER]
+        assert _inbox(bridge) == []
+        assert quiz_states(tmp_path, "task-3")["q2"]["state"] == "open"

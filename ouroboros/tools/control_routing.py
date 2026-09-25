@@ -70,6 +70,13 @@ def _attach_drafted_objective(ctx: ToolContext, evt: Dict[str, Any]) -> None:
                       "owner_mailbox", "owner_quiz_answer", "origin_message", "owner_corpus", "direct_incoming"}]
     if evt.get("source_text") and not any(row.get("source") == "origin_message" for row in owner_rows):
         owner_rows.insert(0, {"source": "origin_message", "content": evt["source_text"]})
+    elif not evt.get("source_text"):
+        # A suppressed (never-logged) origin carries no text; the owner's words
+        # then live only in this run's first row, and ONLY under the host's
+        # owner-ingress stamp (``initial_user``) — an unstamped first turn
+        # (``initial_text``) is never laundered into owner authority.
+        owner_rows[:0] = [dict(row) for row in (getattr(ctx, "_owner_directives", None) or [])
+                          if isinstance(row, dict) and row.get("source") == "initial_user"]
     evt["owner_corpus"] = owner_rows
 
 

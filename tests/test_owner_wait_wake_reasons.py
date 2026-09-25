@@ -62,7 +62,8 @@ def test_classify_wake_speaks_the_closed_vocabulary():
     assert classify_wake([text], "q1") == "owner_text"
     assert classify_wake([hurry], "q1") == "hurry"
     assert classify_wake([mail], "q1") == "mail:peer-1"
-    assert classify_wake([{"kind": "task_message", "provenance": "ancestor_task"}], "q1") == "mail"
+    assert classify_wake([{"kind": "task_message", "provenance": "ancestor_task"}], "q1") == "mail:unknown"
+    assert classify_wake([{"kind": "unlabelled"}], "q1") == "mail:unknown"  # closed vocabulary: never bare `mail`
     # Precedence: a control, this card's answer, owner words, hurry, then the mail that woke first.
     assert classify_wake([mail, hurry, text, answer, {"kind": "finalize_now"}], "q1") == "control:finalize_now"
     assert classify_wake([mail, hurry, text, answer], "q1") == "answer"

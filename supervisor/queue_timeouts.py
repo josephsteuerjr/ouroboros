@@ -266,11 +266,16 @@ def _enforce_task_timeouts_locked(
             from ouroboros.task_status import SETTLED_STATUSES
 
             try:
+                # Solve settlement lives on the actor's own drive (a split root
+                # settles there first; canonical copyback lags); the post-work
+                # phase lives on the canonical checkpoint authority.
+                settled = load_task_result(
+                    _queue()._task_drive_for_task(task, str(task_id)), str(task_id)) or {}
                 stored = load_task_result(_queue().DRIVE_ROOT, str(task_id)) or {}
             except Exception:
-                stored = {}  # unreadable terminal proof never widens the ceiling
+                settled, stored = {}, {}  # unreadable terminal proof never widens the ceiling
             checkpoint = stored.get("root_phase_checkpoint") or {}
-            if (stored.get("status") in SETTLED_STATUSES and isinstance(checkpoint, dict)
+            if (settled.get("status") in SETTLED_STATUSES and isinstance(checkpoint, dict)
                     and checkpoint.get("post_task_synthesis") == "running"):
                 ceiling_reached = False
 

@@ -596,8 +596,8 @@ def groom_backlog(drive_root: Any, *, cap: int = _GROOM_CAP) -> int:
         if not isinstance(kept_raw, list):
             return 0
     except Exception as exc:
-        from ouroboros.llm_claudexor import propagate_model_error
-        propagate_model_error(exc)
+        from ouroboros.post_task_synthesis import propagate_paid_interruption
+        propagate_paid_interruption(exc)  # budget, unknown outcome and controls stop later paid post-work
         return 0
 
     # Anti-wipe: every kept item MUST map to an existing fingerprinted item — the
