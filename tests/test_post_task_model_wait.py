@@ -199,6 +199,83 @@ def test_paid_stage_interruption_closes_checkpoint_without_buying_following_stag
     assert not f.engine.creates  # no provider send after the first interrupted stage
 
 
+@pytest.mark.parametrize("cause", ["budget", "api_unknown", "ordinary"])
+def test_real_consolidation_error_controls_remaining_post_task_stages(
+    phase, monkeypatch, cause,
+):
+    """Exercise the real consolidation catch and stage adapter, not a throwing stage stub."""
+    from ouroboros import consolidator, context_fit, post_task_synthesis
+    from ouroboros.capability_evidence import CapabilityEvidence
+    from ouroboros.usage_accounting import BudgetExceeded
+
+    f = phase
+    monkeypatch.setattr(consolidator, "_consolidation_route", lambda: ("test/model", False))
+    monkeypatch.setattr(context_fit, "resolve_context_fit_route", lambda task, *, allow_fetch: (
+        {"model": task["model"], "provider": "openrouter"},
+        CapabilityEvidence(100_000, "confirmed", "test", "route-test",
+                           model=task["model"], provider="openrouter")))
+    monkeypatch.setattr(context_fit, "_route_calibration_ratio", lambda *_: 1.0)
+    error = BudgetExceeded("root wallet spent") if cause == "budget" else RuntimeError("provider failed")
+    if cause == "api_unknown":
+        error.physical_attempt_capture = SimpleNamespace(state="unresolved")
+
+    class FailingLight:
+        def chat(self, **_kwargs):
+            f.stages.append("chat-model")
+            raise error
+
+    monkeypatch.setattr("ouroboros.llm.LLMClient", FailingLight)
+    monkeypatch.setattr(consolidator, "should_consolidate", lambda *_args: True)
+    monkeypatch.setattr(consolidator, "consolidate", lambda **kwargs:
+                        consolidator._call_consolidation_llm(
+                            kwargs["llm_client"], "captured episode", "Post-task chat consolidation",
+                        )[1])
+    monkeypatch.setattr(pipeline, "_run_chat_consolidation", post_task_synthesis._run_chat_consolidation)
+    monkeypatch.setattr(pipeline, "_run_reflection", lambda *_args, **_kwargs:
+                        f.stages.append("reflection") or None)
+
+    launch(f)
+    assert f.done.wait(5)
+    checkpoint = load_task_result(f.root, f.task["id"])["root_phase_checkpoint"]
+    if cause == "ordinary":
+        assert checkpoint["post_task_synthesis"] == "completed"
+        assert f.stages == ["facts", "chat-model", "scratch", "reflection", "backlog"]
+    else:
+        assert checkpoint["post_task_synthesis"] == "degraded"
+        assert checkpoint["post_task_stop_reason"].startswith(
+            "budget_exhausted:" if cause == "budget" else "provider_outcome_unknown:")
+        assert f.stages == ["facts", "chat-model"]
+        assert "scratchpad_consolidation,reflection,promotion" in checkpoint["post_task_stop_reason"]
+
+
+@pytest.mark.parametrize("stage", ["scratchpad", "reflection"])
+def test_returned_paid_error_stops_post_task_after_its_own_stage(phase, monkeypatch, stage):
+    """Returned typed failures from later memory stages also stop subsequent paid stages."""
+    from ouroboros import consolidator, post_task_synthesis
+
+    f = phase
+    error = {"kind": "provider_outcome_unknown"}
+    if stage == "scratchpad":
+        monkeypatch.setattr(consolidator, "should_consolidate_scratchpad", lambda *_: True)
+        monkeypatch.setattr(consolidator, "consolidate_scratchpad", lambda *_: {
+            "_consolidation_errors": [error]})
+        monkeypatch.setattr(pipeline, "_run_scratchpad_consolidation",
+                            post_task_synthesis._run_scratchpad_consolidation)
+    else:
+        monkeypatch.setattr(pipeline, "_run_reflection", lambda *_args, **_kwargs: {
+            "reflection": "(model call interrupted)", "memory_operation_errors": [error]})
+    launch(f)
+    assert f.done.wait(5)
+    checkpoint = load_task_result(f.root, f.task["id"])["root_phase_checkpoint"]
+    assert checkpoint["post_task_synthesis"] == "degraded"
+    assert checkpoint["post_task_stop_reason"].startswith("provider_outcome_unknown:skipped=")
+    assert "backlog" not in f.stages
+    if stage == "scratchpad":
+        assert "reflection,promotion" in checkpoint["post_task_stop_reason"]
+    else:
+        assert checkpoint["post_task_stop_reason"].endswith("skipped=promotion")
+
+
 def test_completed_reflection_actions_survive_a_later_paid_stage_interruption(phase, monkeypatch):
     f = phase
     applied = []

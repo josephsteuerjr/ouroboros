@@ -903,6 +903,7 @@ def _call_consolidation_llm(
             break
     except Exception as error:
         from ouroboros.llm_claudexor import propagate_model_error
+        from ouroboros.usage_accounting import BudgetExceeded
         propagate_model_error(error)
         from ouroboros.loop_llm_call import classify_llm_exception
         from ouroboros.transport_custody import _capture_on_chain
@@ -914,7 +915,8 @@ def _call_consolidation_llm(
             # with a second preflight exception or sending another request.
             prepare({**prepared_values, "_model_observed_route": error.route}, check_fit=False)
         preflight = isinstance(error, SummarizerContextOverflow) or not invoked
-        kind = ("context_overflow" if isinstance(error, SummarizerContextOverflow)
+        kind = ("budget_exhausted" if isinstance(error, BudgetExceeded)
+                else "context_overflow" if isinstance(error, SummarizerContextOverflow)
                 else "provider_outcome_unknown" if getattr(capture, "state", "") in {"dispatched", "unresolved"}
                 else classify_llm_exception(error).kind)
         message = str(error)

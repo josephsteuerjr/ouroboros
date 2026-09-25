@@ -544,6 +544,18 @@ def _record_task_facts(env: Any, task: Dict[str, Any], usage: Dict[str, Any],
         log.warning("Task facts row was not recorded for %s (non-critical)", task_id, exc_info=True)
 
 
+def _post_task_paid_interruption(errors: Any) -> str:
+    """Stop later paid post-work on typed budget or unknown-provider evidence.
+
+    Memory consolidation returns errors to keep completed chunks. Only this
+    stage adapter interprets those existing facts as a post-task stop signal.
+    """
+    for row in errors if isinstance(errors, list) else []:
+        if isinstance(row, dict) and row.get("kind") in {"budget_exhausted", "provider_outcome_unknown"}:
+            return row["kind"]
+    return ""
+
+
 def _run_chat_consolidation(env, memory, llm, task, drive_logs):
     """Run dialogue-block consolidation inside the root post-task worker."""
     try:
@@ -600,6 +612,7 @@ def _run_chat_consolidation(env, memory, llm, task, drive_logs):
                 if u.get("cost") or u.get("prompt_tokens"):
                     from supervisor.state import update_budget_from_usage
                     update_budget_from_usage(u)
+                return _post_task_paid_interruption(errors)
     except Exception as error:
         propagate_model_error(error)
         log.warning("Chat block consolidation setup failed", exc_info=True)
@@ -633,6 +646,7 @@ def _run_scratchpad_consolidation(env: Any, memory: Any, llm: Any) -> None:
             if u and (u.get("cost") or u.get("prompt_tokens")):
                 from supervisor.state import update_budget_from_usage
                 update_budget_from_usage(u)
+            return _post_task_paid_interruption(u.get("_consolidation_errors") if isinstance(u, dict) else [])
     except Exception as error:
         propagate_model_error(error)
         log.debug("Scratchpad consolidation setup failed", exc_info=True)

@@ -234,7 +234,16 @@ def _run_post_task_processing_async(
                     skipped = [stage for stage, _run in stages[index:]]
                     break
                 try:
-                    run_stage()
+                    stage_reason = run_stage()
+                    if name == "reflection" and isinstance(result.get("reflection_entry"), dict):
+                        stage_reason = _post_task_paid_interruption(
+                            result["reflection_entry"].get("memory_operation_errors"))
+                    if isinstance(stage_reason, str) and stage_reason in {"budget_exhausted", "provider_outcome_unknown"}:
+                        interrupted = stage_reason
+                        skipped = [stage for stage, _run in stages[index + 1:]]
+                        log.warning("Post-task paid stage %s interrupted for %s: %s",
+                                    name, stage_task_id, interrupted)
+                        break
                 except Exception as error:
                     if isinstance(error, BudgetExceeded):
                         interrupted = "budget_exhausted"
@@ -1358,6 +1367,7 @@ from ouroboros.post_task_synthesis import (  # noqa: E402, F401 -- intentional p
     _pre_synthesis_usage_snapshot,
     _compact_review_projection,
     _record_task_facts,
+    _post_task_paid_interruption,
     _run_chat_consolidation,
     _run_scratchpad_consolidation,
     _run_reflection,
