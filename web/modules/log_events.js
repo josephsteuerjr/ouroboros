@@ -458,6 +458,21 @@ const TASK_CAUSE_PHRASES = {
     host_child_status_suffix: "A child task had not settled when the answer was delivered",
     invalid_delivery_control_after_repair: "Ouroboros's final delivery instruction could not be read even after repair, so the answer stands as delivered.",
     budget_exhausted: "The task ran out of budget before it could finish cleanly",
+    // The other forced-finalization rails (outcomes.BEST_EFFORT_REASON_CODES / ACCEPTANCE_BYPASS_REASON_BY_RAIL keys).
+    round_limit: "The task hit its round limit before it could finish cleanly",
+    finalization_grace: "The task hit a time limit and had to wrap up before it could finish cleanly",
+    deadline_local: "The task reached its deadline before it could finish cleanly",
+    context_overflow: "The task outgrew its context before it could finish cleanly",
+    children_unabsorbed: "Some sub-task results were never folded in, so the task had to wrap up",
+    // The supervisor's timeout rails (queue_timeouts.TIMEOUT_TERMINAL_REASONS): the reaper's task_done reason_code.
+    absolute_ceiling: "The task reached its maximum running time",
+    deadline: "The task reached its deadline",
+    idle_timeout: "The task made no progress for too long",
+    // The reason codes outcomes.derive_loop_outcome stamps from typed terminal facts.
+    provider_failure: "The model provider failed to answer, so the task could not finish",
+    empty_final_text: "The task ended without a final answer",
+    deep_self_review_unavailable: "The deep self-review could not run",
+    deep_self_review_error: "The deep self-review stopped on an error",
     // #869: the provider-death rail's terminal words (twin of project_dialogue.TASK_CAUSE_PHRASES).
     provider_unavailable: "The model provider stopped answering, so the task could not finish",
     delivery_control_degraded: "Ouroboros's final delivery instruction could not be applied, so the answer stands as delivered.",

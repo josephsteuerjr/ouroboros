@@ -119,10 +119,7 @@ def _quiz_answer_frame(
         f"Question was: {block.get('question')}",
     ]
     if option_index is None:
-        lines.append(
-            "The owner rejected all offered options and answered verbatim: "
-            f"{comment}"
-        )
+        lines.append(f"No option was selected; the owner wrote verbatim: {comment}")
     else:
         label = str(options[option_index]) if 0 <= option_index < len(options) else ""
         lines.append(f"The owner chose option {option_index + 1}: {label}")
@@ -238,10 +235,11 @@ def _forward_late_quiz_answer(
     if chat_id is None:
         return False, reason
     index = block.get("answered_index")
-    text = _quiz_answer_frame(
+    text = (f"[Late answer to a question asked by task {task_id}, which had finished]\n"
+            + _quiz_answer_frame(
         block, index if isinstance(index, int) else None,
         str(block.get("comment") or ""),
-    )
+    ))
     client_message_id = f"quiz_late_answer:{task_id}:{quiz_id}"
     bridge = message_bus.get_bridge()
     row, rejoined = message_bus.accept_local_message(

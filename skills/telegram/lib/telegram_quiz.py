@@ -32,6 +32,7 @@ HostPost = Callable[[Any, str, Dict[str, Any]], Awaitable[Tuple[int, Dict[str, A
 _TEXTS = {
     "en": {
         "hint": "Tap an option, or reply to this message with your own answer.",
+        "hint_open": "Reply to this message with your answer.",
         "recorded": "✅ Answer delivered to the task.",
         "late_delivered": "✅ The task had already finished — your answer was delivered to the chat.",
         "late_recorded": "✅ Answer recorded. The task had already finished and this card has no chat to deliver it to.",
@@ -43,6 +44,7 @@ _TEXTS = {
     },
     "ru": {
         "hint": "Нажмите вариант или ответьте на это сообщение своим текстом.",
+        "hint_open": "Ответьте на это сообщение своим текстом.",
         "recorded": "✅ Ответ передан задаче.",
         "late_delivered": "✅ Задача уже завершилась — ответ доставлен в чат.",
         "late_recorded": "✅ Ответ записан. Задача уже завершилась, а доставлять его в чат некуда.",
@@ -61,6 +63,10 @@ def _texts(lang: str) -> Dict[str, str]:
 
 def hint(lang: str) -> str:
     return _texts(lang)["hint"]
+
+
+def hint_open(lang: str) -> str:
+    return _texts(lang)["hint_open"]
 
 
 def mint_token(task_id: str, quiz_id: str) -> str:

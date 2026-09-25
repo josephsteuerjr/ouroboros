@@ -2,7 +2,7 @@
 
 The LLM-heavy best-effort memory work the post-task orchestrator
 (``agent_task_pipeline._run_post_task_processing_async``) dispatches after a
-task ends: the tool-trace summary, the episodic task summary, chat/scratchpad
+task ends: the tool-trace summary, the free host facts row, chat/scratchpad
 consolidation, the execution reflection with its child-task evidence, the
 durable improvement backlog and reflection memory actions, plus the shared
 pre-synthesis usage snapshot and the compact review projection those prompts
@@ -21,7 +21,7 @@ from ouroboros.dialogue_provenance import presence_provenance_fields
 from ouroboros.llm_claudexor import propagate_model_error
 from ouroboros.outcomes import normalize_outcome_axes
 from ouroboros.subagent_messages import initiator_meta
-from ouroboros.synthesis_cost_text import _summary_row_cost_fields, _synthesis_cost_text, _synthesis_cost_usd, _synthesis_usage_snapshot_text
+from ouroboros.synthesis_cost_text import _summary_row_cost_fields, _synthesis_cost_usd, _synthesis_usage_snapshot_text
 from ouroboros.task_finalization import sealed_final_prompt_section
 from ouroboros.tool_capabilities import routing_action_for_tool
 from ouroboros.utils import append_jsonl, truncate_review_artifact as _truncate_with_notice, utc_now_iso
@@ -502,109 +502,46 @@ def _compact_review_projection(llm_trace: Dict[str, Any]) -> Dict[str, Any]:
         return {"panels": []}
 
 
-def _run_task_summary(env, llm, task, usage, llm_trace, drive_logs, review_evidence=None,
-                      sealed_final=None):
-    """Generate a detailed task summary and inject it into chat.jsonl."""
+def _record_task_facts(env: Any, task: Dict[str, Any], usage: Dict[str, Any],
+                       llm_trace: Dict[str, Any], drive_logs: pathlib.Path) -> None:
+    """Append the task's free host facts row to chat.jsonl: no model call, no prose.
+
+    The owner removed the paid task narrative (TZ-2 decision 2=A). This row keeps
+    the facts its readers take from a ``task_summary`` row when the result file is
+    gone: the direct-turn fact, origin label, typed routing action, tool metrics,
+    rounds, cost and review projection. Its kind is ``host_task_facts``, never
+    ``authored_root_summary``, and it persists no continuation narrative, so a
+    Main continuation sees the typed ``continuation_narrative_unavailable`` gap.
+    Text stays empty: existing Project and result references own navigation.
+    """
+    task_id = str(task.get("id") or "unknown")
     try:
-        from ouroboros.project_dialogue import append_authored_task_summary, completion_status_label, outcome_phase
-        from ouroboros.projects_registry import project_thread_note_for_task
-        from ouroboros.consolidator import _consolidation_route
-        from ouroboros.settings_scales import resolve_effort
-        task_id = str(task.get("id") or "unknown")
+        from ouroboros.project_dialogue import append_canonical_task_summary, completion_status_label, outcome_phase
+
         canonical_root = pathlib.Path(task.get("budget_drive_root") or drive_logs.parent)
-        summary_id = f"task-narrative:{task_id}"
-        tool_metrics = task_tool_metrics(llm_trace)
-        n_tool_calls = tool_metrics["tool_calls"]
-        rounds = None if usage.get("loop_evidence_unavailable") else int(usage.get("rounds") or 0)
-        round_text = "round count unknown" if rounds is None else f"{rounds}r"
-        cost_text = _synthesis_cost_text(usage)
-        outcome_axes = normalize_outcome_axes(usage)
-        reason_code = str(usage.get("reason_code") or "")
-        review_projection = _compact_review_projection(llm_trace)
-        presence_fields = presence_provenance_fields(task)
         result_root = pathlib.Path(getattr(env, "drive_root", canonical_root))
         stored_result = _atp().load_task_result(result_root, task_id) or {}
-        result_ref = {"kind": "task_result", "task_id": task_id, "reader": "get_task_result"}
-
-        def _append_summary(value: str) -> None:
-            row = {
-                "ts": utc_now_iso(), "direction": "system", "type": "task_summary",
-                "summary_kind": "authored_root_summary", "summary_id": summary_id,
-                "task_id": task_id, "parent_task_id": str(task.get("parent_task_id") or ""), "root_task_id": str(task.get("root_task_id") or task_id),
-                "project_id": str(task.get("project_id") or ""), "chat_id": int(task.get("chat_id") or 0), "delegation_role": str(task.get("delegation_role") or ""), "role": str(task.get("role") or ""),
-                "status": str(stored_result.get("status") or "completed"), "outcome": completion_status_label(stored_result, usage), "outcome_phase": outcome_phase(stored_result, usage),
-                "outcome_final": False, "outcome_authority": "pre_finalization_narrative_context",
-                # The chat block reads its chrome, the addressing fact and the
-                # origin label from this row when the task result has been pruned.
-                "_is_direct_chat": bool(task.get("_is_direct_chat")), **initiator_meta(task),
-                **({"typed_routing_action": str(usage["typed_routing_action"])} if usage.get("typed_routing_action") else {}),
-                "text": value, **tool_metrics, "rounds": rounds, "outcome_axes": outcome_axes, "reason_code": reason_code,
-                "result_ref": result_ref, "source_coverage": {"task_result": result_ref}, **_summary_row_cost_fields(usage), **presence_fields,
-                **({"review_projection": review_projection} if review_projection.get("panels") else {}),
-            }
-            append_authored_task_summary(
-                canonical_root, result_root, row, status=str(stored_result.get("status") or ""),
-            )
-        # Skip LLM summary for trivial tasks.
-        if n_tool_calls in (None, 0) and (rounds is None or rounds <= 1):
-            goal = _truncate_with_notice(task.get("text", ""), 200)
-            summary_text = (
-                f"Task {task_id} ({task.get('type', 'user')}): "
-                f"{goal}. {round_text}, {cost_text}." + project_thread_note_for_task(task)
-            )
-            _append_summary(summary_text)
-            return
-
-        summary_model, summary_use_local = _consolidation_route()
-        goal = _truncate_with_notice(task.get("text", ""), 500)
-        trace = build_trace_summary(llm_trace)
-        try:
-            from ouroboros.review_evidence import format_review_evidence_for_prompt
-            review_section = format_review_evidence_for_prompt(review_evidence or {}, max_chars=8000, acceptance_panels=review_projection.get("panels"))
-        except Exception:
-            review_section = "(review evidence unavailable)"
-        from ouroboros.reflection import task_inputs_prompt_section
-
-        prompt = _TASK_SUMMARY_PROMPT.format(
-            task_id=task_id, goal=goal or "(no goal text)",
-            task_type=task.get("type", "user"), rounds="unknown" if rounds is None else rounds,
-            cost_text=cost_text,
-            usage_snapshot=_synthesis_usage_snapshot_text(usage),
-            sealed_final=sealed_final_prompt_section(sealed_final),
-            task_inputs=task_inputs_prompt_section(review_evidence),
-            trace_summary=trace,
-            review_evidence=review_section,
-        )
-        try:
-            from ouroboros.llm_observability import chat_observed
-
-            msg, _usage = chat_observed(llm, drive_root=canonical_root, task_id=task_id,
-                                   call_type="task_summary", messages=[{"role": "user", "content": prompt}],
-                                   model=summary_model,
-                                   model_role="light",
-                                   reasoning_effort=resolve_effort("task"),  # the owner's Task / Chat level: one SSOT, no literal
-                                   max_tokens=16384,
-                                   use_local=summary_use_local)
-            summary_text = (msg.get("content") or "").strip()
-            if _usage.get("cost"):
-                try:
-                    from supervisor.state import update_budget_from_usage
-                    update_budget_from_usage(_usage)
-                except Exception:
-                    pass
-        except Exception as exc:
-            propagate_model_error(exc)
-            log.warning("Task summary LLM call failed, using fallback", exc_info=True)
-            summary_text = (
-                f"Task {task_id} ({task.get('type', 'user')}): "
-                f"{_truncate_with_notice(goal, 200)}. {round_text}, {cost_text}."
-            )
-        if summary_text:
-            summary_text += project_thread_note_for_task(task)
-            _append_summary(summary_text)
-    except Exception as exc:
-        propagate_model_error(exc)
-        log.debug("Task summary generation failed (non-critical)", exc_info=True)
+        review_projection = _compact_review_projection(llm_trace)
+        append_canonical_task_summary(canonical_root, {
+            "ts": utc_now_iso(), "direction": "system", "type": "task_summary",
+            "summary_kind": "host_task_facts", "summary_id": f"task-facts:{task_id}",
+            "task_id": task_id, "parent_task_id": str(task.get("parent_task_id") or ""), "root_task_id": str(task.get("root_task_id") or task_id),
+            "project_id": str(task.get("project_id") or ""), "chat_id": int(task.get("chat_id") or 0), "delegation_role": str(task.get("delegation_role") or ""), "role": str(task.get("role") or ""),
+            "status": str(stored_result.get("status") or "completed"), "outcome": completion_status_label(stored_result, usage), "outcome_phase": outcome_phase(stored_result, usage),
+            "outcome_final": False, "outcome_authority": "pre_finalization_host_facts",
+            # The chat block reads its chrome, the addressing fact and the
+            # origin label from this row when the task result has been pruned.
+            "_is_direct_chat": bool(task.get("_is_direct_chat")), **initiator_meta(task),
+            **({"typed_routing_action": str(usage["typed_routing_action"])} if usage.get("typed_routing_action") else {}),
+            "text": "", **task_tool_metrics(llm_trace),
+            "rounds": None if usage.get("loop_evidence_unavailable") else int(usage.get("rounds") or 0),
+            "outcome_axes": normalize_outcome_axes(usage), "reason_code": str(usage.get("reason_code") or ""),
+            "result_ref": {"kind": "task_result", "task_id": task_id, "reader": "get_task_result"},
+            **_summary_row_cost_fields(usage), **presence_provenance_fields(task),
+            **({"review_projection": review_projection} if review_projection.get("panels") else {}),
+        })
+    except Exception:
+        log.warning("Task facts row was not recorded for %s (non-critical)", task_id, exc_info=True)
 
 
 def _run_chat_consolidation(env, memory, llm, task, drive_logs):
@@ -756,33 +693,3 @@ def _run_reflection(env: Any, llm: Any, task: Dict[str, Any],
         propagate_model_error(error)
         log.debug("Execution reflection setup failed", exc_info=True)
     return None
-
-
-_TASK_SUMMARY_PROMPT = """\
-Summarize this completed task for Ouroboros's episodic memory.
-Be specific about: what was tried, what worked, what failed, key decisions made.
-Include file names, tool names, error messages when relevant.
-Treat tool statuses and exit/signal facts as authoritative. Agent notes are supplementary only.
-Never claim a tool succeeded when the trace shows non-zero exit, timeout, install_error, or any error status.
-If structured review evidence contains critical/advisory findings or open obligations,
-mention them individually with severity, item/tag identity, and whether they blocked
-the commit, remained open, or were resolved.
-If the task was trivial (0 tool calls and ≤1 round), keep it to 1-2 sentences and DO NOT add meta-reflection.
-If the task was non-trivial, end with a short meta-reflection section:
-- What friction, errors, or weak assumptions slowed the work?
-- What should Ouroboros change in its own process or prompts to avoid repeating that class of mistake?
-Keep the meta-reflection concrete and operational, not narrative.
-End with a task-scoped trace pointer: task_id={task_id}, task-events reader
-(CLI: ouroboros tasks watch {task_id} --jsonl). Do not guess flat log-file paths;
-the existing task reader merges this task's retained local, project and archived events.
-## Task
-Initial text: {goal}
-Type: {task_type}
-Rounds: {rounds}, Cost: {cost_text}
-
-{usage_snapshot}{sealed_final}{task_inputs}## Execution trace
-{trace_summary}
-
-## Structured review evidence
-{review_evidence}
-"""

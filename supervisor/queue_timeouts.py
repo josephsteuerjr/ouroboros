@@ -39,6 +39,14 @@ def _queue():
 
 log = logging.getLogger(__name__)
 
+# The supervisor's timeout rails in priority order: the typed ``terminal_reason``
+# the reaper stamps as the task_done ``reason_code`` and the ``task_incident`` key.
+# ``project_dialogue.TASK_CAUSE_PHRASES`` carries one owner sentence per member;
+# the code itself never reaches a chat.
+REASON_ABSOLUTE_CEILING, REASON_DEADLINE, REASON_IDLE_TIMEOUT = TIMEOUT_TERMINAL_REASONS = (
+    "absolute_ceiling", "deadline", "idle_timeout",
+)
+
 
 def _task_deadline_ts(task: Dict[str, Any]) -> float:
     raw = str(task.get("deadline_at") or "").strip()
@@ -279,11 +287,11 @@ def _enforce_task_timeouts_locked(
             continue
 
         if ceiling_reached:
-            terminal_reason = "absolute_ceiling"
+            terminal_reason = REASON_ABSOLUTE_CEILING
         elif deadline_reached:
-            terminal_reason = "deadline"
+            terminal_reason = REASON_DEADLINE
         else:
-            terminal_reason = "idle_timeout"
+            terminal_reason = REASON_IDLE_TIMEOUT
         finalization_requested_at = float(meta.get("finalization_requested_at") or 0.0)
         if finalization_requested_at <= 0 and _queue().FINALIZATION_GRACE_SEC > 0:
             meta["finalization_requested_at"] = now

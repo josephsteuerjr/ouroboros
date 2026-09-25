@@ -72,6 +72,11 @@ def build_user_content(task: Dict[str, Any]) -> Any:
 
     text = task.get("text", "")
     metadata = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
+    author = metadata.get("objective_author")
+    if isinstance(author, dict) and author.get("kind") == "task":
+        text = (f"[OBJECTIVE_AUTHOR] The objective below was drafted by task {author.get('task_id')}, "
+                "not spoken by the owner. The owner's words retain their own source. "
+                "[/OBJECTIVE_AUTHOR]\n\n" + str(text or ""))
     if metadata.get("force_plan"):
         source = str(metadata.get("force_plan_source") or "operator").strip() or "operator"
         from ouroboros.config import get_review_enforcement

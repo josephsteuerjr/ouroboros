@@ -42,14 +42,14 @@ def phase(tmp_path, monkeypatch):
     engine = Gateway([result(outcome="failed", problem={"code": "subscription_window_exhausted", "message": "quota"}), result()],
                      ["not_started", "response_received"])
     monkeypatch.setattr(transport, "ensure_owned_gateway", lambda: engine)
-    monkeypatch.setattr(transport, "model_sources", lambda: {"sources": [{"id": "codex", "credentialHarness": "fixture"}]})
+    monkeypatch.setattr(transport, "model_sources", lambda **_kwargs: {"sources": [{"id": "codex", "credentialHarness": "fixture"}]})
     monkeypatch.setattr(transport, "model_catalog", lambda _source, account=None, *, requested_model=None: {
         "source": "codex", "credentialProfileId": account or "account-a",
         "models": [{"id": "exact-model"}] if ready.is_set() else []})
     stages = []
     monkeypatch.setattr(pipeline, "_run_chat_consolidation", lambda *a: stages.append("chat"))
     monkeypatch.setattr(pipeline, "_run_scratchpad_consolidation", lambda *a: stages.append("scratch"))
-    monkeypatch.setattr(pipeline, "_run_task_summary", lambda *a, **k: stages.append("summary"))
+    monkeypatch.setattr(pipeline, "_record_task_facts", lambda *a, **k: stages.append("facts"))
     monkeypatch.setattr(pipeline, "_update_improvement_backlog", lambda *a: stages.append("backlog"))
     monkeypatch.setattr(pipeline, "_apply_reflection_memory_actions", lambda *a, **k: None)
     monkeypatch.setattr("ouroboros.post_task_evolution.maybe_promote", lambda *a: None)
@@ -117,13 +117,13 @@ def test_detached_parent_returns_and_post_wait_keeps_override_and_prior_stages(p
     until(lambda: active(f))
     owner = active(f)
     assert owner is not parent and not owner.closed and owner.worker_slot_held is False
-    assert f.stages == ["chat", "scratch", "summary", "reflection"] and not f.done.is_set()
+    assert f.stages == ["facts", "chat", "scratch", "reflection"] and not f.done.is_set()
     assert load_task_result(f.root, f.task["id"])["root_phase_checkpoint"]["post_task_synthesis"] == "running"
     assert f.engine.uploads[0][0]["account"] == {"mode": "pin", "profileId": "original-choice"}
     f.ready.set()
     assert f.done.wait(5)
     until(lambda: post_task_model_wait(f.root, f.task["id"]) is None)
-    assert f.stages == ["chat", "scratch", "summary", "reflection", "backlog"]
+    assert f.stages == ["facts", "chat", "scratch", "reflection", "backlog"]
     assert len(f.engine.creates) == 2 and f.engine.uploads[0][0]["messages"] == f.engine.uploads[1][0]["messages"]
     until(lambda: owner.closed)
     assert load_task_result(f.root, f.task["id"])["status"] == main_status
@@ -295,12 +295,12 @@ def _controlled_worker(input_queue, output_queue, data_root, repo_root, resume):
             "supervisor.worker_process._prepare_worker_task_runtime": lambda: None,
             "supervisor.worker_process._adopt_published_extensions": lambda *_: None,
             "ouroboros.llm_claudexor.ensure_owned_gateway": lambda: engine,
-            "ouroboros.llm_claudexor.model_sources": lambda: {"sources": [{"id": "codex", "credentialHarness": "fixture"}]},
+            "ouroboros.llm_claudexor.model_sources": lambda **_kwargs: {"sources": [{"id": "codex", "credentialHarness": "fixture"}]},
             "ouroboros.llm_claudexor.model_catalog": lambda source, account=None, **kwargs: {
                 "source": source, "credentialProfileId": account or "account-a", "models": [{"id": "exact-model"}] if resume.is_set() else []},
             "ouroboros.agent_task_pipeline._run_chat_consolidation": lambda *_: None,
             "ouroboros.agent_task_pipeline._run_scratchpad_consolidation": lambda *_: None,
-            "ouroboros.agent_task_pipeline._run_task_summary": lambda *args, **kwargs: None,
+            "ouroboros.agent_task_pipeline._record_task_facts": lambda *args, **kwargs: None,
             "ouroboros.agent_task_pipeline._run_reflection": reflect,
             "ouroboros.agent_task_pipeline._update_improvement_backlog": lambda *_: None,
             "ouroboros.agent_task_pipeline._apply_reflection_memory_actions": lambda *args, **kwargs: None,

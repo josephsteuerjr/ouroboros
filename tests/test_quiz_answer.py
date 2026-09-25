@@ -431,7 +431,7 @@ def test_escalate_settled_parent_is_a_typed_dead_end(tmp_path, monkeypatch):
 
 def test_escalate_invalid_payload_is_typed(tmp_path):
     ctx = _tool_ctx(tmp_path)
-    out = _escalate(ctx, question="?", options=["only-one"], assumption="a")
+    out = _escalate(ctx, question="?", options=["a"] * 7, assumption="a")
     assert out.startswith("⚠️ QUIZ_OPTIONS_INVALID")
     out = _escalate(ctx, question="?", options=["a", "b"], assumption="")
     assert out.startswith("⚠️ QUIZ_ASSUMPTION_REQUIRED")
@@ -693,7 +693,7 @@ def test_own_answer_needs_no_option_index(tmp_path, monkeypatch):
 
     entries = drain_owner_entries(tmp_path, "task-1", set())
     frame_text = [e for e in entries if e.get("kind") == KIND_QUIZ_ANSWER][0]["text"]
-    assert ("The owner rejected all offered options and answered verbatim: "
+    assert ("No option was selected; the owner wrote verbatim: "
             "neither — use duckdb") in frame_text
     assert "chose option" not in frame_text
 

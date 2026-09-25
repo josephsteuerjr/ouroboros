@@ -18,7 +18,7 @@ def test_project_scoped_post_task_processing_feeds_global_backlog_but_project_me
 
     calls = []
     reflection = {"backlog_candidates": [{"summary": "tool friction"}], "memory_actions": [{"kind": "note"}]}
-    monkeypatch.setattr(pipeline, "_run_task_summary", lambda *args, **kwargs: calls.append(("summary",)))
+    monkeypatch.setattr(pipeline, "_record_task_facts", lambda *args, **kwargs: calls.append(("facts",)))
     monkeypatch.setattr(pipeline, "_run_reflection", lambda *args, **kwargs: reflection)
     monkeypatch.setattr(pipeline, "_update_improvement_backlog", lambda _env, entry: calls.append(("backlog", entry)) or 1)
     monkeypatch.setattr(

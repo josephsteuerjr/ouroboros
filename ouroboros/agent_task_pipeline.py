@@ -171,6 +171,9 @@ def _run_post_task_processing_async(
         checkpoint_status = "degraded"
         skipped: list[str] = []
         try:
+            # The free facts row precedes every paid stage, so neither Stop nor a
+            # failed paid stage costs the card its facts; it is not a stage.
+            _record_task_facts(env, task_snapshot, usage_snapshot, trace_snapshot, drive_logs)
             from ouroboros.llm import LLMClient
             from ouroboros.memory import Memory
 
@@ -198,18 +201,13 @@ def _run_post_task_processing_async(
                     on_reflection(reflection_entry, llm_client)
 
             # All late model work belongs to this one scoped worker.  This keeps
-            # the root checkpoint non-final until consolidation, summary,
-            # reflection, and promotion have all stopped billing.  Summary
-            # before reflection: chat.jsonl is more durable than best-effort
-            # reflection/backlog.
+            # the root checkpoint non-final until consolidation, reflection,
+            # and promotion have all stopped billing.
             stages: List[tuple[str, Callable[[], Any]]] = [
                 ("chat_consolidation", lambda: _run_chat_consolidation(
                     env, task_memory, llm_client, task_snapshot, drive_logs)),
                 ("scratchpad_consolidation", lambda: _run_scratchpad_consolidation(
                     env, task_memory, llm_client)),
-                ("summary", lambda: _run_task_summary(
-                    env, llm_client, task_snapshot, usage_snapshot, trace_snapshot, drive_logs,
-                    review_evidence=review_evidence_snapshot, sealed_final=sealed_snapshot)),
                 ("reflection", lambda: result.__setitem__("reflection_entry", _run_reflection(
                     env, llm_client, task_snapshot, usage_snapshot, trace_snapshot,
                     review_evidence_snapshot, sealed_final=sealed_snapshot))),
@@ -1303,9 +1301,8 @@ from ouroboros.post_task_synthesis import (  # noqa: E402, F401 -- intentional p
     _child_task_evidence,
     _pre_synthesis_usage_snapshot,
     _compact_review_projection,
-    _run_task_summary,
+    _record_task_facts,
     _run_chat_consolidation,
     _run_scratchpad_consolidation,
     _run_reflection,
-    _TASK_SUMMARY_PROMPT,
 )

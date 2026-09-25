@@ -254,7 +254,8 @@ def mark_wait_ended(drive_root: Any, task_id: str, quiz_id: str) -> bool:
 
     def _mutator(quizzes: Dict[str, Dict[str, Any]]) -> Any:
         block = quizzes.get(str(quiz_id))
-        if not isinstance(block, dict) or not block.get("wait_for_answer"):
+        if (not isinstance(block, dict) or block.get("state") != STATE_OPEN
+                or not block.get("wait_for_answer")):
             return _KEEP
         block.pop("wait_for_answer", None)
         block["wait_ended_at"] = utc_now_iso()

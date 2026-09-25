@@ -466,6 +466,8 @@ def promote_chat_to_task(evt: dict, ctx: Any) -> dict:
         "title": title,
         "suggested_name": suggested_name,
         "source": "promote_chat_to_task",
+        "objective_author": dict(evt.get("objective_author") or {}),
+        "owner_corpus": list(evt.get("owner_corpus") or []),
         "_require_unique_task_id": True,
         "_require_worker_pool": True,
         "_admission_token": admission_token,
@@ -520,6 +522,8 @@ def promote_chat_to_task(evt: dict, ctx: Any) -> dict:
         # The door's other stamp (an owner message it never logged) rides the root
         # in METADATA, where run_origin reads it, the way a ref rides by value.
         task.setdefault("metadata", {})["origin_suppressed"] = True
+    if task.get("objective_author"):
+        task.setdefault("metadata", {})["objective_author"] = dict(task["objective_author"])
     if isinstance(evt.get("predecessor_authority_source"), dict):
         task["predecessor_authority_source"] = dict(evt["predecessor_authority_source"])
     # Owner Surface Fact: the promoting turn's sending-surface fact lands in

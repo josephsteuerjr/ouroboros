@@ -1449,7 +1449,7 @@ def get_tools() -> List[ToolEntry]:
             "name": "escalate",
             "description": (
                 "Escalate a decision up the responsibility chain instead of guessing. "
-                "List 2-6 real options, mark your recommendation with recommended=true on that option, "
+                "Offer 0-6 real options (none for an open question); mark one recommendation if useful, "
                 "and let each option's detail name what it gains and what it costs. "
                 "A root task asks the OWNER (a typed quiz card with option buttons); "
                 "a subagent asks its PARENT task (a typed mailbox frame the parent "
@@ -1460,7 +1460,7 @@ def get_tools() -> List[ToolEntry]:
                 "is irreversible or costly to redo, or the choice is the owner's to make "
                 "(spending, publishing, deleting); your judgment decides. The task then waits after the "
                 "current tool batch without model calls; waiting questions in one batch share one wait, "
-                "which ends on the first incoming message."
+                "which ends on the first incoming message, not necessarily an owner answer. A plain-text clarification ends this turn; a waited question keeps it alive."
             ),
             "parameters": {"type": "object", "properties": {
                 "question": {"type": "string", "description": "The decision being escalated (markdown renders in chat)"},
@@ -1468,12 +1468,12 @@ def get_tools() -> List[ToolEntry]:
                     "label": {"type": "string", "description": "Short option label (button text, max 120)"},
                     "detail": {"type": "string", "description": "Optional one-line consequence of this option (max 500)"},
                     "recommended": {"type": "boolean", "description": "True on the ONE option you recommend"},
-                }, "required": ["label"]}, "description": "2-6 mutually exclusive options"},
+                }, "required": ["label"]}, "description": "Optional 0-6 choices; omit for an open question answered in the owner's words"},
                 "stake": {"type": "string", "description": "What depends on this decision (optional, max 500)"},
                 "assumption": {"type": "string", "description": "For optional clarification, the assumption you continue under (max 500); may be empty for required waiting."},
                 "wait_for_answer": {"type": "boolean", "default": False, "description": "Live roots: wait for addressed owner input before another model round."},
                 "max_wait_minutes": {"type": "integer", "description": "Optional bound for wait_for_answer: resume with a system notice after N minutes if no answer arrives (the card stays open)."},
-            }, "required": ["question", "options"]},
+            }, "required": ["question"]},
         }, _escalate),
         ToolEntry("forward_to_worker", {
             "name": "forward_to_worker",

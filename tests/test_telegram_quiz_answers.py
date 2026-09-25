@@ -132,6 +132,29 @@ def test_quiz_card_carries_one_button_per_option_and_remembers_the_card(tmp_path
     assert api.logs == []
 
 
+def test_open_question_is_a_plain_message_with_a_reply_address(tmp_path, monkeypatch):
+    plugin = _load_plugin()
+    _settings(tmp_path)
+    monkeypatch.setattr(plugin, "TelegramClient", Client)
+    api = Api(tmp_path)
+    asyncio.run(plugin._make_quiz(api)({**_EVENT, "options": [], "wait_for_answer": True}))
+    first = _LAST_CLIENT[-1]
+    assert first.panels == []
+    assert first.sent == [(42, "Question: Which db?\nWaiting for your answer; Stop and the task deadline still apply."
+                                "\nReply to this message with your answer.")]
+    record = plugin.telegram_quiz.quiz_for_message(api, 42, 1)
+    assert record and record["options"] == []
+    Client.updates = [{"update_id": 100, "message": {
+        "message_id": 1001, "chat": {"id": 42, "type": "private"}, "from": {"id": 42},
+        "text": "Try a different database", "reply_to_message": {"message_id": 1},
+    }}]
+    posts = []
+    assert _run_poller(plugin, api, monkeypatch, posts) == []
+    assert posts == [("/chat/decision", {
+        "request_id": "tg:100", "decision_id": "quiz:task-1:q1", "comment": "Try a different database",
+    })]
+
+
 def test_tapped_option_reaches_the_decision_ingress_and_settles_the_card(tmp_path, monkeypatch):
     plugin = _load_plugin()
     api = _send_card(plugin, tmp_path, monkeypatch)

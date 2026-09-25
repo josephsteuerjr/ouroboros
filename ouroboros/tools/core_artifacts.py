@@ -325,10 +325,12 @@ def validate_quiz_payload(
             "QUIZ_QUESTION_INVALID",
             f"question must be 1..{_MAX_QUIZ_QUESTION_CHARS} characters.",
         )
-    if not isinstance(options, list) or not 2 <= len(options) <= _MAX_QUIZ_OPTIONS:
+    if options is None:
+        options = []
+    if not isinstance(options, list) or len(options) > _MAX_QUIZ_OPTIONS:
         raise QuizValidationError(
             "QUIZ_OPTIONS_INVALID",
-            f"provide 2..{_MAX_QUIZ_OPTIONS} options.",
+            f"provide at most {_MAX_QUIZ_OPTIONS} options.",
         )
     cleaned: List[Dict[str, Any]] = []
     for item in options:
@@ -543,7 +545,8 @@ def _escalate(
                     "under your stated assumption and record the open question "
                     "in your result.")
         parent_task_id = target_id
-        lines = [f"ESCALATION (decision requested): {payload['question']}", "Options:"]
+        lines = [f"ESCALATION (decision requested): {payload['question']}"]
+        lines.append("Options:" if payload["options"] else "Open question — answer in your own words.")
         lines += [
             f"{i + 1}. {row['label']}" + (f" — {row['detail']}" if row.get("detail") else "")
             + (" [recommended]" if row.get("recommended") else "")
@@ -612,7 +615,7 @@ def _escalate(
         "task_id": task_id,
         **({"wait_for_answer": True} if wait_for_answer else {}),
     })
-    delivered = "delivered to the owner" if mode == "live" else "queued for the owner"
+    delivered = "accepted for delivery" if mode == "live" else "queued for delivery"
     if wait_for_answer:
         bound = payload.get("max_wait_minutes")
         ctx._owner_wait_requested = quiz_id
@@ -632,7 +635,8 @@ def _escalate(
                  "continues with a notice" if bound else "the task waits after this tool batch")
         return (f"OK: quiz {quiz_id} {delivered}; {limit}, "
                 "preserving its live browser and releasing active execution capacity. "
-                "Addressed owner text resumes your judgment; existing Stop and task deadlines still apply.")
+                "Any incoming mail ends the wait; only an owner answer answers the question. "
+                "Other mail leaves the card open. Stop and task deadlines still apply.")
     return (f"OK: quiz {quiz_id} {delivered}; continuing under assumption: "
             f"{payload['assumption']}. The answer (if any) arrives as an owner "
             "quiz answer in a later round; the card stays answerable after this "

@@ -1315,7 +1315,7 @@ def _make_quiz(api):
                         labels.append(f"★ {label}" if option.get("recommended") is True else label)
             # Shared quiz contract cap: ouroboros.tools.core._MAX_QUIZ_OPTIONS.
             labels = labels[:6]
-            if not question or len(labels) < 2:
+            if not question:
                 return
             task_id = str(event.get("task_id") or "").strip()
             quiz_id = str(event.get("quiz_id") or "").strip()
@@ -1331,10 +1331,15 @@ def _make_quiz(api):
             token = telegram_quiz.mint_token(task_id, quiz_id)
             # One button per option; a reply to the card is a free-form answer.
             # Both reach the host's decision ingress (#472).
-            message_id = await client.send_message_with_inline_keyboard(
-                chat_id, f"{body}\n{telegram_quiz.hint(lang)}",
-                telegram_quiz.quiz_keyboard(token, labels), parse_mode="",
-            )
+            if labels:
+                message_id = await client.send_message_with_inline_keyboard(
+                    chat_id, f"{body}\n{telegram_quiz.hint(lang)}",
+                    telegram_quiz.quiz_keyboard(token, labels), parse_mode="",
+                )
+            else:
+                message_id = await client.send_message(
+                    chat_id, f"{body}\n{telegram_quiz.hint_open(lang)}", parse_mode="",
+                )
             telegram_quiz.remember_quiz(api, token, {
                 "task_id": task_id, "quiz_id": quiz_id, "chat_id": chat_id,
                 "message_id": int(message_id or 0), "options": labels,

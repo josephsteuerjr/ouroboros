@@ -65,19 +65,16 @@ def _seed_history(root):
         start_time=0.0, drive_logs=logs)
     final = next(row for row in pending if row["type"] == "send_message")
     log_chat("out", 1, 1, final["text"], task_id=direct["id"], message_meta=final.get("progress_meta", {}), drive_root=root)
-    # Ordinary native history receives counts from its normal authored summary,
-    # not from the removed ephemeral final-frame metadata producer. Only the
-    # summary model answer is a fixture; all summary/history writers are real.
-    from ouroboros.post_task_synthesis import _run_task_summary
+    # Ordinary native history receives counts from its free host facts row, not
+    # from the removed ephemeral final-frame metadata producer. This stopped turn
+    # dispatched no post-task worker, so the fixture calls the real writer (no
+    # model call, no narrative); all history readers are real.
+    from ouroboros.post_task_synthesis import _record_task_facts
     from ouroboros.gateway.history import _assemble_history_response
-    with pytest.MonkeyPatch.context() as summary_model:
-        summary_model.setattr("ouroboros.llm_observability.chat_observed", lambda *_a, **_k: (
-            {"content": "Read the evidence and routed the follow-up into its Project."}, {},
-        ))
-        _run_task_summary(env, None, direct, {"rounds": 2}, direct_trace, logs)
+    _record_task_facts(env, direct, {"rounds": 2}, direct_trace, logs)
     summaries = [row for row in json.loads(_assemble_history_response(root, 1, 50, 200))["messages"]
                  if row.get("task_id") == direct["id"] and row.get("system_type") == "task_summary"]
-    assert len(summaries) == 1 and summaries[0]["tool_calls"] == 2
+    assert len(summaries) == 1 and summaries[0]["tool_calls"] == 2 and summaries[0]["text"] == ""
     return {"preserved_path": str(preserved), "preserved_bytes": preserved.read_bytes()}
 
 

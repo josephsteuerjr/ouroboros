@@ -124,7 +124,7 @@ def test_core_catalog_schema_bytes_and_handler_owners_are_stable():
     # await_messages companion (395 -> 698 bytes); the `message` parameter description states
     # the bound. Diffing the whole catalog base to head shows exactly those edits and nothing else.
     assert hashlib.sha256(schema_bytes).hexdigest() == (
-        "7195a7459f276f4bdf8758864b079218f518ae446613cc8351967692f31472cd"
+        "700568a32d56b3e931eb12b6644c2d38a5d09e294b8a568b8884bf0b5d9b3e7d"
     )
     assert {
         entry.name: (entry.handler.__module__, entry.handler.__name__)

@@ -602,8 +602,11 @@ def _finish_cyber_acceptance(ctx: _TaskAcceptanceContext, result: Any) -> bool:
     ctx.tools._ctx._task_acceptance_reviewed = False  # final ingress, not review, owns delivery sealing
     clean = not pending and task_acceptance_is_clean(result)
     signal = "" if pending else str(getattr(result, "aggregate_signal", "") or "")
+    # The submitted final is Main's act (finish); Main stated no stance toward
+    # the criticism, so the record carries the act and no invented disposition.
     author = build_author_disposition(
-        disposition="accepted", rationale="Main submitted this complete response for delivery; independent review remains advisory.",
+        disposition="", action="finish",
+        rationale="Main submitted this complete response for delivery; independent review remains advisory.",
         # Evidence assembly can fail before a review binding exists. Bind the
         # author's decision to its real subject without inventing a reviewed pack.
         subject_hash=ctx.review_binding.get("binding_hash") or delivery_subject_hash(ctx.tools._ctx, ctx.llm_trace, ctx.content),
