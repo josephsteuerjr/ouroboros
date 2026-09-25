@@ -128,12 +128,14 @@ def test_the_grace_toast_speaks_the_sentence_and_keeps_the_typed_incident(tmp_pa
     assert toast["text"].startswith(
         "⏳ Task t1: The task made no progress for too long. Finalize artifacts/results now; ")
     assert "idle_timeout" not in toast["text"]
-    assert toast["progress_meta"] == {"task_incident": "idle_timeout", "toast_once": "t1:idle_timeout:1000"}
+    assert toast["progress_meta"] == {"task_incident": "idle_timeout", "toast_once": "t1:idle_timeout:1000",
+                                      "toast_tone": "warning"}
     # An unknown rail keeps its raw code on the toast rather than borrowing a sentence.
     put.clear()
     task_reaper.request_finalization_grace(tmp_path, "t2", "some_future_rail", chat_id=7, stamp=1000)
     assert put[0]["text"].startswith("⏳ Task t2: some_future_rail. Finalize")
     assert put[0]["progress_meta"]["task_incident"] == "some_future_rail"
+    assert put[0]["progress_meta"]["toast_tone"] == "warning"
 
 
 def test_the_salvage_line_names_the_cause_after_the_supervisor_stop(tmp_path, monkeypatch):

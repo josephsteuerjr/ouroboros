@@ -230,6 +230,7 @@ def request_finalization_grace(
             "progress_meta": {
                 "task_incident": terminal_reason,
                 "toast_once": f"{task_id}:{terminal_reason}:{stamp}",
+                "toast_tone": "warning",
             },
             "ts": utc_now_iso(),
         })
