@@ -638,14 +638,21 @@ def _finish_advisory_author(ctx: _TaskAcceptanceContext) -> bool:
     if not feedback and outcome.get("feedback_delivered"):
         feedback = outcome
     disposition = str(stance.get("agent_disposition") or "")
-    from ouroboros.loop_delivery import delivery_evidence_fingerprint
-
-    if (not intent or (disposition and disposition not in {"accepted", "rejected", "partial", "deferred"})
-            or (action != "stop" and (not feedback or intent.get("review_binding_hash") != feedback.get("binding_hash")))
-            or intent.get("tool_count") != len(ctx.llm_trace.get("tool_calls") or [])
-            or intent.get("owner_directives") != len(getattr(ctx.tools._ctx, "_owner_directives", []) or [])
-            or intent.get("evidence_fingerprint") != delivery_evidence_fingerprint(ctx.tools._ctx, ctx.llm_trace)):
+    if not intent or (disposition and disposition not in {"accepted", "rejected", "partial", "deferred"}):
         return False
+    # Only a FINISH binds to the reviewed feedback and to the three freshness
+    # facts. A stop grants nothing, so nothing about it has to be fresh (TZ-2
+    # C4): the service teardown before the panel changes the evidence
+    # fingerprint, and rejecting the stop for that bought a panel whose
+    # advisory author_finish then read as Done over "not ready".
+    if action != "stop":
+        from ouroboros.loop_delivery import delivery_evidence_fingerprint
+
+        if (not feedback or intent.get("review_binding_hash") != feedback.get("binding_hash")
+                or intent.get("tool_count") != len(ctx.llm_trace.get("tool_calls") or [])
+                or intent.get("owner_directives") != len(getattr(ctx.tools._ctx, "_owner_directives", []) or [])
+                or intent.get("evidence_fingerprint") != delivery_evidence_fingerprint(ctx.tools._ctx, ctx.llm_trace)):
+            return False
     from ouroboros.review_records import build_author_disposition
 
     author = build_author_disposition(

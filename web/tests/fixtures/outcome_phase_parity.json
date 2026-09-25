@@ -616,6 +616,13 @@
       "acceptance_clause": "Ouroboros stopped with unfinished work; no review approval was granted."
     },
     {
+      "name": "an explicit task-acceptance author stop is Failed and the row carries the agent's own reason beside the typed sentence (TZ-2 C4)",
+      "record": {"status": "completed", "reason_code": "final_message", "outcome_axes": {"execution": {"status": "ok"}, "objective": {"status": "fail", "source": "task_acceptance_review", "reason": "author_stop", "outcome_tier": "blocked_with_evidence"}, "review": {"status": "skipped", "acceptance_decision": {"status": "finalized_unaccepted", "reason": "author_stop", "author_action": "stop", "enforcement": "advisory", "rationale": "reviewer prose that never reaches the row", "author_disposition": {"disposition": "", "action": "stop", "rationale": "Not ready: the export endpoint still fails on empty input.", "subject_hash": "s1", "reviewer_signal": "", "enforcement": "advisory", "recorded_at": "2026-09-25T00:00:00+00:00", "source": "author"}}}}},
+      "phase": "error",
+      "headline": "Failed",
+      "acceptance_clause": "Ouroboros stopped with unfinished work; no review approval was granted · Not ready: the export endpoint still fails on empty input."
+    },
+    {
       "name": "a blocking plan review whose reviewers were too few holds the work, and the card says so",
       "record": {"status": "completed", "reason_code": "final_message", "outcome_axes": {"execution": {"status": "ok"}, "objective": {"status": "fail", "source": "plan_review_quorum_unreachable", "reason": "plan_review_quorum_unreachable", "outcome_tier": "blocked_with_evidence"}, "review": {"status": "skipped"}}},
       "phase": "error",

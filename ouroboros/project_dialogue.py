@@ -1305,7 +1305,9 @@ def _completion_verdict(result: Dict[str, Any], event: Dict[str, Any]) -> str:
     if raw_reason == REASON_OWNER_REQUESTED_FINALIZATION:
         clause = ""  # an owner-requested stop is a success and carries its own marker
     elif (status and (status != ACCEPTANCE_ACCEPTED or cause in TASK_CAUSE_PHRASES)
-            and phase in {"done", "warn"}):
+            and (phase in {"done", "warn"} or (cause == "author_stop" and phase == "error"))):
+        # An explicit author stop is the fact that ended the task (its objective is
+        # blocked, so the card is red); the typed sentence speaks over the delivery step.
         clause = TASK_CAUSE_PHRASES.get(cause, cause)
     elif phase == "cancelled" and isinstance(origin, dict) and origin:
         # The recorded cause and the relation the record PROVES (#1061).
@@ -1326,10 +1328,20 @@ def _completion_verdict(result: Dict[str, Any], event: Dict[str, Any]) -> str:
         key = _plan_review_key(result, event, reason) if reason == "plan_review_advisory" else reason
         clause = (" ".join(strip_markdown(str(detail)).split()) if detail
                   else TASK_CAUSE_PHRASES.get(key, key))
-    line = _join_cause_clauses([clause, *incident_cause_clauses(decision, reason, TASK_CAUSE_PHRASES),
+    line = _join_cause_clauses([clause, _author_stop_rationale(decision),
+                                *incident_cause_clauses(decision, reason, TASK_CAUSE_PHRASES),
                                 *_terminal_limitations(result, event, reason, held=held),
                                 TASK_CAUSE_PHRASES.get(custody, custody) if custody else ""])
     return line if not line or line.endswith((".", "!", "?", "…", ")")) else line + "."
+
+
+def _author_stop_rationale(decision: Dict[str, Any]) -> str:
+    """The agent's own reason for an explicit stop, beside the typed sentence (TZ-2 C4).
+
+    Only the AUTHOR's recorded rationale reaches the row: the reviewer rationale
+    stays in the card. The twin of ``authorStopRationale``."""
+    author = decision.get("author_disposition") if decision.get("reason") == "author_stop" else None
+    return " ".join(strip_markdown(str(author.get("rationale") or "")).split()) if isinstance(author, dict) else ""
 
 
 def _run_lives_in_its_project(

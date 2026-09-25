@@ -540,6 +540,11 @@ function joinCauseClauses(clauses) {
 // The open-review classes that state a standing limitation (never the merely awaited case).
 const PLAN_REVIEW_OPEN_CLASSES = new Set(['plan_review_unanswered', 'plan_review_none_answered', 'plan_review_answered_open']);
 
+// The AUTHOR's own reason for an explicit stop, beside the typed sentence (TZ-2 C4); the reviewer
+// rationale stays in the card. The twin of project_dialogue._author_stop_rationale.
+const authorStopRationale = (d) => (d?.reason === 'author_stop' && typeof d.author_disposition === 'object'
+    ? String(d.author_disposition?.rationale || '').split(/\s+/).filter(Boolean).join(' ') : '');
+
 function terminalLimitations(record, reason, held = false) {
     const deferred = Number(record?.outcome_axes?.objective?.deferred_count || 0) > 0;
     const planKey = reason === 'plan_review_advisory' ? reason : 'terminal_plan_review_open';
@@ -571,11 +576,11 @@ export function taskReasonDetail(evt) {
     if (taskStoppedWithSummary(evt)) {
         // An owner-requested stop is a success and carries its own marker instead.
         clause = '';
-    } else if (severity !== 'error' && severity !== 'cancelled' && decision?.status
-        && (decision.status !== 'accepted' || Object.hasOwn(TASK_CAUSE_PHRASES, decisionCause))) {
-        // A warning caused by REVIEW is explained by the host's acceptance decision, in its
-        // own typed reason (an accepted decision only when it has a sentence); the stored
-        // reviewer rationale stays in the card body, the task result and Logs.
+    } else if (((severity !== 'error' && severity !== 'cancelled') || (decisionCause === 'author_stop' && severity === 'error'))
+        && decision?.status && (decision.status !== 'accepted' || Object.hasOwn(TASK_CAUSE_PHRASES, decisionCause))) {
+        // A REVIEW-caused warning, or the explicit author stop that ended a red card, is explained
+        // by the host's acceptance decision in its own typed reason (an accepted decision only when
+        // it has a sentence); the stored reviewer rationale stays in the card, the result and Logs.
         clause = taskReasonPhrase(decisionCause);
     } else if (severity === "cancelled" && origin && typeof origin === "object"
         && !Array.isArray(origin) && Object.keys(origin).length) {
@@ -597,7 +602,7 @@ export function taskReasonDetail(evt) {
             ? String(receiptVeto.detail).split(/\s+/).filter(Boolean).join(' ')
             : taskReasonPhrase(reason === 'plan_review_advisory' ? planReviewKey(record, reason) : reason);
     }
-    const line = joinCauseClauses([clause, ...acceptanceIncidentClauses(decision, reason, TASK_CAUSE_PHRASES),
+    const line = joinCauseClauses([clause, authorStopRationale(decision), ...acceptanceIncidentClauses(decision, reason, TASK_CAUSE_PHRASES),
         ...terminalLimitations(record, reason, held), custody ? taskReasonPhrase(custody) : '']);
     // Cancellation's host/browser sentence has identical punctuation. Other
     // cause policy stays with the runtime owner of this shared seam.

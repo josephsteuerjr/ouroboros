@@ -1054,7 +1054,8 @@ and what enforces each.
   arguments intact. A terminal critic vote cannot deny author reaction or choose its stop. Blocking may save corrections and stop; advancement needs fresh
   reviewer authority. Advisory may explicitly finish revisions after exposed feedback
   or disclosed unavailability without another panel. Keep critic/author hashes separate;
-  bind intent to delivery evidence; consume it on owner/evidence supersession.
+  bind a finish to delivery evidence (a stop needs no freshness); consume it on
+  owner/evidence supersession.
   Queueing is not exposure; predeclared finish cannot authorize unseen feedback;
   `author_action=stop` grants neither completion nor permission. No semantic counters or
   keyword gates (P5). ARCHITECTURE §6 owns material-only continue, invalid-vote abstention

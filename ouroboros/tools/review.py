@@ -98,12 +98,12 @@ def get_tools():
                             "type": "string",
                             "enum": ["accepted", "rejected", "partial", "deferred"],
                             "default": "",
-                            "description": "Explicit author stance. After receiving the first host review, supply this with rationale to finish Advisory for your current result, including a revised answer, without another panel. Before first feedback it is evidence only; later tool effects or owner/evidence supersession require a new stance. Never creates reviewer PASS.",
+                            "description": "Explicit author stance. After receiving the first host review, supply this with rationale to finish Advisory for your current result, including a revised answer, without another panel. Before first feedback it is evidence only; later tool effects or owner/evidence supersession require a new finish stance (a stop is recorded as it stands). Never creates reviewer PASS.",
                         },
                         "rationale": {
                             "type": "string",
                             "default": "",
-                            "description": "Rationale required for an explicit author finish or stop. Rationale alone (no agent_disposition and no author_action) is evidence only and does not end review; with author_action it records the act and no invented stance.",
+                            "description": "Rationale required for an explicit author finish or stop; for a stop the owner sees it on the task row as the reason, so state plainly what is unfinished. Rationale alone (no agent_disposition and no author_action) is evidence only and does not end review; with author_action it records the act and no invented stance.",
                         },
                         "author_action": {
                             "type": "string", "enum": ["finish", "stop"],
