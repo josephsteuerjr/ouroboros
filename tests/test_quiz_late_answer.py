@@ -440,3 +440,80 @@ def test_a_late_answer_routed_into_a_project_rooms_live_root_carries_its_provena
     delivered = str(messages[-1]["content"])
     assert "The owner chose option 2: postgres" in delivered
     assert "Owner comment (verbatim): prod parity" in delivered
+
+
+def test_a_late_web_answer_passes_the_supervisor_consumer_seam(tmp_path, monkeypatch):
+    """The queued late answer is dequeued like any owner message: the supervisor's
+    one ingress writer (``record_inbound_message``) validates a web item against
+    the row the named ingress accepted, so that row must ride the queue item as
+    its in-process witness. The queue's EMPTY default is not a witness — treated
+    as one it raised, and a raise there is a supervisor loop crash that drops the
+    answer instead of delivering it."""
+    from supervisor.message_bus import record_inbound_message
+
+    record_asked(tmp_path, "task-1", quiz_id="q1", question="Which db?",
+                 options=["sqlite", "postgres"], assumption="sqlite meanwhile", chat_id=1)
+    reconcile_terminal(tmp_path, "task-1")
+    bridge, _frames = _late_bridge(tmp_path, monkeypatch)
+    app = _decision_app(tmp_path, monkeypatch, live_task=None)
+    resp = _post(app, {"request_id": "r1", "decision_id": "quiz:task-1:q1", "option_index": 1})
+    assert resp.status_code == 200 and resp.json()["forwarded"] is True, resp.text
+    source_id = "quiz_late_answer:task-1:q1"
+    [accepted] = _accepted_rows(tmp_path, source_id)
+    [update] = bridge.get_updates(offset=0, timeout=0)
+    msg = update["message"]
+    assert msg["source"] == "web" and msg["client_message_id"] == source_id
+    ref = record_inbound_message(  # the supervisor's call, verbatim arguments
+        bridge, msg, chat_id=1, user_id=1, client_message_id=source_id, text=msg["text"], ts="dequeued-later",
+    )
+    assert ref == msg["accepted_source_ref"] and ref["ts"] == accepted["ts"]
+    assert len(_accepted_rows(tmp_path, source_id)) == 1  # validated, never re-minted
+    witness = msg.get("accepted_source_row") or {}
+    assert witness.get("client_message_id") == source_id and witness.get("ts") == accepted["ts"]
+
+
+def test_supervisor_tick_delivers_a_late_web_answer_as_an_owner_turn(tmp_path, monkeypatch):
+    """The real supervisor intake (``server._process_bridge_updates``) drains the
+    late answer without raising and starts the ordinary owner turn with the
+    accepted row's identity threaded in — the delivery the 2xx's ``forwarded``
+    promised. A raise here counted as a supervisor loop crash and the failing
+    update was never handed back."""
+    import threading
+    from types import SimpleNamespace
+
+    import server
+    from tests.test_v6730_origin_invariant import _ImmediateThread
+
+    record_asked(tmp_path, "task-1", quiz_id="q1", question="Which db?",
+                 options=["sqlite", "postgres"], assumption="sqlite meanwhile", chat_id=1)
+    reconcile_terminal(tmp_path, "task-1")
+    bridge, _frames = _late_bridge(tmp_path, monkeypatch)
+    app = _decision_app(tmp_path, monkeypatch, live_task=None)
+    resp = _post(app, {"request_id": "r1", "decision_id": "quiz:task-1:q1", "option_index": 1})
+    assert resp.status_code == 200 and resp.json()["forwarded"] is True, resp.text
+    source_id = "quiz_late_answer:task-1:q1"
+    [accepted] = _accepted_rows(tmp_path, source_id)
+
+    captured = {}
+
+    def _direct(chat_id, text, image_data=None, *, task_constraint=None, task_metadata=None):
+        captured.update(chat_id=chat_id, text=text, metadata=task_metadata)
+
+    live_state = {"owner_id": 1, "owner_chat_id": 1}
+    ctx = SimpleNamespace(
+        DRIVE_ROOT=tmp_path, PENDING=[], RUNNING={},
+        load_state=lambda: dict(live_state), update_state=lambda fn: fn(live_state),
+        consciousness=SimpleNamespace(inject_observation=lambda _t: None, pause=lambda: None, resume=lambda: None),
+        get_chat_agent=lambda: SimpleNamespace(_busy=False),
+        handle_chat_direct=_direct, send_with_budget=lambda *_a, **_k: None,
+    )
+    monkeypatch.setattr(threading, "Thread", _ImmediateThread)
+    assert server._process_bridge_updates(bridge, 0, ctx) == 2
+    # The turn starts with the owner's own words (the pressed option); the host
+    # frame is rebuilt for the model from the late_answer provenance below.
+    assert captured["chat_id"] == 1 and captured["text"] == "2. postgres"
+    ref = captured["metadata"]["origin_message_ref"]
+    assert ref["client_message_id"] == source_id and ref["ts"] == accepted["ts"]
+    assert captured["metadata"]["late_answer"] == {"task_id": "task-1", "quiz_id": "q1"}
+    assert len(_accepted_rows(tmp_path, source_id)) == 1
+    assert bridge.get_updates(offset=0, timeout=0) == []  # consumed, nothing handed back
