@@ -66,6 +66,7 @@ from ouroboros.launcher_onboarding import (
 from ouroboros.launcher_server_reaper import (
     reap_same_install_strays as _reap_same_install_strays_impl,
 )
+from ouroboros import launcher_tray
 from ouroboros.launcher_windows_runtime import (  # noqa: F401  (re-exported: same objects, prior launcher surface)
     _prepare_windows_webview_runtime,
     _show_windows_message,
@@ -202,153 +203,11 @@ def _bootstrap_context() -> BootstrapContext:
     )
 
 
-def _graceful_exit(port: int) -> None:
-    """Full graceful shutdown from a non-window surface (tray Exit)."""
-    log.info("Tray exit — graceful shutdown.")
-    _shutdown_event.set()
-    if _webview_window is not None:
-        _webview_window.show()
-    _tray_exit_needed.set()
-    _stop_agent_and_children(port)
-
-
 def _stop_agent_and_children(port: int) -> None:
     stop_agent()
     _kill_orphaned_children(port)
     release_pid_lock()
     os._exit(0)
-
-
-def _run_tray_icon(port: int) -> None:
-    """Windows tray icon so closing the window hides to tray by default.
-
-    Runs its own STA thread with a WinForms ApplicationContext (NotifyIcon
-    needs a message pump; Application.Run(ApplicationContext) provides one
-    without creating a form). Menu: Open (restore + activate), Exit (full
-    graceful shutdown via _graceful_exit, which never returns). Left click
-    restores. No new dependency: pythonnet (WinForms) is already the
-    pywebview backend on Windows; the frozen build reuses the bundled
-    assets/icon.ico and source/dev falls back to the system application
-    icon. Other platforms never call this — their close behavior is
-    unchanged.
-    """
-    try:
-        import clr  # noqa: F401  (loads pythonnet's WinForms assemblies)
-
-        clr.AddReference("System.Windows.Forms")
-        clr.AddReference("System.Drawing")
-        clr.AddReference("System.Threading")
-        from System.Drawing import Icon, SystemIcons
-        from System.Threading import ApartmentState, Thread, ThreadStart
-        from System.Windows.Forms import (
-            ApplicationContext,
-            Application,
-            ContextMenuStrip,
-            NotifyIcon,
-            Timer,
-            ToolStripMenuItem,
-            ToolTipIcon,
-        )
-    except Exception:
-        # Tray unavailable (broken pythonnet etc.): never signal _tray_ready,
-        # so window-close keeps the ordinary full-shutdown behavior.
-        log.warning("Tray icon unavailable; window close will exit.", exc_info=True)
-        return
-
-    def _pump() -> None:
-        # Poll for shutdown from foreign threads: Application.ExitThread only
-        # stops the pump when called ON the STA thread (verified live — a
-        # foreign-thread ExitThread call is silently ignored), so a WinForms
-        # Timer inside the pump watches the python events instead.
-        timer = Timer()
-        timer.Interval = 200
-
-        def _tick(sender, args):
-            if _tray_exit_needed.is_set() or _shutdown_event.is_set():
-                timer.Stop()
-                Application.ExitThread()
-
-        timer.Tick += _tick
-        timer.Start()
-        context = ApplicationContext()
-        _tray_ready.set()
-        try:
-            Application.Run(context)
-        except Exception:
-            # If the message pump itself dies the tray is gone: clear the
-            # ready latch so window close falls back to the plain exit path
-            # instead of hiding into a tray that no longer exists.
-            _tray_ready.clear()
-            raise
-        finally:
-            try:
-                notify_icon.Visible = False
-                notify_icon.Dispose()
-            except Exception:
-                pass
-
-    def _icon():
-        from ouroboros.platform_layer import bundled_resource_bases
-
-        for base in bundled_resource_bases():
-            candidate = base / "assets" / "icon.ico"
-            if candidate.is_file():
-                try:
-                    return Icon(str(candidate))
-                except Exception:
-                    pass
-        try:
-            return SystemIcons.Application
-        except Exception:
-            return None
-
-    def _open_click(sender, args):
-        if _webview_window is not None:
-            _webview_window.show()
-
-    def _exit_click(sender, args):
-        _graceful_exit(port)
-
-    menu = ContextMenuStrip()
-    open_item = ToolStripMenuItem("Open Ouroboros")
-    open_item.Click += _open_click
-    exit_item = ToolStripMenuItem("Exit")
-    exit_item.Click += _exit_click
-    menu.Items.Add(open_item)
-    menu.Items.Add(exit_item)
-
-    notify_icon = NotifyIcon()
-    notify_icon.Icon = _icon()
-    notify_icon.Text = "Ouroboros — running (close hides to tray)"
-    notify_icon.ContextMenuStrip = menu
-    notify_icon.Visible = True
-    notify_icon.BalloonTipTitle = "Ouroboros"
-    notify_icon.BalloonTipText = "Still running in the tray. Click to reopen."
-    notify_icon.BalloonTipIcon = ToolTipIcon.Info
-    try:
-        notify_icon.ShowBalloonTip(3000)
-    except Exception:
-        pass
-
-    def _tray_click(sender, args):
-        if _webview_window is not None:
-            _webview_window.show()
-
-    notify_icon.MouseClick += _tray_click
-
-    def _tray_doubleclick(sender, args):
-        if _webview_window is not None:
-            _webview_window.show()
-
-    notify_icon.MouseDoubleClick += _tray_doubleclick
-
-    # NotifyIcon needs an STA message pump. pythonnet does not propagate COM
-    # apartment state to plain threading.Thread (MTA), so the pump rides a
-    # real System.Threading.Thread marked STA — the same construction
-    # pywebview's own WinForms backend uses for its UI thread.
-    pump = Thread(ThreadStart(_pump))
-    pump.SetApartmentState(ApartmentState.STA)
-    pump.Start()
 
 
 def check_git() -> bool:
@@ -375,12 +234,6 @@ _shutdown_event = threading.Event()
 # branch, for the case where the launcher, not the agent, decided the restart.
 _agent_restart_requested = threading.Event()
 _webview_window = None
-# Windows tray (close-to-tray by default): set once the tray thread is running;
-# the closing handler hides to tray only when the tray actually exists, so a
-# tray failure can never trap the window in an un-closable state.
-_tray_ready = threading.Event()
-# Set by the tray Exit item: the tray loop should stop after full shutdown ran.
-_tray_exit_needed = threading.Event()
 # Linux-only browser-fallback flag (#56): set by _detect_headless() when no
 # pywebview GUI backend can initialize. Stays False on macOS/Windows — the
 # probe never runs there, so every `if _headless:` branch is dead code on
@@ -1570,138 +1423,20 @@ def main(argv=()):
         webview.start(private_mode=False)
         return
 
-    def _resolve_bridge_file_url(raw_url: str) -> str:
-        """Validate a loopback file-bridge URL, returning the resolved full URL.
-
-        Shared SSOT for both the download-to-Downloads and open-in-default-app
-        bridge methods so the loopback guard cannot drift between them.
-        """
-        full_url = urllib.parse.urljoin(f"http://127.0.0.1:{actual_port}", str(raw_url or ""))
-        parsed = urllib.parse.urlparse(full_url)
-        if parsed.scheme != "http":
-            raise ValueError("file URL must be http://")
-        if parsed.hostname not in {"127.0.0.1", "localhost"}:
-            raise ValueError("desktop file access is limited to the local Ouroboros server")
-        if parsed.port != actual_port:
-            raise ValueError("file URL port must match the local Ouroboros server")
-        if parsed.path != "/api/files/download" and not parsed.path.startswith(("/api/extensions/", "/api/tasks/")):
-            raise ValueError("file URL path must be /api/files/download, /api/extensions/<skill>/... or /api/tasks/...")
-        return full_url
-
-    def _unique_bridge_target(directory: pathlib.Path, filename: str) -> pathlib.Path:
-        safe_name = pathlib.Path(str(filename or "download")).name or "download"
-        directory.mkdir(parents=True, exist_ok=True)
-        target = directory / safe_name
-        stem, suffix = target.stem, target.suffix
-        counter = 1
-        while target.exists():
-            target = directory / f"{stem}-{counter}{suffix}"
-            counter += 1
-        return target
-
-    def _fetch_bridge_url_to(full_url: str, target: pathlib.Path) -> None:
-        with urllib.request.urlopen(full_url, timeout=60) as resp, target.open("wb") as fh:  # noqa: S310 - localhost validated above
-            shutil.copyfileobj(resp, fh)
-
-    class MainApi:
-        @staticmethod
-        def _native_confirm(title: str, message: str) -> bool:
-            return bool(_webview_window and _webview_window.create_confirmation_dialog(title, message))
-
-        def request_runtime_mode_change(self, mode: str) -> dict:
-            try:
-                return _request_runtime_mode_change(mode, self._native_confirm)
-            except Exception as exc:
-                log.warning("Runtime mode native confirmation failed: %s", exc, exc_info=True)
-                return {"ok": False, "error": f"Native confirmation failed: {exc}"}
-
-        def confirm_runtime_mode_change(self, mode: str) -> dict:
-            """Confirm a mode change without writing it.
-
-            The SPA persists the selected mode through the owner HTTP endpoint.
-            Keeping this bridge side-effect free lets older shells fall back to
-            the same in-app confirmation instead of normalizing newer modes
-            such as Cyber Pro through their stale local enum.
-            """
-            try:
-                mode_text = str(mode or "").strip().lower()
-                if mode_text not in {"light", "advanced", "pro", "cyber_pro"}:
-                    return {"confirmed": False, "error": "Unknown runtime mode."}
-                settings = _load_settings()
-                current = normalize_runtime_mode(settings.get("OUROBOROS_RUNTIME_MODE"))
-                message = (
-                    f"Change Ouroboros runtime mode from {current} to {mode_text}?\n\n"
-                    "The new mode is saved through the owner endpoint and takes effect after restart."
-                )
-                return {"confirmed": bool(self._native_confirm("Confirm Runtime Mode Change", message))}
-            except Exception as exc:
-                log.warning("Runtime mode native confirmation failed: %s", exc, exc_info=True)
-                return {"confirmed": False, "error": f"Native confirmation failed: {exc}"}
-
-        def request_auto_grant_reviewed_skills_change(self, enabled: bool) -> dict:
-            try:
-                return _request_auto_grant_reviewed_skills_change(bool(enabled), self._native_confirm)
-            except Exception as exc:
-                log.warning("Reviewed-skill auto-grant confirmation failed: %s", exc, exc_info=True)
-                return {"ok": False, "error": f"Native confirmation failed: {exc}"}
-
-        def request_skill_key_grant(self, skill: str, keys: list) -> dict:
-            try:
-                return _request_skill_key_grant(skill, keys, self._native_confirm)
-            except Exception as exc:
-                log.warning("Skill grant native confirmation failed: %s", exc, exc_info=True)
-                return {"ok": False, "error": f"Native confirmation failed: {exc}"}
-
-        def download_file_to_downloads(self, url: str, filename: str, open_external: bool = False) -> dict:
-            try:
-                full_url = _resolve_bridge_file_url(url)
-                target = _unique_bridge_target(pathlib.Path.home() / "Downloads", filename)
-                _fetch_bridge_url_to(full_url, target)
-                if open_external:
-                    open_path_external(target)
-                return {"ok": True, "path": str(target)}
-            except Exception as exc:
-                log.warning("Desktop file download failed: %s", exc, exc_info=True)
-                return {"ok": False, "error": str(exc)}
-
-        def open_external_url(self, url: str) -> dict:
-            return _open_external_url(url)
-        def request_attention(self, sound: bool = True) -> dict:
-            return request_native_attention(_webview_window.show if _webview_window else None, sound=bool(sound))
-
-        def save_bytes_to_downloads(self, filename: str, b64: str) -> dict:
-            try:
-                target = _unique_bridge_target(pathlib.Path.home() / "Downloads", filename)
-                target.write_bytes(base64.b64decode(str(b64 or ""), validate=True))
-                return {"ok": True, "path": str(target)}
-            except Exception as exc:
-                log.warning("Desktop save-to-Downloads failed: %s", exc, exc_info=True)
-                return {"ok": False, "error": str(exc)}
-
-        def open_file_with_default_app(self, url: str, filename: str) -> dict:
-            """Open a delivered file in the OS default app (external window).
-
-            Fetches the loopback file into a private temp dir (NOT ~/Downloads)
-            and hands it to the platform default handler. This never navigates
-            the in-app WKWebView, which was the original fullscreen-lockup bug.
-            """
-            try:
-                full_url = _resolve_bridge_file_url(url)
-                # Per-open private dir: mkdtemp atomically creates a fresh 0700
-                # directory, so a pre-placed symlink/dir at a shared temp path
-                # cannot redirect the write (hardens over a fixed shared root).
-                open_root = pathlib.Path(tempfile.mkdtemp(prefix="ouroboros-open-"))
-                target = _unique_bridge_target(open_root, filename)
-                _fetch_bridge_url_to(full_url, target)
-                open_path_external(target)
-                return {"ok": True, "path": str(target)}
-            except Exception as exc:
-                log.warning("Desktop open-in-default-app failed: %s", exc, exc_info=True)
-                return {"ok": False, "error": str(exc)}
-
-    # Prune stale externally-opened temp copies from previous sessions (privacy + disk).
     for _stale_open in pathlib.Path(tempfile.gettempdir()).glob("ouroboros-open-*"):
         shutil.rmtree(_stale_open, ignore_errors=True)
+
+    import ouroboros.launcher_bridge as _bridge
+
+    _bridge._request_runtime_mode_change = _request_runtime_mode_change
+    _bridge._request_auto_grant_reviewed_skills_change = _request_auto_grant_reviewed_skills_change
+    _bridge._request_skill_key_grant = _request_skill_key_grant
+    _bridge._load_settings = _load_settings
+    _bridge._open_external_url = _open_external_url
+    _bridge._request_native_attention = request_native_attention
+    _bridge.get_window = lambda: _webview_window
+    _bridge._actual_port = actual_port
+    js_api_class = _bridge.MainApi
 
     url = f"http://127.0.0.1:{actual_port}"
 
@@ -1712,7 +1447,7 @@ def main(argv=()):
     window = webview.create_window(
         f"Ouroboros v{APP_VERSION}",
         url=url,
-        js_api=MainApi(),
+        js_api=js_api_class(),
         width=1100,
         height=750,
         min_size=(800, 500),
@@ -1727,7 +1462,7 @@ def main(argv=()):
         # so non-Windows behavior is unchanged. _tray_ready guards against a
         # failed tray: without a live tray icon there is nothing to restore the
         # window, so we fall through to the ordinary graceful shutdown.
-        if IS_WINDOWS and _tray_ready.is_set():
+        if IS_WINDOWS and launcher_tray.tray_ready.is_set():
             log.info("Window closing — hiding to tray (Windows default).")
             if _webview_window is not None:
                 _webview_window.hide()
@@ -1742,13 +1477,20 @@ def main(argv=()):
 
     tray_thread: Optional[threading.Thread] = None
     if IS_WINDOWS:
-        # The STA pump lives on a .NET Thread inside _run_tray_icon; this outer
-        # python thread is only the bootstrapper that reports readiness.
+        # Wire the tray module to this launcher's shutdown sequence and window,
+        # then bootstrap it (the STA pump lives on a .NET Thread inside
+        # run_tray_icon; this outer python thread only reports readiness).
+        launcher_tray.shutdown_event = _shutdown_event
+        launcher_tray.get_window = lambda: _webview_window
         tray_thread = threading.Thread(
-            target=_run_tray_icon, args=(actual_port,), name="ouroboros-tray", daemon=True
+            target=launcher_tray.run_tray_icon,
+            args=(actual_port,),
+            kwargs={"exit_handler": _stop_agent_and_children},
+            name="ouroboros-tray",
+            daemon=True,
         )
         tray_thread.start()
-        _tray_ready.wait(timeout=10)
+        launcher_tray.tray_ready.wait(timeout=10)
 
     webview.start(debug=False, private_mode=False)
 
