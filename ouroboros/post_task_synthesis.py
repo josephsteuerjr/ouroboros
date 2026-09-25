@@ -517,11 +517,15 @@ def _record_task_facts(env: Any, task: Dict[str, Any], usage: Dict[str, Any],
     task_id = str(task.get("id") or "unknown")
     try:
         from ouroboros.project_dialogue import append_canonical_task_summary, completion_status_label, outcome_phase
+        from ouroboros.task_finalization import artifact_store_roots, rescued_files_fact
 
         canonical_root = pathlib.Path(task.get("budget_drive_root") or drive_logs.parent)
         result_root = pathlib.Path(getattr(env, "drive_root", canonical_root))
         stored_result = _atp().load_task_result(result_root, task_id) or {}
         review_projection = _compact_review_projection(llm_trace)
+        # TZ-2 C2: how many files the task rescued into its store(s) — positive, zero or
+        # unknown — by stat alone; the fact discloses that no hash was computed.
+        files_rescued = rescued_files_fact(task_id, artifact_store_roots(canonical_root, task_id, child_root=result_root))
         append_canonical_task_summary(canonical_root, {
             "ts": utc_now_iso(), "direction": "system", "type": "task_summary",
             "summary_kind": "host_task_facts", "summary_id": f"task-facts:{task_id}",
@@ -537,6 +541,7 @@ def _record_task_facts(env: Any, task: Dict[str, Any], usage: Dict[str, Any],
             "rounds": None if usage.get("loop_evidence_unavailable") else int(usage.get("rounds") or 0),
             "outcome_axes": normalize_outcome_axes(usage), "reason_code": str(usage.get("reason_code") or ""),
             "result_ref": {"kind": "task_result", "task_id": task_id, "reader": "get_task_result"},
+            "files_rescued": files_rescued,
             **_summary_row_cost_fields(usage), **presence_provenance_fields(task),
             **({"review_projection": review_projection} if review_projection.get("panels") else {}),
         })

@@ -246,3 +246,59 @@ def test_build_trace_summary_shows_structured_failure_facts():
         "reasoning_notes": ["note" * 2000],
     }
     assert "OMISSION NOTE" in pipeline.build_trace_summary(long_trace)
+
+
+def test_facts_row_states_files_rescued_from_a_stat_only_walk(tmp_path, no_model_calls):
+    """TZ-2 C2: at terminal the free facts row says how many files reached the task's
+    artifact store — a positive count, a confirmed zero, or unknown — from a stat-only
+    walk that discloses it computed no hashes. Store bookkeeping is not a rescued file,
+    an empty readable manifest alone never proves zero (the walk does), an unreadable
+    store is unknown (never zero), and a split root walks the child-drive store too."""
+    from ouroboros.headless import task_artifacts_dir
+
+    drive_logs = tmp_path / "logs"
+    drive_logs.mkdir()
+
+    def fact(task_id, env=None, **task_extra):
+        pipeline._record_task_facts(env=env, task={"id": task_id, "chat_id": 1, **task_extra},
+                                    usage={"rounds": 1}, llm_trace={"tool_calls": []}, drive_logs=drive_logs)
+        [row] = [r for r in _rows(drive_logs) if r["summary_id"] == f"task-facts:{task_id}"]
+        return row["files_rescued"]
+
+    store = task_artifacts_dir(tmp_path, "pos-1")
+    (store / "report.md").write_text("r", encoding="utf-8")
+    (store / "nested").mkdir()
+    (store / "nested" / "data.csv").write_text("1,2", encoding="utf-8")
+    (store / ".artifact_manifest.json").write_text("{}", encoding="utf-8")
+    (store / ".scratch_manifest.json").write_text("{}", encoding="utf-8")
+    assert fact("pos-1") == {"count": 2, "state": "positive", "hash_computed": False,
+                             "stores": [{"store": str(store), "count": 2, "readable": True}]}
+
+    store = task_artifacts_dir(tmp_path, "zero-1")
+    (store / ".artifact_manifest.json").write_text('{"schema_version": 1, "artifacts": {}}', encoding="utf-8")
+    assert fact("zero-1") == {"count": 0, "state": "zero", "hash_computed": False,
+                              "stores": [{"store": str(store), "count": 0, "readable": True}]}
+    never_created = task_artifacts_dir(tmp_path, "none-1", create=False)
+    assert fact("none-1")["state"] == "zero" and not never_created.exists()
+
+    blocked = task_artifacts_dir(tmp_path, "unk-1", create=False)
+    blocked.write_text("a file where the store directory should be", encoding="utf-8")
+    assert fact("unk-1") == {"count": 0, "state": "unknown", "hash_computed": False,
+                             "stores": [{"store": str(blocked), "count": 0, "readable": False}]}
+
+    child = tmp_path / "child-drive"
+    (task_artifacts_dir(child, "split-1") / "out.txt").write_text("o", encoding="utf-8")
+    canonical = task_artifacts_dir(tmp_path, "split-1")
+    assert fact("split-1", env=SimpleNamespace(drive_root=child), budget_drive_root=str(tmp_path)) == {
+        "count": 1, "state": "positive", "hash_computed": False,
+        "stores": [{"store": str(canonical), "count": 0, "readable": True},
+                   {"store": str(task_artifacts_dir(child, "split-1", create=False)), "count": 1, "readable": True}]}
+
+
+def test_rescued_files_walk_excludes_exactly_the_store_bookkeeping_names():
+    """The bookkeeping names the walk skips are the SSOT literals, pinned so they cannot drift."""
+    from ouroboros.artifacts import _ARTIFACT_MANIFEST
+    from ouroboros.task_finalization import RESCUED_FILES_BOOKKEEPING
+    from ouroboros.workspace_patch_capture import SCRATCH_MANIFEST_NAME
+
+    assert RESCUED_FILES_BOOKKEEPING == frozenset({_ARTIFACT_MANIFEST, SCRATCH_MANIFEST_NAME})

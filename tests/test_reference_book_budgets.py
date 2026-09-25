@@ -96,7 +96,9 @@ CHAPTER_BYTE_BUDGETS: dict[str, int] = {
     # projection write per turn (the unbounded drain and per-event write they replace had
     # no sentence of their own), and the projection paragraph states the writer's slim read,
     # its retry interval and the crossing rule of the OpenRouter check.
-    "docs/architecture/05-supervisor-loop.md": 32400,
+    # 32400 -> 32600 (tz2 aafaa3713): the D15 late-answer / drain-ended sentence in the
+    # owner-wait paragraph took the chapter to 32502 before this diff; nothing displaced.
+    "docs/architecture/05-supervisor-loop.md": 32600,
     # 286850 -> 287600: "an answer that has not arrived is a gap" is a new invariant of
     # plan review and task acceptance (the slot census vocabulary, the `awaiting`
     # projection, the only-awaited task outcome); the in-flight sentence it grew from is
@@ -247,7 +249,9 @@ CHAPTER_BYTE_BUDGETS: dict[str, int] = {
     # descendant is a Presence caller (inherited binding authority, never speaker metadata).
     # 95150 -> 95200 (TZ2 repair, measured 95191): the promotion/follow-up clause names the
     # one carrier it copies instead of "the Presence metadata".
-    "docs/development/06-rules-by-change-class.md": 95200,
+    # 95200 -> 95400 (tz2 7a387f717): the C4 explicit-stop rule took the chapter to 95223
+    # before this diff; nothing displaced.
+    "docs/development/06-rules-by-change-class.md": 95400,
     "docs/development/07-managed-update-rule.md": 4166,
     "docs/development/08-mutation-attribution-rule.md": 2899,
     "docs/development/09-process-custody-rule.md": 10028,

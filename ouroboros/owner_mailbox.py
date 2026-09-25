@@ -777,7 +777,10 @@ def mailbox_drain_ended(task_drive: pathlib.Path, task_id: str) -> bool:
     (TZ-2 D15). Its mailbox is then only cleaned up, never read again, so owner
     mail and quiz answers must not be labelled delivered into it — the routing
     guard and the quiz ingress both ask this one fact. The actor's drive is read,
-    not the canonical row: split-root copyback can lag the settlement.
+    not the canonical row: split-root copyback can lag the settlement. A receipt for
+    mail that queued after the drain ended (TZ-2 B5) is not built yet: it waits for
+    the artifact/forwarding API TZ-1 lands in ``origin/ouroboros`` and is not to be
+    copied from provisional code.
     """
     from ouroboros.task_results import load_task_result
     from ouroboros.task_status import SETTLED_STATUSES

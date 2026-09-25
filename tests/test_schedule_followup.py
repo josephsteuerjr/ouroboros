@@ -212,6 +212,38 @@ def test_schedule_followup_registers_a_one_shot_entry(tmp_path):
     assert record["task"]["context"] == "plan review for root-1 was quorum-unreachable"
 
 
+def test_a_timer_follow_up_is_framed_as_task_authored_and_its_note_never_enters_the_owner_corpus(tmp_path):
+    """TZ-2 B3: the successor of a timer follow-up reads the same ``objective_author``
+    stamp a promote / route_to_project carries, so its first turn is framed as drafted
+    by the scheduling task and the note text never becomes an owner directive. The
+    owner door's stamp (``origin_message_ref``) is still not carried (#1271)."""
+    from types import SimpleNamespace
+
+    from ouroboros.context import build_user_content
+    from ouroboros.dialogue_provenance import run_origin
+    from ouroboros.loop_messages import _initialize_owner_directives
+    from supervisor import queue
+
+    ctx = _ctx(tmp_path)
+    ctx.task_metadata["origin_message_ref"] = {"chat_id": 1, "message_id": "owner-7"}
+    note = "Re-check the reviewer window and resume the plan."
+    assert _followup(ctx, objective=note).startswith("FOLLOWUP_SCHEDULED")
+    [record] = queue.list_scheduled_tasks(tmp_path / "data")["tasks"]
+    author = {"kind": "task", "task_id": "root-1"}
+    assert record["task"]["metadata"]["objective_author"] == author
+    assert "origin_message_ref" not in record["task"]["metadata"]
+    successor = queue._task_from_schedule(record)
+    assert successor["metadata"]["objective_author"] == author
+    origin = run_origin(successor)
+    assert (origin["owner_ingress"], origin["objective_author"]) == (False, author)
+    content = build_user_content(successor)
+    assert content.startswith("[OBJECTIVE_AUTHOR] The objective below was drafted by task root-1, "), content
+    assert content.endswith("[/OBJECTIVE_AUTHOR]\n\n" + note), content
+    live = SimpleNamespace(task_metadata=successor["metadata"])
+    _initialize_owner_directives(live, [{"role": "user", "content": content}])
+    assert getattr(live, "_owner_directives", []) == []  # the note is the task's, not the owner's
+
+
 def test_presence_followup_preserves_ceiling_and_return_context(tmp_path):
     ctx = _ctx(tmp_path)
     ctx.task_metadata["presence"] = {"binding_id": "b" * 32}
