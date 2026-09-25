@@ -286,11 +286,11 @@ def _update_improvement_backlog(
 
             groom_backlog(env.drive_root)  # size-triggered; no-op while small
         except Exception as error:
-            propagate_model_error(error)
+            propagate_paid_interruption(error)
             log.debug("Backlog grooming failed", exc_info=True)
         return added
     except Exception as error:
-        propagate_model_error(error)
+        propagate_paid_interruption(error)
         log.debug("Improvement backlog update failed", exc_info=True)
         return 0
 
@@ -547,6 +547,21 @@ def _record_task_facts(env: Any, task: Dict[str, Any], usage: Dict[str, Any],
 POST_TASK_INTERRUPT_KINDS = frozenset({"budget_exhausted", "provider_outcome_unknown"})
 
 
+def propagate_paid_interruption(error: BaseException) -> None:
+    """Re-raise what must stop later paid post-work; return for an ordinary failure.
+
+    ``propagate_model_error`` carries the control and unknown-provider facts; the
+    wallet's ``BudgetExceeded`` is the third (TZ-2 C3). A stage adapter that only
+    logged it let the coordinator run the next paid stage and write ``completed``.
+    Anything else returns, so the caller isolates the failure to its own stage.
+    """
+    propagate_model_error(error)
+    from ouroboros.usage_accounting import BudgetExceeded
+
+    if isinstance(error, BudgetExceeded):
+        raise error
+
+
 def _post_task_paid_interruption(errors: Any) -> str:
     """The stage's typed outcome from returned error facts: '' when clean.
 
@@ -621,7 +636,7 @@ def _run_chat_consolidation(env, memory, llm, task, drive_logs):
                     update_budget_from_usage(u)
                 return _post_task_paid_interruption(errors)
     except Exception as error:
-        propagate_model_error(error)
+        propagate_paid_interruption(error)
         log.warning("Chat block consolidation setup failed", exc_info=True)
         return "stage_setup_failed"  # an ordinary failure isolated to this stage, never `completed`
 
@@ -656,8 +671,9 @@ def _run_scratchpad_consolidation(env: Any, memory: Any, llm: Any) -> None:
                 update_budget_from_usage(u)
             return _post_task_paid_interruption(u.get("_consolidation_errors") if isinstance(u, dict) else [])
     except Exception as error:
-        propagate_model_error(error)
+        propagate_paid_interruption(error)
         log.debug("Scratchpad consolidation setup failed", exc_info=True)
+        return "stage_setup_failed"
 
 
 def _run_reflection(env: Any, llm: Any, task: Dict[str, Any],
@@ -709,9 +725,9 @@ def _run_reflection(env: Any, llm: Any, task: Dict[str, Any],
                 append_reflection_routed(env, task, entry)
                 return entry
             except Exception as error:
-                propagate_model_error(error)
+                propagate_paid_interruption(error)
                 log.warning("Execution reflection failed (non-critical)", exc_info=True)
     except Exception as error:
-        propagate_model_error(error)
+        propagate_paid_interruption(error)
         log.debug("Execution reflection setup failed", exc_info=True)
     return None

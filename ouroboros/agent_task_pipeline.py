@@ -207,7 +207,7 @@ def _run_post_task_processing_async(
 
                     maybe_promote(env, task_snapshot, reflection_entry, llm_client)
                 except Exception as error:
-                    propagate_model_error(error)
+                    propagate_paid_interruption(error)
                     log.debug("Post-task evolution promotion failed", exc_info=True)
                 if on_reflection is not None:
                     on_reflection(reflection_entry, llm_client)
@@ -225,7 +225,7 @@ def _run_post_task_processing_async(
                     review_evidence_snapshot, sealed_final=sealed_snapshot))),
                 ("promotion", _promotion),
             ]
-            from ouroboros.post_task_synthesis import POST_TASK_INTERRUPT_KINDS
+            from ouroboros.post_task_synthesis import POST_TASK_INTERRUPT_KINDS, propagate_paid_interruption
             from ouroboros.usage_accounting import BudgetExceeded
 
             stage_errors = False

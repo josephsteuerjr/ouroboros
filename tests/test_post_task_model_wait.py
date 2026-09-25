@@ -252,6 +252,30 @@ def test_real_consolidation_error_controls_remaining_post_task_stages(
         assert "scratchpad_consolidation,reflection,promotion" in checkpoint["post_task_stop_reason"]
 
 
+def test_budget_refusal_inside_promotion_is_never_swallowed_into_completed(phase, monkeypatch):
+    """TZ-2 C3: `propagate_model_error` re-raises only control/unknown facts, so a
+    `BudgetExceeded` raised inside a stage adapter's own catch (promotion, backlog,
+    consolidation setup, reflection) used to be logged and the checkpoint written
+    `completed`. The shared `propagate_paid_interruption` lets the wallet stop the
+    remaining paid post-work like the other two interruptions."""
+    from ouroboros.usage_accounting import BudgetExceeded
+
+    f = phase
+
+    def refuse(*_args):
+        f.stages.append("promotion-model")
+        raise BudgetExceeded("root wallet spent")
+
+    monkeypatch.setattr("ouroboros.post_task_evolution.maybe_promote", refuse)
+    f.ready.set()
+    launch(f)
+    assert f.done.wait(5)
+    checkpoint = load_task_result(f.root, f.task["id"])["root_phase_checkpoint"]
+    assert checkpoint["post_task_synthesis"] == "degraded"
+    assert checkpoint["post_task_stop_reason"] == "budget_exhausted:skipped="
+    assert f.stages[-2:] == ["backlog", "promotion-model"]
+
+
 @pytest.mark.parametrize("stage", ["scratchpad", "reflection"])
 def test_returned_paid_error_stops_post_task_after_its_own_stage(phase, monkeypatch, stage):
     """Returned typed failures from later memory stages also stop subsequent paid stages."""
