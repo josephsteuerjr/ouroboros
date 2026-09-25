@@ -227,11 +227,9 @@ def request_finalization_grace(
             # events.HOST_NARRATION. Without it this toast stamped the task's
             # last_progress_at and the next tick withdrew the episode it announced.
             HOST_NARRATION: True,
-            "progress_meta": {
-                "task_incident": terminal_reason,
-                "toast_once": f"{task_id}:{terminal_reason}:{stamp}",
-                "toast_tone": "warning",
-            },
+            # toast_tone=warning: a rail is a limit the task hit, not an error the owner must fix (TZ-2 C1).
+            "progress_meta": {"task_incident": terminal_reason, "toast_tone": "warning",
+                              "toast_once": f"{task_id}:{terminal_reason}:{stamp}"},
             "ts": utc_now_iso(),
         })
     except Exception:
