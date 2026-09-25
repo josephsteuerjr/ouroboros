@@ -544,16 +544,23 @@ def _record_task_facts(env: Any, task: Dict[str, Any], usage: Dict[str, Any],
         log.warning("Task facts row was not recorded for %s (non-critical)", task_id, exc_info=True)
 
 
+POST_TASK_INTERRUPT_KINDS = frozenset({"budget_exhausted", "provider_outcome_unknown"})
+
+
 def _post_task_paid_interruption(errors: Any) -> str:
-    """Stop later paid post-work on typed budget or unknown-provider evidence.
+    """The stage's typed outcome from returned error facts: '' when clean.
 
     Memory consolidation returns errors to keep completed chunks. Only this
-    stage adapter interprets those existing facts as a post-task stop signal.
+    stage adapter interprets those existing facts: a budget or unknown-provider
+    kind wins and stops later paid post-work; any other kind names the last
+    ordinary failure, so a stage that lost a chunk reads ``degraded`` like a
+    stage that raised (TZ-2 C3: unfinished stages are never ``completed``).
     """
-    for row in errors if isinstance(errors, list) else []:
-        if isinstance(row, dict) and row.get("kind") in {"budget_exhausted", "provider_outcome_unknown"}:
-            return row["kind"]
-    return ""
+    rows = [row for row in (errors if isinstance(errors, list) else []) if isinstance(row, dict)]
+    for row in rows:
+        if row.get("kind") in POST_TASK_INTERRUPT_KINDS:
+            return str(row["kind"])
+    return str((rows[-1].get("kind") or "stage_error")) if rows else ""
 
 
 def _run_chat_consolidation(env, memory, llm, task, drive_logs):
@@ -616,6 +623,7 @@ def _run_chat_consolidation(env, memory, llm, task, drive_logs):
     except Exception as error:
         propagate_model_error(error)
         log.warning("Chat block consolidation setup failed", exc_info=True)
+        return "stage_setup_failed"  # an ordinary failure isolated to this stage, never `completed`
 
 
 def _run_scratchpad_consolidation(env: Any, memory: Any, llm: Any) -> None:

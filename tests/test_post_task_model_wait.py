@@ -238,7 +238,11 @@ def test_real_consolidation_error_controls_remaining_post_task_stages(
     assert f.done.wait(5)
     checkpoint = load_task_result(f.root, f.task["id"])["root_phase_checkpoint"]
     if cause == "ordinary":
-        assert checkpoint["post_task_synthesis"] == "completed"
+        # TZ-2 C3: an ordinary failure is isolated to its stage — later stages still
+        # run — but a stage that lost work is unfinished, so the checkpoint is
+        # degraded, never completed, and nothing was skipped.
+        assert checkpoint["post_task_synthesis"] == "degraded"
+        assert not checkpoint.get("post_task_stop_reason")
         assert f.stages == ["facts", "chat-model", "scratch", "reflection", "backlog"]
     else:
         assert checkpoint["post_task_synthesis"] == "degraded"

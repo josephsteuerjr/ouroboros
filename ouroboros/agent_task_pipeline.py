@@ -225,6 +225,7 @@ def _run_post_task_processing_async(
                     review_evidence_snapshot, sealed_final=sealed_snapshot))),
                 ("promotion", _promotion),
             ]
+            from ouroboros.post_task_synthesis import POST_TASK_INTERRUPT_KINDS
             from ouroboros.usage_accounting import BudgetExceeded
 
             stage_errors = False
@@ -238,12 +239,17 @@ def _run_post_task_processing_async(
                     if name == "reflection" and isinstance(result.get("reflection_entry"), dict):
                         stage_reason = _post_task_paid_interruption(
                             result["reflection_entry"].get("memory_operation_errors"))
-                    if isinstance(stage_reason, str) and stage_reason in {"budget_exhausted", "provider_outcome_unknown"}:
+                    if isinstance(stage_reason, str) and stage_reason in POST_TASK_INTERRUPT_KINDS:
                         interrupted = stage_reason
                         skipped = [stage for stage, _run in stages[index + 1:]]
                         log.warning("Post-task paid stage %s interrupted for %s: %s",
                                     name, stage_task_id, interrupted)
                         break
+                    if isinstance(stage_reason, str) and stage_reason:
+                        # A returned ordinary failure is isolated to its stage: later
+                        # stages still run, the checkpoint stays degraded (TZ-2 C3).
+                        stage_errors = True
+                        log.warning("Post-task stage %s failed for %s: %s", name, stage_task_id, stage_reason)
                 except Exception as error:
                     if isinstance(error, BudgetExceeded):
                         interrupted = "budget_exhausted"
