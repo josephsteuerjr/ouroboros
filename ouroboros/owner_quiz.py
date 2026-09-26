@@ -199,6 +199,11 @@ def record_answered(
     task itself received. First-wins is untouched — an already ``answered``
     block stays a refusal on any other ``request_id``.
 
+    ``wait_for_answer`` stays on the answered block on purpose: the answer
+    frame (``gateway.task_decision._quiz_answer_frame``) reads it to say the
+    task was waiting rather than proceeding under its assumption, and every
+    surface settles the card on ``answered`` regardless of wait facts.
+
     Returns ``{"ok", "state", "duplicate", "error", "block"}``:
     - unknown quiz_id → ``error="quiz_not_found"``;
     - open (or expired with ``allow_expired``) + valid index (or no index +
@@ -252,14 +257,17 @@ def record_answered(
 
 
 def mark_wait_ended(drive_root: Any, task_id: str, quiz_id: str) -> bool:
-    """The bounded wait behind an OPEN card closed and the task resumed: the block stops
+    """The wait behind an OPEN card ended and the task resumed: the block stops
     saying ``wait_for_answer`` (replay renders the truth) and keeps the instant for audit.
-    The card stays open and answerable. Returns whether a block changed."""
+    The card stays open and answerable. Returns whether a block changed — and it
+    changes ONLY an open, still-waiting block (F10): a card answered a second before
+    the wake is never rolled back, and the callers announce nothing unless this is True."""
     changed: List[bool] = []
 
     def _mutator(quizzes: Dict[str, Dict[str, Any]]) -> Any:
         block = quizzes.get(str(quiz_id))
-        if not isinstance(block, dict) or not block.get("wait_for_answer"):
+        if (not isinstance(block, dict) or block.get("state") != STATE_OPEN
+                or not block.get("wait_for_answer")):
             return _KEEP
         block.pop("wait_for_answer", None)
         block["wait_ended_at"] = utc_now_iso()
@@ -422,12 +430,14 @@ def late_answer_model_text(drive_root: Any, late_answer: Any, owner_text: str) -
     """The model-facing delivery of a LATE quiz answer (owner message ``owner_text``).
 
     The owner's chat row carries only their own words; the receiving model
-    needs the card they answered. The frame is rebuilt from the stored block on
-    the canonical ``drive_root`` (the same projection the ingress recorded).
-    When that block cannot be read (evicted, unanswered, or unreadable), the
-    owner's words are delivered with one host line saying so — disclosed, never
-    a silent loss of the card's context. A message with no valid ``late_answer``
-    provenance is returned unchanged."""
+    needs the card they answered. Its first line names the asking task, which
+    had finished (a late answer is only accepted after it did; TZ-2 B3); the
+    frame is rebuilt from the stored block on the canonical ``drive_root`` (the
+    same projection the ingress recorded). When that block cannot be read
+    (evicted, unanswered, or unreadable), the owner's words are delivered with
+    one host line saying so — disclosed, never a silent loss of the card's
+    context. A message with no valid ``late_answer`` provenance is returned
+    unchanged."""
     ref = late_answer_ref(late_answer)
     if ref is None:
         return owner_text
@@ -436,11 +446,11 @@ def late_answer_model_text(drive_root: Any, late_answer: Any, owner_text: str) -
         block = quiz_states(drive_root, ref["task_id"]).get(ref["quiz_id"]) or {}
     except Exception:
         block = {}
+    head = f"[Late answer to a question asked by task {ref['task_id']}, which had finished]\n"
     if isinstance(block, dict) and str(block.get("state") or "") == STATE_ANSWERED:
-        return recorded_answer_frame(block)
+        return head + recorded_answer_frame(block)
     return (
-        f"{owner_text}\n"
-        f"[Host note] This owner message answers quiz {ref['quiz_id']} of task "
-        f"{ref['task_id']}; that card could not be read, so only the owner's own "
-        "words are shown."
+        f"{head}{owner_text}\n"
+        f"[Host note] This owner message answers quiz {ref['quiz_id']}; that card "
+        "could not be read, so only the owner's own words are shown."
     )

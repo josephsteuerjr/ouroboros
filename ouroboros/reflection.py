@@ -100,14 +100,17 @@ worked together, an interpretation worth testing) — append a line:
 MEMORY_ACTIONS_JSON: [...]
 A JSON array of 0-3 objects. Each object must have:
 - type: one of "scratchpad_append", "knowledge_write", "identity_update_candidate"
-- content: concise, concrete text to persist
+- content: concise, concrete text to persist (a knowledge_write to an existing note uses edits instead)
 Optional field:
 - topic: REQUIRED only for knowledge_write (shelf-relative path, e.g. "review_process")
 - scope: optional global or project:<exact project id>; omission keeps this task's shelf
 Rules for memory actions:
 - scratchpad_append: a durable working-memory note useful for near-future tasks.
-- knowledge_write: complete revised Markdown understanding under `topic`. Use
-  knowledge_read to read the whole CURRENT note before replacing it. Preserve
+- knowledge_write: complete Markdown understanding for a new `topic`. For an existing
+  note, use knowledge_read to read the whole CURRENT note, then give "edits":
+  [{{"old_text": a passage occurring exactly once in its body, "new_text": its replacement,
+  empty to remove it, "basis": source and reason}}] and optionally "summary": "revised
+  summary" (no content beside them); unmentioned text and metadata stay. Preserve
   evidence, uncertainty and useful links; new topics need no prior read. A repeated
   interpretation is not new independent evidence. No blind append of fragments.
 - identity_update_candidate: a PROPOSED identity refinement; it is only recorded as a
@@ -402,10 +405,14 @@ def _validate_memory_actions(raw: Any, task_id: str, *,
             continue
         content = (str(item.get("content") or "") if action_type == "knowledge_write"
                    else _truncate_with_notice(item.get("content", ""), 1200)).strip()
-        if not content:
+        # An existing note's knowledge_write carries anchored edits (+ summary) instead of content;
+        # present keys pass verbatim, however malformed, so the publisher's one contract refuses them.
+        change = ({key: item[key] for key in ("edits", "summary", "frontmatter") if key in item}
+                  if action_type == "knowledge_write" else {})
+        if not content and not change:
             skip(item, action_type, "empty_content")
             continue
-        action: Dict[str, Any] = {"type": action_type, "content": content, "task_id": task_id}
+        action: Dict[str, Any] = {"type": action_type, "content": content, "task_id": task_id, **change}
         if action_type == "knowledge_write":
             topic = str(item.get("topic") or "").strip()
             if not topic:
@@ -660,6 +667,14 @@ def generate_reflection(
         backlog_candidates = []
         memory_actions = []
         reflection_route = "unknown"
+        # The placeholder is a stage that lost its work, never a clean one: the
+        # post-task coordinator reads this typed row and degrades the checkpoint
+        # while later stages still run; an interruption row keeps precedence there.
+        from ouroboros.utils import sanitize_tool_result_for_log
+
+        memory_operation_errors = [*memory_operation_errors, {
+            "kind": "reflection_failed", "label": "Task reflection",
+            "message": sanitize_tool_result_for_log(str(e)) or type(e).__name__}]
 
     return {
         "ts": utc_now_iso(),
@@ -733,7 +748,8 @@ def apply_memory_actions(env: Any, actions: List[Dict[str, Any]], *, project_id:
     for action in (actions or [])[:3]:
         atype = str(action.get("type") or "")
         content = str(action.get("content") or "").strip()
-        if not content:
+        change = atype == "knowledge_write" and any(key in action for key in ("edits", "summary", "frontmatter"))
+        if not content and not change:
             skipped(action, "empty_content")
             continue
         if pid and atype in ("scratchpad_append", "identity_update_candidate"):
@@ -806,8 +822,35 @@ def _admits_pattern_register(entry: Dict[str, Any]) -> bool:
     )
 
 
+def _update_pattern_register(drive_root: pathlib.Path, entry: Dict[str, Any]) -> None:
+    """The reflection stage's nested paid write, under the post-task stage protocol.
+
+    It runs after the reflection is persisted and buys nothing when the reflection's
+    own call was interrupted (a budget or unknown-outcome row). A control, the wallet
+    or an unresolved attempt on any provider's chain propagates, so no later paid
+    post-work runs (TZ-2 C3). An ordinary failure is one typed row on the entry's
+    ``memory_operation_errors``: learning that silently fails to land is invisible
+    erosion (P1), so the stage reads degraded while permitted later stages still run.
+    """
+    from ouroboros.post_task_synthesis import POST_TASK_INTERRUPT_KINDS, propagate_paid_interruption
+
+    errors = entry.get("memory_operation_errors") or []
+    if not _admits_pattern_register(entry) or any(
+            isinstance(row, dict) and row.get("kind") in POST_TASK_INTERRUPT_KINDS for row in errors):
+        return
+    try:
+        _update_patterns(drive_root, entry)
+    except Exception as exc:
+        propagate_paid_interruption(exc)
+        from ouroboros.utils import sanitize_tool_result_for_log
+
+        log.warning("Pattern register update failed for task %s: %s", entry.get("task_id", "?"), exc, exc_info=True)
+        entry["memory_operation_errors"] = [*errors, {"kind": "pattern_register_failed", "label": "Pattern Register",
+                                                      "message": sanitize_tool_result_for_log(str(exc)) or type(exc).__name__}]
+
+
 def append_reflection(drive_root: pathlib.Path, entry: Dict[str, Any]) -> None:
-    """Persist a reflection entry to the JSONL file."""
+    """Persist a reflection entry to the JSONL file, then its Pattern Register write."""
     reflections_path = drive_root / "logs" / REFLECTIONS_FILENAME
     try:
         append_jsonl(reflections_path, entry)
@@ -815,15 +858,7 @@ def append_reflection(drive_root: pathlib.Path, entry: Dict[str, Any]) -> None:
                  entry.get("task_id", "?"), entry.get("key_markers", []))
     except Exception:
         log.warning("Failed to save execution reflection", exc_info=True)
-
-    if _admits_pattern_register(entry):
-        try:
-            _update_patterns(drive_root, entry)
-        except Exception as exc:
-            # Learning that silently fails to land is invisible erosion: the
-            # register simply never hears about this class again (P1).
-            log.warning("Pattern register update failed for task %s: %s",
-                        entry.get("task_id", "?"), exc, exc_info=True)
+    _update_pattern_register(drive_root, entry)
 
 
 def append_reflection_routed(env: Any, task: Dict[str, Any], entry: Dict[str, Any]) -> None:
@@ -848,8 +883,10 @@ def append_reflection_routed(env: Any, task: Dict[str, Any], entry: Dict[str, An
     except Exception:
         pid = ""
     if not pid:
-        append_reflection(canonical, entry)
-        _bind_reflection_action_source(canonical, entry)
+        try:
+            append_reflection(canonical, entry)
+        finally:  # a paid interruption propagates only after the free source binding
+            _bind_reflection_action_source(canonical, entry)
         return
     from ouroboros.project_facts import project_reflections_path
 
@@ -863,12 +900,6 @@ def append_reflection_routed(env: Any, task: Dict[str, Any], entry: Dict[str, An
     except Exception:
         project_write_failed = True
         log.warning("Failed to save project execution reflection", exc_info=True)
-    if _admits_pattern_register(entry):
-        try:
-            _update_patterns(canonical, entry)
-        except Exception as exc:
-            log.warning("Pattern register update failed for task %s: %s",
-                        entry.get("task_id", "?"), exc, exc_info=True)
     try:
         append_jsonl(canonical / "logs" / REFLECTIONS_FILENAME, {
             "ts": str(entry.get("ts") or utc_now_iso()),
@@ -884,6 +915,7 @@ def append_reflection_routed(env: Any, task: Dict[str, Any], entry: Dict[str, An
     except Exception:
         log.warning("Failed to write canonical reflection pointer", exc_info=True)
     _bind_reflection_action_source(canonical, entry)
+    _update_pattern_register(canonical, entry)  # paid, last: its interruption loses no free write
 
 
 def _bind_reflection_action_source(canonical: pathlib.Path, entry: Dict[str, Any]) -> None:

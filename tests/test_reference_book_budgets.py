@@ -35,10 +35,9 @@ CHAPTER_BYTE_BUDGETS: dict[str, int] = {
     # 7 bytes on the official line); re-based here, no text of this chapter was touched.
     # 165550 -> 165900 (PR #1300): the net_transport row and the data-layout row for the merged
     # extra-CA bundle; the base sat 174 bytes under the previous budget.
-    # 165900 -> 166200 (delegate_message, measured 165937): the
-    # delegate_interactions.py and tools/delegate.py rows name the fifth nanny verb; the
-    # touched row descriptions were rewritten in place, and the base sat 110 bytes under.
-    "docs/architecture/01-high-level-architecture.md": 166200,
+    # 165900 -> 166100 (steer sprint 2026-09-26, measured 165937 on the merged tree: delegate_message,
+    # truthful waiting A-E, low-water reclaim; see the sprint ledger).
+    "docs/architecture/01-high-level-architecture.md": 166100,
     # 15517 -> 16200 (#1195): the session-custodied startup historical audit is a
     # new node of the startup flow (readiness no longer waits for the historical
     # seal diagnostic); the chapter had no older description of that pass to replace.
@@ -101,7 +100,19 @@ CHAPTER_BYTE_BUDGETS: dict[str, int] = {
     # projection write per turn (the unbounded drain and per-event write they replace had
     # no sentence of their own), and the projection paragraph states the writer's slim read,
     # its retry interval and the crossing rule of the OpenRouter check.
-    "docs/architecture/05-supervisor-loop.md": 32400,
+    # 32400 -> 33600 (TZ-1 batch ingress, measured 33531): the bridge-intake paragraph is a
+    # mechanism the chapter had no text for — the bounded batch drain with per-message
+    # transport rebinding, the record-bounded canonical-row-before-echo web acceptance and
+    # its queue witness, the memory-only hand-back of the unprocessed tail on a crash or
+    # /restart, and /panic's refusal to hand anything back; the base sat 1 byte under the
+    # previous budget.
+    # 33600 -> 33700 (TZ-2 B+C merged onto TZ-1 PR-1 #1330, measured 33688 on the merged tree):
+    # TZ-2's D15 settled-result sentence (fast mail and typed steer refuse a settled Project
+    # result; a quiz answer takes the late-answer path), its post-work ceiling clause and its
+    # typed timeout-cause sentence join TZ-1's bridge-intake paragraph; TZ-2 had compressed the
+    # owner-wait and heartbeat paragraphs it touched in place (+103 bytes alone), TZ-1's
+    # paragraph is new, so the union displaces nothing.
+    "docs/architecture/05-supervisor-loop.md": 33700,
     # 286850 -> 287600: "an answer that has not arrived is a gap" is a new invariant of
     # plan review and task acceptance (the slot census vocabulary, the `awaiting`
     # projection, the only-awaited task outcome); the in-flight sentence it grew from is
@@ -174,15 +185,20 @@ CHAPTER_BYTE_BUDGETS: dict[str, int] = {
     # its `era_retry` record keyed to the executed Light binding, the four typed memory-maintenance
     # events and the host stamp on `source_capture` history rows are mechanisms no older text
     # described; the sentences they extend were rewritten in place, not appended to.
-    # 314900 -> 320500 (measured 320322 on the merged sprint tree): delegate_message
-    # (the live-message verb's capability gate, engine-mirrored outcomes with the host's
-    # `not_found`, `message_id` idempotency custody, attempt-local lifetime; the "Four nanny
-    # verbs" sentence and the harness-named "codex lane has no mid-run channel" clause were
-    # REPLACED), reclaim low-water (the context-fit paragraph's "deficit-sized" pass becomes
-    # "deficit-triggered, low-water-sized" with the binding boundary, the structural divisor,
-    # the checkpoint's requested-margin/achieved-headroom facts and the overflow minimum),
-    # and the supervision/waiting sentences of the same sprint.
-    "docs/architecture/06-agent-core.md": 320500,
+    # 314900 -> 315600 (TZ-1 cluster E, measured 315566 on the merged tree): the Tool API paragraph
+    # gains the bounded edit-miss locator the three exact editors share, and the roots paragraph
+    # states the read⇒list,search / write⇒edit closure of the operation matrix; neither mechanism
+    # had older text to displace, and neither duplicates the TZ-3 memory prose above.
+    # 315600 -> 316600 (TZ-3 #1291 reconcile, measured 316489 after TZ-1 merge): automatic
+    # body-only anchors, the explicit summary sibling and typed nomination refusals extend
+    # the existing note-writer paragraph; neither replaces TZ-1's independent contract.
+    # 316600 -> 316800 (TZ-2 union with #1331, measured 316731): the author-stop,
+    # free host_task_facts, stat-only files_rescued and post-work settlement clauses
+    # replace their prior paragraphs (+242 bytes) independently of the memory writer;
+    # both contracts survive the merge, with no duplicated prose to displace.
+    # 316800 -> 322400 (steer sprint 2026-09-26, measured 322273 on the merged tree: delegate_message,
+    # truthful waiting A-E, low-water reclaim; see the sprint ledger).
+    "docs/architecture/06-agent-core.md": 322400,
     # 36991 -> 37300: the facade paragraph names the three loop constants runtime_limits.py
     # gained (events batch bound, budget-projection retry interval); no older text to displace.
     # 37300 -> 38400 (PR #1207): the Z.ai (`zai::`) direct provider gets its own route
@@ -202,7 +218,13 @@ CHAPTER_BYTE_BUDGETS: dict[str, int] = {
     # 20800 -> 22000 (PR #1300; measured 21921): the Docker subsection maps the single-Dockerfile layout
     # (browsers above the lock copy, the shared browser path, cache mounts, the CI lanes that exercise
     # them) and points at the extra-CA setting; the base sat 16 bytes under the previous budget.
-    "docs/architecture/08-git-branching-ci-and-build.md": 22000,
+    # 22000 -> 22500 (PR #1150 merged with v7.5.0; measured 22454): the platform-gate sentence maps
+    # the credential-free toolchain lane and script (real managed Node/npm with no ambient Node,
+    # no harness install claimed) and the Windows consumer lane (real pinned Codex install through
+    # the production seam, resolution and doctor; no login or task), CI contracts the chapter had
+    # no text for; the same 533 bytes the PR carried on its own base (measured 21317 there), now
+    # on top of the #1300 Docker subsection. No text of either paragraph was touched in the merge.
+    "docs/architecture/08-git-branching-ci-and-build.md": 22500,
     # 12405 -> 14400 (issue #1142): the ordinary-close paragraph gains the mechanism the chapter had
     # no text for — graceful stop signals the server PID only, the server half (stop event at the
     # signal, bounded uvicorn drain) is self-sufficient against an old group-SIGTERM launcher.
@@ -266,12 +288,9 @@ CHAPTER_BYTE_BUDGETS: dict[str, int] = {
     # 23400 -> 23500: the long-work continuity merge landed the chapter at 23471 on the
     # official line; re-based here, no text of this chapter was touched.
     "docs/development/03-module-size-and-complexity.md": 23500,
-    # 16431 -> 17000 (reclaim low-water, measured 16930): the "Compaction must earn its
-    # rewrite" invariant states the trigger (positive deficit against the binding boundary),
-    # the low-water sizing with its SSOT constant and pin, and the requested-versus-achieved
-    # separation; the older "deficit-driven" clause was replaced, not appended to, and the
-    # chapter sat 2 bytes under the previous budget.
-    "docs/development/04-core-governance-artifacts.md": 17000,
+    # 16431 -> 17100 (steer sprint 2026-09-26, measured 16930 on the merged tree: delegate_message,
+    # truthful waiting A-E, low-water reclaim; see the sprint ledger).
+    "docs/development/04-core-governance-artifacts.md": 17100,
     "docs/development/05-review-and-commit-protocol.md": 12956,
     # 94197 -> 94520: the usage-ledger lock rule gains its reader contract (a display read
     # on the supervisor loop or a gateway thread rides the last validated snapshot; money
@@ -286,14 +305,19 @@ CHAPTER_BYTE_BUDGETS: dict[str, int] = {
     # descendant is a Presence caller (inherited binding authority, never speaker metadata).
     # 95150 -> 95200 (TZ2 repair, measured 95191): the promotion/follow-up clause names the
     # one carrier it copies instead of "the Presence metadata".
-    # 95200 -> 96700 (OpenAI-family cache layout incl. the Claudexor route, measured 96596): the cache-friendliness
+    # 95200 -> 95400 (tz2 7a387f717): the C4 explicit-stop rule took the chapter to 95223
+    # before this diff; nothing displaced.
+    # 95400 -> 96700 (OpenAI-family cache layout incl. the Claudexor route, measured 96596): the cache-friendliness
     # bullet states the declare-in-builder / project-in-transport rule, the per-family
     # OpenRouter session and the two enforcing tests; the notice bullet gains the second
     # meaning of the `[SYSTEM NOTICE]` marker. The derived-identity sentence is replaced.
-    # 96700 -> 97400 (delegate_message + supervision facts + waiting D, measured 97240 on the merged sprint tree): one
-    # delegated-lane bullet for the live-message verb (capability gate, mirrored outcomes,
-    # message_id custody, no retry loop); the base sat 104 bytes under the previous budget.
-    "docs/development/06-rules-by-change-class.md": 97400,
+    # 96700 -> 96800 (TZ-2 B+C merged onto TZ-1 PR-1 #1330, measured 96752 on the merged tree):
+    # each side fit alone (TZ-2 96666, TZ-1 96682); TZ-2's reflection-custody and stop-freshness
+    # clauses and TZ-1's off-loop ingress-lock clause rewrite different bullets in place, so
+    # the union displaces nothing.
+    # 96800 -> 97500 (steer sprint 2026-09-26, measured 97396 on the merged tree: delegate_message,
+    # truthful waiting A-E, low-water reclaim; see the sprint ledger).
+    "docs/development/06-rules-by-change-class.md": 97500,
     "docs/development/07-managed-update-rule.md": 4166,
     "docs/development/08-mutation-attribution-rule.md": 2899,
     "docs/development/09-process-custody-rule.md": 10028,

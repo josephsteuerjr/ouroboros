@@ -105,9 +105,9 @@ Run roots are append-only outside `repo/` and live `data/`; the focused contract
   rejected as soon as it exceeds the source's initial regular-file size rather
   than waiting for a growing file to reach EOF. HTTP admission and
   materialization run their whole blocking operation off the event loop
-  (`gateway._helpers.run_sync_to_completion`); cancellation waits for it before
-  releasing anything, and cancelling an HTTP waiter never cancels the admitted
-  task. Directory exports carry a complete relative member/size/SHA manifest
+  (`gateway._helpers.run_sync_to_completion`); every async ingress-lock
+  caller uses it for locked row → queue → echo. Cancellation settles before release; receive loops
+  stay responsive. Cancelling an HTTP waiter never cancels the admitted task. Directory exports carry a complete relative member/size/SHA manifest
   plus a streamed ZIP (outputs above 50 MiB included); a changed file or
   missing member is an explicit capture failure, while genesis LISTING is
   discovery and only capture/copy is strict.
@@ -990,12 +990,12 @@ and what enforces each.
   generation. File/diff requests impose no commit-or-revert rule; self-modification
   keeps reviewed commits (BIBLE P0/P3).
 - Before cleanup, freeze `review_evidence.task_inputs` and `completion_observations`
-  for summary/reflection (ARCHITECTURE §6 "Post-task reflection"): run origin, whole
+  for reflection (ARCHITECTURE §6 "Post-task reflection"): run origin, whole
   owner Q/A, peer provenance and canonical split-root verification receipts. Zero exit is positive;
   absent is unknown; unrelated passes erase no failure. Send content, not pointers;
   recover the same snapshot. Count delivery via `OWNER_DELIVERY_TOOL_NAMES`, never
-  global skill state. Summary uses `chat_observed` custody and the task-scoped,
-  archive-aware trace reader.
+  global skill state. The free `host_task_facts` row makes no model call; the paid
+  reflection and its Pattern Register write use `chat_observed` custody.
 - Promoted tasks carry their host-minted root id and role on the queue payload.
   RUNNING writes preserve the actual `_task_started_ts` as `started_at` and an existing
   `queued_at`; terminal `ts` stays its own field; missing historical start facts stay
@@ -1078,7 +1078,8 @@ and what enforces each.
   arguments intact. A terminal critic vote cannot deny author reaction or choose its stop. Blocking may save corrections and stop; advancement needs fresh
   reviewer authority. Advisory may explicitly finish revisions after exposed feedback
   or disclosed unavailability without another panel. Keep critic/author hashes separate;
-  bind intent to delivery evidence; consume it on owner/evidence supersession.
+  bind a finish to delivery evidence (a stop needs no freshness); consume it on
+  owner/evidence supersession.
   Queueing is not exposure; predeclared finish cannot authorize unseen feedback;
   `author_action=stop` grants neither completion nor permission. No semantic counters or
   keyword gates (P5). ARCHITECTURE §6 owns material-only continue, invalid-vote abstention

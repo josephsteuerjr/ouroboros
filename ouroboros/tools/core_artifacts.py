@@ -329,10 +329,12 @@ def validate_quiz_payload(
     q_text = str(question or "").strip()
     if not q_text:
         raise QuizValidationError("QUIZ_QUESTION_INVALID", "question must be non-empty.")
-    if not isinstance(options, list) or not 2 <= len(options) <= _MAX_QUIZ_OPTIONS:
+    if options is None:
+        options = []
+    if not isinstance(options, list) or len(options) > _MAX_QUIZ_OPTIONS:
         raise QuizValidationError(
             "QUIZ_OPTIONS_INVALID",
-            f"provide 2..{_MAX_QUIZ_OPTIONS} options.",
+            f"provide at most {_MAX_QUIZ_OPTIONS} options.",
         )
     cleaned: List[Dict[str, Any]] = []
     for item in options:
@@ -403,14 +405,17 @@ ESCALATE_TOOL_SCHEMA: Dict[str, Any] = {
         "the fork rests on are quoted exactly when available; missing wording is disclosed, "
         "and your paraphrase is identified as your interpretation. Your own proposal is a "
         "distinct option, not an assumed premise of every option.\n\n"
-        "Offer 2-6 real alternatives for this decision and mark your recommendation with "
+        "Offer 0-6 real alternatives for this decision: none for an open question the human "
+        "answers in their own words; with options, mark your recommendation with "
         "recommended=true. By default, state the assumption you continue under and keep "
         "working; the card stays answerable and a late answer still arrives. Set "
         "wait_for_answer=true on a live root, including an ordinary conversation, when the "
         "next step is irreversible or costly to redo, or the choice belongs to the human; "
         "your judgment decides. Waiting begins after the current tool batch, without model "
         "calls. Waiting questions in one batch share one wait, ending on the first incoming "
-        "message. How many decisions to raise and when remains your judgment."
+        "message, not necessarily an owner answer. A plain-text clarification ends this "
+        "turn; a waited question keeps it alive. How many decisions to raise and when "
+        "remains your judgment."
     ),
     "parameters": {"type": "object", "properties": {
         "question": {"type": "string", "description": (
@@ -425,7 +430,9 @@ ESCALATE_TOOL_SCHEMA: Dict[str, Any] = {
                 "they give up, including any relevant cost, delay or lost capability (optional).")},
             "recommended": {"type": "boolean", "description": (
                 "True on the one option you recommend; omitted or false otherwise.")},
-        }, "required": ["label"]}, "description": "2-6 mutually exclusive alternatives for this decision."},
+        }, "required": ["label"]}, "description": (
+            "Optional 0-6 mutually exclusive alternatives for this decision; omit for an open "
+            "question answered in the human's own words.")},
         "stake": {"type": "string", "description": (
             "What depends on this decision for the human or the work (optional).")},
         "assumption": {"type": "string", "description": (
@@ -439,7 +446,7 @@ ESCALATE_TOOL_SCHEMA: Dict[str, Any] = {
             "Optional positive whole-minute bound for wait_for_answer, within the task's "
             "existing lifetime limit. On expiry, resume with a system notice; the card stays "
             "answerable. Silence is not an answer.")},
-    }, "required": ["question", "options"]},
+    }, "required": ["question"]},
 }
 
 
@@ -669,7 +676,8 @@ def _escalate(
                     "under your stated assumption and record the open question "
                     "in your result.")
         parent_task_id = target_id
-        lines = [f"ESCALATION (decision requested): {payload['question']}", "Options:"]
+        lines = [f"ESCALATION (decision requested): {payload['question']}"]
+        lines.append("Options:" if payload["options"] else "Open question — answer in your own words.")
         lines += [
             f"{i + 1}. {row['label']}" + (f" — {row['detail']}" if row.get("detail") else "")
             + (" [recommended]" if row.get("recommended") else "")
@@ -741,7 +749,7 @@ def _escalate(
         "host_facts": host_facts,
         **({"wait_for_answer": True} if wait_for_answer else {}),
     })
-    delivered = "delivered to the owner" if mode == "live" else "queued for the owner"
+    delivered = "accepted for delivery" if mode == "live" else "queued for delivery"
     if wait_for_answer:
         bound = payload.get("max_wait_minutes")
         ctx._owner_wait_requested = quiz_id
@@ -761,7 +769,8 @@ def _escalate(
                  "continues with a notice" if bound else "the task waits after this tool batch")
         return (f"OK: quiz {quiz_id} {delivered}; {limit}, "
                 "preserving its live browser and releasing active execution capacity. "
-                "Addressed owner text resumes your judgment; existing Stop and task deadlines still apply.")
+                "Any incoming mail or an owner hurry request ends the wait; only an owner answer "
+                "answers the question. Other mail leaves the card open. Stop and task deadlines still apply.")
     return (f"OK: quiz {quiz_id} {delivered}; continuing under assumption: "
             f"{payload['assumption']}. The answer (if any) arrives as an owner "
             "quiz answer in a later round; the card stays answerable after this "

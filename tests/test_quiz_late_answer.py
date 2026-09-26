@@ -24,6 +24,9 @@ from ouroboros.owner_quiz import (
 )
 from tests.test_quiz_answer import _decision_app, _post
 
+# TZ-2 B3: the model-facing first line of every late answer (never the owner's row).
+LATE_HEAD = "[Late answer to a question asked by task {}, which had finished]"
+
 
 def _late_bridge(tmp_path, monkeypatch):
     """A real bridge for the late-answer path: named ingress plus the WS echo."""
@@ -91,6 +94,9 @@ def test_ingress_late_answer_is_accepted_and_delivered_as_an_owner_message(tmp_p
     assert echo[0]["chat_id"] == 1 and echo[0]["content"] == queued["text"]
     [row] = _accepted_rows(tmp_path, source_id)
     assert row["text"] == echo[0]["content"] == "prod parity"
+    # The live echo states the same durable-acceptance fact as the canonical row
+    # (history replays it), so the bubble says `Input saved` before a reload too.
+    assert row["ingress_accepted"] is True and echo[0]["ingress_accepted"] is True
 
     # A retry of the SAME request re-enters delivery; the named ingress rejoins.
     again = _post(app, {"request_id": "r1", "decision_id": "quiz:task-1:q1",
@@ -141,6 +147,9 @@ def test_a_relayed_late_answer_keeps_the_relaying_skill_as_its_source(tmp_path, 
     assert queued["source"] == "skill:telegram" and queued["chat_id"] == 1
     echo = [f for f in frames if f.get("type") == "chat" and f.get("role") == "user"]
     assert echo and echo[0].get("source") == "skill:telegram"
+    # Only a web acceptance row carries the typed fact; the echo never invents it.
+    [row] = _accepted_rows(tmp_path, "quiz_late_answer:task-3:q1")
+    assert "ingress_accepted" not in row and "ingress_accepted" not in echo[0]
 
 
 def test_ingress_heals_an_unreconciled_quiz_of_a_dead_task(tmp_path, monkeypatch):
@@ -223,6 +232,67 @@ def test_a_second_answer_to_a_settled_card_is_still_a_first_wins_409(tmp_path, m
     assert _inbox(bridge) == []
 
 
+def _real_liveness_app(tmp_path, monkeypatch):
+    """The decision app with the REAL queue-backed liveness read (no lambda stub)."""
+    from starlette.applications import Starlette
+    from starlette.routing import Route
+
+    from ouroboros.gateway import task_decision as td
+
+    monkeypatch.setattr(td, "request_drive_root", lambda request: tmp_path)
+    return Starlette(routes=[Route("/api/decisions", endpoint=td.api_decision_answer, methods=["POST"])])
+
+
+@pytest.mark.parametrize("settled", [True, False])
+def test_an_answer_during_settled_post_work_takes_the_late_path_not_the_dead_mailbox(
+    tmp_path, monkeypatch, settled,
+):
+    """TZ-2 D15 at quiz ingress: a root whose result settled while its worker still
+    runs paid post-work is still in RUNNING, but its solve loop no longer drains
+    the mailbox — terminal cleanup would erase an answer written there unread.
+    The same actor-drive settlement fact the owner-mail routing guard reads sends
+    the answer through the late path instead: accepted with the audit flag and
+    delivered into the card's chat as the owner's own message. A root whose
+    result has not settled still receives the answer as its mailbox control."""
+    import supervisor.queue as q
+
+    from ouroboros.owner_mailbox import KIND_QUIZ_ANSWER, drain_owner_entries
+    from ouroboros.task_results import write_task_result
+
+    task = {"id": "task-3", "chat_id": 1, "root_task_id": "task-3", "delegation_role": "root",
+            "metadata": {}, "drive_root": str(tmp_path)}
+    monkeypatch.setattr(q, "RUNNING", {"task-3": {"task": task}}, raising=False)
+    monkeypatch.setattr(q, "PENDING", [], raising=False)
+    record_asked(tmp_path, "task-3", quiz_id="q1", question="Which db?",
+                 options=["sqlite", "postgres"], assumption="sqlite meanwhile", chat_id=1)
+    record_asked(tmp_path, "task-3", quiz_id="q2", question="Which cache?",
+                 options=["redis", "none"], assumption="none meanwhile", chat_id=1)
+    write_task_result(tmp_path, "task-3", "completed" if settled else "running", result="answer",
+                      root_phase_checkpoint={"post_task_synthesis": "running" if settled else "pending_once"})
+    bridge, frames = _late_bridge(tmp_path, monkeypatch)
+    app = _real_liveness_app(tmp_path, monkeypatch)
+    resp = _post(app, {"request_id": "r3", "decision_id": "quiz:task-3:q1", "option_index": 1})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    block = quiz_states(tmp_path, "task-3")["q1"]
+    mailbox = drain_owner_entries(tmp_path, "task-3")
+    if settled:
+        assert body["answered_after_terminal"] is True and body["forwarded"] is True
+        assert block["state"] == STATE_ANSWERED and block["answered_after_terminal"] is True
+        assert mailbox == []  # nothing is labelled delivered into a mailbox nobody drains
+        [queued] = _inbox(bridge)
+        assert queued["client_message_id"] == "quiz_late_answer:task-3:q1"
+        assert queued["task_metadata"]["late_answer"] == {"task_id": "task-3", "quiz_id": "q1"}
+        # The sibling card healed here is told now: the task-done seam announces
+        # only what it expires itself.
+        assert quiz_states(tmp_path, "task-3")["q2"]["state"] == "expired_terminal"
+        states = [(f["quiz_id"], f["state"]) for f in frames if f.get("type") == "quiz_state"]
+        assert states == [("q2", "expired_terminal"), ("q1", STATE_ANSWERED)]
+    else:
+        assert "answered_after_terminal" not in body and "answered_after_terminal" not in block
+        assert [row["kind"] for row in mailbox] == [KIND_QUIZ_ANSWER]
+        assert _inbox(bridge) == []
+        assert quiz_states(tmp_path, "task-3")["q2"]["state"] == "open"
 def test_a_button_only_late_answer_speaks_the_pressed_option_as_the_owner(tmp_path, monkeypatch):
     """No comment: the owner's row, queued text and bubble are the pressed
     option exactly as the button showed it (the ingress refuses empty text),
@@ -300,13 +370,13 @@ def test_the_drained_late_answer_gives_the_model_the_rebuilt_frame_while_the_row
     _drain_incoming_messages(messages, queue_mod.Queue(), tmp_path, "live-root", None, set(),
                              owner_ctx=ctx)
     delivered = str(messages[-1]["content"])
-    assert "[Owner quiz answer] quiz q1" in delivered
+    assert f"{LATE_HEAD.format('task-1')}\n[Owner quiz answer] quiz q1" in delivered
     assert f"asked {block['asked_at']}" in delivered and f"answered {block['answered_at']}" in delivered
     assert "Question was: Which db for the pilot?" in delivered
     assert ("The owner answered in their own words without choosing an offered option. "
             "Verbatim: neither -- use duckdb") in delivered
     [directive] = [row for row in ctx._owner_directives if row["source"] == "owner_mailbox"]
-    assert "[Owner quiz answer] quiz q1" in directive["content"]
+    assert directive["content"].startswith(LATE_HEAD.format("task-1") + "\n[Owner quiz answer] quiz q1")
     assert "Verbatim: neither -- use duckdb" in directive["content"]
     # The steer relay's delivery fact stays the owner's own message.
     assert ctx.last_owner_delivery["text"] == "neither -- use duckdb"
@@ -349,8 +419,8 @@ def test_an_unreadable_card_is_disclosed_with_the_owners_words(tmp_path):
     _drain_incoming_messages(messages, queue_mod.Queue(), tmp_path, "live-root", None, set(),
                              owner_ctx=ctx)
     delivered = str(messages[-1]["content"])
-    assert "2. postgres" in delivered
-    assert "answers quiz q9 of task task-gone; that card could not be read" in delivered
+    assert f"{LATE_HEAD.format('task-gone')}\n2. postgres\n" in delivered
+    assert "answers quiz q9; that card could not be read" in delivered
     assert "[Owner quiz answer]" not in delivered
 
 
@@ -381,7 +451,8 @@ def test_a_late_answer_direct_turn_starts_with_the_rebuilt_frame(tmp_path, monke
         "late_answer": {"task_id": "task-1", "quiz_id": "q1"},
     })
     content = str(build_user_content(agent.task))
-    assert "[Owner quiz answer] quiz q1" in content
+    assert agent.task["text"].startswith(LATE_HEAD.format("task-1") + "\n[Owner quiz answer] quiz q1")
+    assert LATE_HEAD.format("task-1") in content
     assert f"answered {block['answered_at']}" in content
     assert "The owner chose option 2: postgres" in content
     assert "Owner comment (verbatim): prod parity" in content
@@ -440,3 +511,80 @@ def test_a_late_answer_routed_into_a_project_rooms_live_root_carries_its_provena
     delivered = str(messages[-1]["content"])
     assert "The owner chose option 2: postgres" in delivered
     assert "Owner comment (verbatim): prod parity" in delivered
+
+
+def test_a_late_web_answer_passes_the_supervisor_consumer_seam(tmp_path, monkeypatch):
+    """The queued late answer is dequeued like any owner message: the supervisor's
+    one ingress writer (``record_inbound_message``) validates a web item against
+    the row the named ingress accepted, so that row must ride the queue item as
+    its in-process witness. The queue's EMPTY default is not a witness — treated
+    as one it raised, and a raise there is a supervisor loop crash that drops the
+    answer instead of delivering it."""
+    from supervisor.message_bus import record_inbound_message
+
+    record_asked(tmp_path, "task-1", quiz_id="q1", question="Which db?",
+                 options=["sqlite", "postgres"], assumption="sqlite meanwhile", chat_id=1)
+    reconcile_terminal(tmp_path, "task-1")
+    bridge, _frames = _late_bridge(tmp_path, monkeypatch)
+    app = _decision_app(tmp_path, monkeypatch, live_task=None)
+    resp = _post(app, {"request_id": "r1", "decision_id": "quiz:task-1:q1", "option_index": 1})
+    assert resp.status_code == 200 and resp.json()["forwarded"] is True, resp.text
+    source_id = "quiz_late_answer:task-1:q1"
+    [accepted] = _accepted_rows(tmp_path, source_id)
+    [update] = bridge.get_updates(offset=0, timeout=0)
+    msg = update["message"]
+    assert msg["source"] == "web" and msg["client_message_id"] == source_id
+    ref = record_inbound_message(  # the supervisor's call, verbatim arguments
+        bridge, msg, chat_id=1, user_id=1, client_message_id=source_id, text=msg["text"], ts="dequeued-later",
+    )
+    assert ref == msg["accepted_source_ref"] and ref["ts"] == accepted["ts"]
+    assert len(_accepted_rows(tmp_path, source_id)) == 1  # validated, never re-minted
+    witness = msg.get("accepted_source_row") or {}
+    assert witness.get("client_message_id") == source_id and witness.get("ts") == accepted["ts"]
+
+
+def test_supervisor_tick_delivers_a_late_web_answer_as_an_owner_turn(tmp_path, monkeypatch):
+    """The real supervisor intake (``server._process_bridge_updates``) drains the
+    late answer without raising and starts the ordinary owner turn with the
+    accepted row's identity threaded in — the delivery the 2xx's ``forwarded``
+    promised. A raise here counted as a supervisor loop crash and the failing
+    update was never handed back."""
+    import threading
+    from types import SimpleNamespace
+
+    import server
+    from tests.test_v6730_origin_invariant import _ImmediateThread
+
+    record_asked(tmp_path, "task-1", quiz_id="q1", question="Which db?",
+                 options=["sqlite", "postgres"], assumption="sqlite meanwhile", chat_id=1)
+    reconcile_terminal(tmp_path, "task-1")
+    bridge, _frames = _late_bridge(tmp_path, monkeypatch)
+    app = _decision_app(tmp_path, monkeypatch, live_task=None)
+    resp = _post(app, {"request_id": "r1", "decision_id": "quiz:task-1:q1", "option_index": 1})
+    assert resp.status_code == 200 and resp.json()["forwarded"] is True, resp.text
+    source_id = "quiz_late_answer:task-1:q1"
+    [accepted] = _accepted_rows(tmp_path, source_id)
+
+    captured = {}
+
+    def _direct(chat_id, text, image_data=None, *, task_constraint=None, task_metadata=None):
+        captured.update(chat_id=chat_id, text=text, metadata=task_metadata)
+
+    live_state = {"owner_id": 1, "owner_chat_id": 1}
+    ctx = SimpleNamespace(
+        DRIVE_ROOT=tmp_path, PENDING=[], RUNNING={},
+        load_state=lambda: dict(live_state), update_state=lambda fn: fn(live_state),
+        consciousness=SimpleNamespace(inject_observation=lambda _t: None, pause=lambda: None, resume=lambda: None),
+        get_chat_agent=lambda: SimpleNamespace(_busy=False),
+        handle_chat_direct=_direct, send_with_budget=lambda *_a, **_k: None,
+    )
+    monkeypatch.setattr(threading, "Thread", _ImmediateThread)
+    assert server._process_bridge_updates(bridge, 0, ctx) == 2
+    # The turn starts with the owner's own words (the pressed option); the host
+    # frame is rebuilt for the model from the late_answer provenance below.
+    assert captured["chat_id"] == 1 and captured["text"] == "2. postgres"
+    ref = captured["metadata"]["origin_message_ref"]
+    assert ref["client_message_id"] == source_id and ref["ts"] == accepted["ts"]
+    assert captured["metadata"]["late_answer"] == {"task_id": "task-1", "quiz_id": "q1"}
+    assert len(_accepted_rows(tmp_path, source_id)) == 1
+    assert bridge.get_updates(offset=0, timeout=0) == []  # consumed, nothing handed back

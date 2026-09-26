@@ -31,7 +31,7 @@ class TestValidateQuizPayload:
         assert payload["assumption"] == "continuing with the merge"
 
     @pytest.mark.parametrize("options", [
-        [], ["only-one"], ["a"] * (_MAX_QUIZ_OPTIONS + 1), "not-a-list",
+        ["a"] * (_MAX_QUIZ_OPTIONS + 1), "not-a-list",
         [{"detail": "no label"}],
     ])
     def test_bad_options_are_refused_atomically(self, options):
@@ -43,6 +43,14 @@ class TestValidateQuizPayload:
         with pytest.raises(QuizValidationError) as err:
             validate_quiz_payload("q", ["a", "b"], "", "  ")
         assert err.value.code == "QUIZ_ASSUMPTION_REQUIRED"
+
+    @pytest.mark.parametrize("options", [None, [], ["Confirm"]])
+    def test_open_and_single_choice_questions_keep_the_answer_contract(self, options):
+        payload = validate_quiz_payload("What should change?", options, "", "", wait_for_answer=True)
+        assert payload["options"] == ([] if options is None else [{"label": x} for x in options])
+        with pytest.raises(QuizValidationError) as error:
+            validate_quiz_payload("What should change?", options, "", "")
+        assert error.value.code == "QUIZ_ASSUMPTION_REQUIRED"
 
     def test_wait_bound_is_whole_minutes_capped_by_the_task_ceiling(self, monkeypatch):
         """The bound belongs to a REQUIRED wait and can never promise more time
@@ -225,7 +233,7 @@ def test_send_quiz_refuses_invalid_payload_and_missing_ids(monkeypatch, tmp_path
     ok, error = bridge.send_quiz(1, quiz_id="qz", question="q", options=[{"label": "a"}, {"label": "b"}], assumption="x")
     assert not ok and "task_id" in error
     ok, error = bridge.send_quiz(1, quiz_id="qz", question="q", options=[{"label": "a"}], assumption="x", task_id="t")
-    assert not ok
+    assert (ok, error) == (True, "ok")
     ok, error = bridge.send_quiz(-5, quiz_id="qz", question="q", options=[{"label": "a"}, {"label": "b"}], assumption="x")
     assert (ok, error) == (True, "ok")  # A2A chats: silent no-op, like links
 
@@ -257,9 +265,12 @@ def test_handle_send_quiz_prefers_bound_project_chat(monkeypatch):
     assert sent[0][1]["quiz_id"] == "qz-2"
     assert sent[0][1]["assumption"] == "path A meanwhile"
 
-    # No options -> typed drop, no bridge call.
+    # An explicitly empty options list is an open question; absence is not.
     sent.clear()
     _handle_send_quiz({**evt, "options": []}, ctx)
+    assert sent and sent[0][1]["options"] == []
+    sent.clear()
+    _handle_send_quiz({key: value for key, value in evt.items() if key != "options"}, ctx)
     assert sent == []
 
     # Headless exception: an interactive card in the hidden chat-0 panel can
