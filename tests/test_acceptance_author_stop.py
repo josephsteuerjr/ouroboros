@@ -76,9 +76,13 @@ def _run_stop_loop(tmp_path, monkeypatch, responses, *, stop_services):
     answers = iter(responses)
     model_inputs: list = []
 
-    def fake_call(_llm, request_messages, *_args, **_kwargs):
+    def fake_call(_llm, request_messages, *_args, **kwargs):
         model_inputs.append([dict(row) for row in request_messages])
         answer = next(answers)
+        # The scripted Main replaces the transport, including its actual-context
+        # observer: the request whose response returns exposes the feedback it carried.
+        if callable(kwargs.get("model_context_observer")):
+            kwargs["model_context_observer"](request_messages)
         if isinstance(answer, dict):
             return {"role": "assistant", **answer}, 0.0
         return {"role": "assistant", "content": answer}, 0.0
@@ -454,4 +458,107 @@ def test_owner_input_consumes_the_stop_so_a_later_exhausted_exit_is_not_read_as_
     assert later["reason"] == "review_cycles_exhausted" and "author_action" not in later
     assert later["agent_rationale"] == STOP_RATIONALE  # history kept, never the act
     assert not recorded_author_stop(later) and STOP_RATIONALE.rstrip(".") not in row()
+    assert fx.calls == ["initial answer"]
+
+
+@pytest.mark.parametrize("change", ["material", "evidence"])
+def test_a_local_preparation_stop_after_a_fail_panel_keeps_its_finality(tmp_path, monkeypatch, change):
+    """(h) FAIL panel → the next host pass cannot assemble its evidence locally → the
+    informed author stops → material (a new working-tree file) or evidence (a late
+    ``services_stopped``) changes and Main restates its stop. The local-preparation stop
+    kept the FAIL panel's reviewed subject, so ``preparation_delivery_choice`` refused
+    the changed material, the stale subject cleared the reviewed latch and the host
+    bought two more panels over a stop. Like the reviewer-bound stop it binds no
+    subject: one panel, one failed assembly, the stop's local cause, act and rationale."""
+    import ouroboros.loop as loop
+    import ouroboros.loop_acceptance_review as review
+    from ouroboros.outcomes import derive_loop_outcome
+
+    real_build, builds = review._build_host_acceptance_evidence, []
+
+    def build(ctx):
+        builds.append(ctx.content)
+        if len(builds) == 2:
+            raise RuntimeError("local evidence assembly failed")
+        return real_build(ctx)
+
+    monkeypatch.setattr(review, "_build_host_acceptance_evidence", build)
+    real_project, late = loop._project_child_result_dispositions, []
+
+    def project(limit_ctx, llm_trace):
+        if (llm_trace.get("acceptance_decision") or {}).get("reason") == "author_stop" and not late:
+            late.append(True)
+            if change == "material":
+                (tmp_path / "repo" / "late.txt").write_text("changed after the stop\n", encoding="utf-8")
+            else:
+                llm_trace.setdefault("verification_events", []).append({"kind": "services_stopped", "services": [
+                    {"service_id": "late", "name": "late", "lifecycle": "stopped"}]})
+        return real_project(limit_ctx, llm_trace)
+
+    monkeypatch.setattr(loop, "_project_child_result_dispositions", project)
+    keep = json.dumps({"delivery_control": "keep"})
+    run = _run_stop_loop(tmp_path, monkeypatch, [
+        "The export endpoint ships.",                      # reviewed: FAIL, capsule fed back
+        "The export endpoint ships, revised.",             # the host cannot assemble its evidence
+        _stop_tool_call(),                                 # the informed author stops
+        *[step for _ in range(3) for step in (STOP_TEXT, keep)],
+    ], stop_services=False)
+    assert late, "the change must land after the stop was honoured"
+    assert run.panels == ["The export endpoint ships."], "a local-preparation stop must never buy a panel"
+    assert len(builds) == 2, "the stopped material is never assembled again"
+    assert run.result == STOP_TEXT
+    decision = run.trace["acceptance_decision"]
+    assert decision["origin"] == "local_acceptance_preparation"
+    assert decision["reason"] == "author_stop" and decision["author_action"] == "stop"
+    assert decision["author_disposition"]["rationale"] == STOP_RATIONALE
+    axes = derive_loop_outcome(run.result, run.usage, run.trace)["outcome_axes"]
+    assert axes["objective"]["status"] == "fail" and axes["objective"]["reason"] == "author_stop"
+
+
+@pytest.mark.parametrize("reopen", ["owner_input", "author_finish"])
+def test_owner_input_or_a_new_author_act_still_reopens_a_local_preparation_stop(tmp_path, monkeypatch, reopen):
+    """(i) The subject-free local-preparation stop holds over changed text, yet owner
+    input returns the answer to the ordinary host pass and the author's next explicit
+    act is heard: a finish replaces the stop through the same incident, without a panel."""
+    import ouroboros.loop as loop_mod
+    import ouroboros.loop_acceptance_review as review
+    from ouroboros.acceptance_settlement import expose_acceptance_feedback
+    from ouroboros.loop_acceptance import merge_agent_acceptance_stance
+
+    fx = _finality_pass(tmp_path, monkeypatch)
+    assert fx.run("initial answer") is True
+    assert fx.ctx._task_acceptance_reviewed_subject, "the FAIL panel bound its subject"
+
+    def broken(_ctx):
+        raise RuntimeError("local evidence assembly failed")
+
+    monkeypatch.setattr(review, "_build_host_acceptance_evidence", broken)
+    assert fx.run("revised answer") is True
+    assert fx.trace["acceptance_decision"]["reason"] == "acceptance_preparation_failed"
+    expose_acceptance_feedback(fx.trace, fx.messages, "author-root")
+    fx.trace["tool_calls"].append({"tool": "task_acceptance_review", "args": {}})
+    merge_agent_acceptance_stance(fx.trace, {"explicit_finish": True, "author_action": "stop",
+                                             "rationale": STOP_RATIONALE}, fx.ctx)
+    assert fx.run(STOP_TEXT) is False
+    assert fx.trace["acceptance_decision"]["reason"] == "author_stop"
+    assert fx.ctx._task_acceptance_reviewed_subject == ""
+    assert fx.run("A restated unfinished answer.") is False
+    assert fx.trace["acceptance_decision"]["reason"] == "author_stop"
+    if reopen == "owner_input":
+        loop_mod._supersede_task_acceptance_for_owner_followup(fx.ctx, fx.trace)
+        assert fx.run("The answer to the owner's follow-up.") is False
+        # The ordinary host pass decided again: the same unrepaired material is not
+        # rebuilt, and the host's own honest ending replaced the consumed stop.
+        decision = fx.trace["acceptance_decision"]
+        assert decision["reason"] == "acceptance_preparation_failed" and "author_action" not in decision
+        assert fx.trace["acceptance_preparation"]["attempts"] == 1
+    else:
+        fx.trace["tool_calls"].append({"tool": "task_acceptance_review", "args": {}})
+        merge_agent_acceptance_stance(fx.trace, {"disposition": "partial", "explicit_finish": True,
+                                                 "author_action": "finish",
+                                                 "rationale": "Delivering the available result with its gap."}, fx.ctx)
+        assert fx.ctx._task_acceptance_reviewed is False
+        assert fx.run("A restated unfinished answer.") is False
+        decision = fx.trace["acceptance_decision"]
+        assert decision["reason"] == "author_finish" and decision["author_disposition"]["action"] == "finish"
     assert fx.calls == ["initial answer"]

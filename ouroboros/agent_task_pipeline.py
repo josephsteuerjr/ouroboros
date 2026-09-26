@@ -233,7 +233,8 @@ def _run_post_task_processing_async(
                     env, task_memory, llm_client)),
                 ("reflection", lambda: result.__setitem__("reflection_entry", _run_reflection(
                     env, llm_client, task_snapshot, usage_snapshot, trace_snapshot,
-                    review_evidence_snapshot, sealed_final=sealed_snapshot))),
+                    review_evidence_snapshot, sealed_final=sealed_snapshot,
+                    publish=lambda entry: result.__setitem__("reflection_entry", entry)))),
                 ("promotion", _promotion),
             ]
             from ouroboros.post_task_synthesis import (

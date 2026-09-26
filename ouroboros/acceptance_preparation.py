@@ -717,6 +717,11 @@ def finish_exposed_preparation_author(ctx: Any, record: Dict[str, Any]) -> bool:
         _loop()._supersede_task_acceptance_for_owner_followup(ctx.tools._ctx, ctx.llm_trace)
         return True
     ctx.tools._ctx._task_acceptance_reviewed = True
+    if action == "stop":
+        # Like the reviewer-bound stop, this one binds no subject: an earlier panel's
+        # must not reopen review over changed material on a later delivery pass; only
+        # the author's next decision or owner input does (TZ-2 C4).
+        ctx.tools._ctx._task_acceptance_reviewed_subject = ""
     ctx.tools._ctx._task_acceptance_pending = ""
     _loop()._mark_root_acceptance_checkpoint(
         ctx.tools._ctx, ctx.llm_trace, status="preparation_failed", pass_index=ctx.passes_done,

@@ -153,9 +153,9 @@ class ChatOutbound(TypedDict):
     # A cancellation fault names the PHYSICAL task it could not settle when it differs from the logical task id.
     cancel_physical_task_id: NotRequired[str]
     toast_once: NotRequired[str]
-    # #628: the incident's valence for the one-shot toast (warn/ok/error),
-    # stamped by the producer that knows whether the boundary is a wait, a
-    # recovery or an exhaustion; absent = the browser keeps its alarm tone.
+    # #628: the one-shot toast's valence (warn/ok/error; the reaper's rail ``warning``
+    # is normalizeTone's existing ``warn`` alias, no new tone), stamped by the producer
+    # that knows wait/recovery/exhaustion; absent = the browser keeps its alarm tone.
     toast_tone: NotRequired[str]
     lifecycle: NotRequired[Dict[str, Any]]
     # C4 multi-chat dedupe: a duplicate lifecycle initiator's typed pointer to

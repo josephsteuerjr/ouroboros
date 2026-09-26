@@ -68,9 +68,11 @@ OBSERVE_JS = """tid => { const card = document.querySelector(`#chat-messages .ch
 
 class _OutageModel(ScriptedStubModel):
     """One real (failing) tool round, then a provider refusal (HTTP 401, a permanent
-    class, so no backoff retries) on every later tool round of the marked task. The
-    host's terminal incident preserves the intermediate output if a later call
-    cannot land; the post-task reflection is the one call the gate holds."""
+    class, so no backoff retries) on every later tool round of the marked task AND on
+    the host's forced outage final (``[PROVIDER_UNAVAILABLE]``): the provider is down
+    for that call too, so the host's terminal incident preserves the intermediate
+    output (``host_salvage``). The post-task reflection is never refused — it is the
+    one call the gate holds."""
 
     def __init__(self, gate):
         super().__init__([{"tool": "run_command", "arguments": {
@@ -98,9 +100,11 @@ class _OutageModel(ScriptedStubModel):
 
     def _refuse(self, body):
         text = body_text(body)
-        if not body.get("tools") or MARKER not in text or SALVAGE_MARKER in text:
+        if MARKER not in text or REFLECTION_MARKER in text:
             return False
-        if not any(isinstance(m, dict) and m.get("role") == "tool" for m in body.get("messages") or []):
+        later_tool_round = bool(body.get("tools")) and any(
+            isinstance(m, dict) and m.get("role") == "tool" for m in body.get("messages") or [])
+        if not (later_tool_round or SALVAGE_MARKER in text):
             return False
         with self._lock:
             self.refused += 1

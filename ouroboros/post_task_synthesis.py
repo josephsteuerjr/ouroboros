@@ -16,7 +16,7 @@ import logging
 import pathlib
 
 from dataclasses import replace
-from typing import Any, Dict
+from typing import Any, Callable, Dict
 from ouroboros.dialogue_provenance import presence_provenance_fields
 from ouroboros.llm_claudexor import propagate_model_error
 from ouroboros.outcomes import normalize_outcome_axes
@@ -593,14 +593,17 @@ def _post_task_paid_interruption(errors: Any) -> str:
     Memory consolidation returns errors to keep completed chunks. Only this
     stage adapter interprets those existing facts: a budget or unknown-provider
     kind wins and stops later paid post-work; any other kind names the last
-    ordinary failure, so a stage that lost a chunk reads ``degraded`` like a
-    stage that raised (TZ-2 C3: unfinished stages are never ``completed``).
+    UNRESOLVED ordinary failure, so a stage that lost a chunk reads ``degraded``
+    like a stage that raised (TZ-2 C3: unfinished stages are never ``completed``).
+    The history keeps every attempt; a refusal its producer answered (a split whose
+    halves carry their own rows, ``resolution``) is not an unfinished stage.
     """
     rows = [row for row in (errors if isinstance(errors, list) else []) if isinstance(row, dict)]
     for row in rows:
         if row.get("kind") in POST_TASK_INTERRUPT_KINDS:
             return str(row["kind"])
-    return str((rows[-1].get("kind") or "stage_error")) if rows else ""
+    unresolved = [row for row in rows if not row.get("resolution")]
+    return str((unresolved[-1].get("kind") or "stage_error")) if unresolved else ""
 
 
 def _run_chat_consolidation(env, memory, llm, task, drive_logs):
@@ -704,12 +707,15 @@ def _run_scratchpad_consolidation(env: Any, memory: Any, llm: Any) -> None:
 def _run_reflection(env: Any, llm: Any, task: Dict[str, Any],
                     usage: Dict[str, Any], llm_trace: Dict[str, Any],
                     review_evidence: Dict[str, Any],
-                    sealed_final: Dict[str, Any] | None = None) -> Dict[str, Any] | None:
+                    sealed_final: Dict[str, Any] | None = None,
+                    publish: Callable[[Dict[str, Any]], Any] | None = None) -> Dict[str, Any] | None:
     """Run execution reflection synchronously (process memory, Bible P1).
 
     Returns the entry, or None only when there is nothing to reflect on; a
     failure raises to the post-task stage coordinator, which degrades the
-    checkpoint and still runs the later stages (TZ-2 C3).
+    checkpoint and still runs the later stages (TZ-2 C3). ``publish`` receives
+    the completed entry before its nested paid Pattern Register write, so an
+    interruption there still leaves the coordinator its free memory actions.
     """
     from ouroboros.reflection import (
         should_generate_reflection, generate_reflection, append_reflection_routed,
@@ -750,6 +756,8 @@ def _run_reflection(env: Any, llm: Any, task: Dict[str, Any],
             knowledge_context=knowledge_context,
         )
         entry = {**entry, **presence_provenance_fields(task)}
+        if publish is not None:
+            publish(entry)
         append_reflection_routed(env, task, entry)
         return entry
     return None

@@ -855,3 +855,73 @@ def test_split_root_facts_row_counts_the_actor_store_when_synthesis_runs_canonic
     assert [s["store"] for s in fact["stores"]] == [
         str(task_artifacts_dir(f.root, f.task["id"], create=False)),
         str(task_artifacts_dir(child, f.task["id"], create=False))]
+
+
+@pytest.mark.parametrize("second_chunk", ["recovered", "lost", "budget"])
+def test_split_recovery_history_is_not_an_unresolved_consolidation_failure(phase, monkeypatch, second_chunk):
+    """F-R3: the stage adapter read ``_consolidation_errors`` attempt HISTORY as an
+    unresolved failure, so a context refusal that the real consolidator answered by
+    splitting (and then wrote the block and advanced the cursor) turned post-work
+    ``degraded``. Through the REAL chat-consolidation adapter and consolidator (only
+    the provider dispatch is substituted): the refusal row stays in the history with
+    its explicit ``resolution``; a later chunk that is lost still reads degraded
+    without a skip (partial success is not success), and the wallet still stops."""
+    import json
+    from ouroboros import consolidator, context_fit, llm_observability, post_task_synthesis
+    from ouroboros.capability_evidence import CapabilityEvidence
+    from ouroboros.usage_accounting import BudgetExceeded
+
+    f = phase
+    monkeypatch.setattr(consolidator, "_consolidation_route", lambda: ("test/model", False))
+    monkeypatch.setattr(context_fit, "resolve_context_fit_route", lambda task, *, allow_fetch: (
+        {"model": task["model"], "provider": "openrouter"},
+        CapabilityEvidence(0, "unknown", "test", "route-test", model=task["model"], provider="openrouter")))
+    monkeypatch.setattr(context_fit, "_route_calibration_ratio", lambda *_: 1.0)
+    monkeypatch.setattr(pipeline, "_run_chat_consolidation", post_task_synthesis._run_chat_consolidation)
+    monkeypatch.setattr(pipeline, "_run_reflection", lambda *a, **k: f.stages.append("reflection") or None)
+    chat = f.root / "logs" / "chat.jsonl"
+    chat.parent.mkdir(parents=True, exist_ok=True)
+    chat.write_text("".join(json.dumps({"ts": f"2026-01-01T{i // 60:02d}:{i % 60:02d}:00Z", "direction": "in",
+                                        "text": f"entry-{i} " + "x" * 120, "chat_id": 1}) + "\n"
+                            for i in range(200)), encoding="utf-8")
+    refused = []
+
+    def dispatch(_client, *, call_type="", messages=(), **_kwargs):
+        prompt = messages[0]["content"]
+        if call_type == "memory_consolidation" and "entry-0 " in prompt and "entry-99 " in prompt and not refused:
+            refused.append(call_type)
+            raise transport.ClaudexorModelError({"code": "invalid_request", "message": "Controlled provider refusal",
+                "context": {"httpStatus": 400, "vendorCode": "context_length_exceeded", "parameter": "input"}})
+        if "entry-150 " in prompt and second_chunk != "recovered":
+            f.stages.append("second-chunk")
+            raise BudgetExceeded("root wallet spent") if second_chunk == "budget" else RuntimeError("provider failed")
+        return {"content": f"summary of {call_type}"}, {"prompt_tokens": 1, "completion_tokens": 1,
+                                                       "total_tokens": 2, "cost": 0.0}
+
+    monkeypatch.setattr(llm_observability, "chat_observed", dispatch)
+    launch(f)
+    assert f.done.wait(10)
+    assert refused, "the first chunk's complete draft was refused for context"
+    checkpoint = load_task_result(f.root, f.task["id"])["root_phase_checkpoint"]
+    meta = json.loads((f.root / "memory" / "dialogue_meta.json").read_text(encoding="utf-8"))
+    blocks = json.loads((f.root / "memory" / "dialogue_blocks.json").read_text(encoding="utf-8"))
+    events = [json.loads(line) for line in (f.root / "logs" / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+    [row] = [event for event in events if event.get("type") == "chat_block_consolidation"]
+    assert len(blocks) == (2 if second_chunk == "recovered" else 1), "the recovered chunk is a published block"
+    assert meta["last_consolidated_offset"] == (200 if second_chunk == "recovered" else 100)
+    if second_chunk == "recovered":
+        assert checkpoint["post_task_synthesis"] == "completed"
+        assert not checkpoint.get("post_task_stop_reason")
+        assert row["last_error_kind"] == "context_overflow", "the attempt history is preserved"
+        assert "last_consolidation_error" not in meta
+        assert f.stages[-3:] == ["scratch", "reflection", "backlog"]
+    elif second_chunk == "lost":
+        assert checkpoint["post_task_synthesis"] == "degraded"
+        assert not checkpoint.get("post_task_stop_reason")
+        assert meta["last_consolidation_error"]["cursor_offset"] == 100
+        assert f.stages[-4:] == ["second-chunk", "scratch", "reflection", "backlog"]
+    else:
+        assert checkpoint["post_task_synthesis"] == "degraded"
+        assert checkpoint["post_task_stop_reason"] == (
+            "budget_exhausted:skipped=scratchpad_consolidation,reflection,promotion")
+        assert f.stages[-1] == "second-chunk"
