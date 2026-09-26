@@ -814,6 +814,8 @@ and what enforces each.
   an addressed task/owner message, a direct-child signal, control/recovery judgment or a
   model-requested one-shot checkpoint wakes it. No caller-visible `wait_sec`, repeating
   timers, progress wakes or host semantic stall detector.
+- Wake facts are measured over the interval the actor experienced (whole-call `sleep` stamped at
+  the one publication point, never a tick's `waited_sec`); the acked child cursor is task-scoped.
 - Wait/continue/stop is a structured fact — terminal status plus heartbeat freshness
   from `queue_snapshot.json` via `task_status.py` — never a keyword or regex over
   content (BIBLE P5). Fixed kill-timeouts (hard task/tool ceilings, watchdog) stay the

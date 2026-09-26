@@ -171,7 +171,10 @@ CHAPTER_BYTE_BUDGETS: dict[str, int] = {
     # its `era_retry` record keyed to the executed Light binding, the four typed memory-maintenance
     # events and the host stamp on `source_capture` history rows are mechanisms no older text
     # described; the sentences they extend were rewritten in place, not appended to.
-    "docs/architecture/06-agent-core.md": 314900,
+    # 314900 -> 316400 (truthful waiting A-C, measured 316352): the Supervision paragraph states the
+    # task-scoped child cursor, whole-call `sleep` wake facts, `leaf_live_input`, dated observation
+    # facts, the every-caller wait scope and the cost-evidence reminder; mechanisms no text described.
+    "docs/architecture/06-agent-core.md": 316400,
     # 36991 -> 37300: the facade paragraph names the three loop constants runtime_limits.py
     # gained (events batch bound, budget-projection retry interval); no older text to displace.
     # 37300 -> 38400 (PR #1207): the Z.ai (`zai::`) direct provider gets its own route
@@ -274,7 +277,9 @@ CHAPTER_BYTE_BUDGETS: dict[str, int] = {
     # bullet states the declare-in-builder / project-in-transport rule, the per-family
     # OpenRouter session and the two enforcing tests; the notice bullet gains the second
     # meaning of the `[SYSTEM NOTICE]` marker. The derived-identity sentence is replaced.
-    "docs/development/06-rules-by-change-class.md": 96700,
+    # 96700 -> 96800 (truthful waiting A-C, measured 96791): one Timeout & Wait Control bullet —
+    # wake facts measured over the interval the actor experienced; no older text to displace.
+    "docs/development/06-rules-by-change-class.md": 96800,
     "docs/development/07-managed-update-rule.md": 4166,
     "docs/development/08-mutation-attribution-rule.md": 2899,
     "docs/development/09-process-custody-rule.md": 10028,
