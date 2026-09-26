@@ -909,3 +909,41 @@ def test_dequeue_reads_the_retained_row_when_a_web_item_carries_no_witness(monke
         message_bus.record_inbound_message(
             bridge, forged, chat_id=1, user_id=1, client_message_id="bare-1", text="no witness", ts="ignored",
         )
+
+
+def test_owner_acceptance_rows_start_a_clean_record_after_a_torn_tail(monkeypatch, tmp_path):
+    """A crashed append can leave ``chat.jsonl`` without its final newline. Both
+    acceptance writers (socket ingress and the named ingress) start a clean record
+    there, so the accepted row stays parseable: history replays its
+    ``ingress_accepted`` fact, the dequeue re-read finds a skill row, and a retry of
+    the same id rejoins instead of enqueueing a second owner turn."""
+    import json
+
+    bridge = _make_bridge(monkeypatch)
+    monkeypatch.setattr(message_bus, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(message_bus, "load_state", lambda: {})
+    chat = tmp_path / "logs" / "chat.jsonl"
+    chat.parent.mkdir(parents=True)
+    chat.write_bytes(b'{"direction": "out", "text": "torn')
+    bridge.ui_send("typed", client_message_id="web-torn")
+    chat.write_bytes(chat.read_bytes() + b'{"direction": "out", "text": "torn again')
+    row, rejoined = message_bus.accept_local_message(
+        bridge, tmp_path, "relayed", chat_id=7, user_id=7, source="skill:telegram", client_message_id="skill-torn",
+    )
+    assert rejoined is False
+    parsed = {}
+    for line in chat.read_text(encoding="utf-8").splitlines():
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue  # the torn fragments stay preserved, unparsed
+        parsed[entry["client_message_id"]] = entry
+    assert parsed["web-torn"]["ingress_accepted"] is True and parsed["skill-torn"] == row
+    assert message_bus.accept_local_message(
+        bridge, tmp_path, "relayed", chat_id=7, user_id=7, source="skill:telegram", client_message_id="skill-torn",
+    ) == (row, True)
+    web, skill = (u["message"] for u in bridge.get_updates(offset=0, timeout=0))
+    assert message_bus.record_inbound_message(
+        bridge, skill, chat_id=7, user_id=7, client_message_id="skill-torn", text="relayed", ts="ignored",
+    ) == skill["accepted_source_ref"]
+    assert web["client_message_id"] == "web-torn"

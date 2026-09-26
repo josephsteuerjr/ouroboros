@@ -261,6 +261,8 @@ def _forward_late_quiz_answer(
             "ts": str(row.get("ts") or ""), "source": str(source or "web"), "chat_id": chat_id,
             "sender_session_id": "", "client_message_id": client_message_id,
         }
+        if row.get("ingress_accepted") is True:
+            echo["ingress_accepted"] = True  # the row's own fact: live matches history replay
         try:
             stamp_project_thread(message_bus.DATA_DIR, echo)
             bridge.broadcast(echo)

@@ -91,6 +91,9 @@ def test_ingress_late_answer_is_accepted_and_delivered_as_an_owner_message(tmp_p
     assert echo[0]["chat_id"] == 1 and echo[0]["content"] == queued["text"]
     [row] = _accepted_rows(tmp_path, source_id)
     assert row["text"] == echo[0]["content"] == "prod parity"
+    # The live echo states the same durable-acceptance fact as the canonical row
+    # (history replays it), so the bubble says `Input saved` before a reload too.
+    assert row["ingress_accepted"] is True and echo[0]["ingress_accepted"] is True
 
     # A retry of the SAME request re-enters delivery; the named ingress rejoins.
     again = _post(app, {"request_id": "r1", "decision_id": "quiz:task-1:q1",
@@ -141,6 +144,9 @@ def test_a_relayed_late_answer_keeps_the_relaying_skill_as_its_source(tmp_path, 
     assert queued["source"] == "skill:telegram" and queued["chat_id"] == 1
     echo = [f for f in frames if f.get("type") == "chat" and f.get("role") == "user"]
     assert echo and echo[0].get("source") == "skill:telegram"
+    # Only a web acceptance row carries the typed fact; the echo never invents it.
+    [row] = _accepted_rows(tmp_path, "quiz_late_answer:task-3:q1")
+    assert "ingress_accepted" not in row and "ingress_accepted" not in echo[0]
 
 
 def test_ingress_heals_an_unreconciled_quiz_of_a_dead_task(tmp_path, monkeypatch):

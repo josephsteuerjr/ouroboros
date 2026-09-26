@@ -98,11 +98,12 @@ CHAPTER_BYTE_BUDGETS: dict[str, int] = {
     # projection write per turn (the unbounded drain and per-event write they replace had
     # no sentence of their own), and the projection paragraph states the writer's slim read,
     # its retry interval and the crossing rule of the OpenRouter check.
-    # 32400 -> 33600 (TZ-1 batch ingress, measured 33532): the bridge-intake paragraph is a
+    # 32400 -> 33600 (TZ-1 batch ingress, measured 33531): the bridge-intake paragraph is a
     # mechanism the chapter had no text for — the bounded batch drain with per-message
-    # transport rebinding, the canonical-row-before-echo web acceptance and its queue witness,
-    # the memory-only hand-back of the unprocessed tail on a crash or /restart, and /panic's
-    # refusal to hand anything back; the base sat 1 byte under the previous budget.
+    # transport rebinding, the record-bounded canonical-row-before-echo web acceptance and
+    # its queue witness, the memory-only hand-back of the unprocessed tail on a crash or
+    # /restart, and /panic's refusal to hand anything back; the base sat 1 byte under the
+    # previous budget.
     "docs/architecture/05-supervisor-loop.md": 33600,
     # 286850 -> 287600: "an answer that has not arrived is a gap" is a new invariant of
     # plan review and task acceptance (the slot census vocabulary, the `awaiting`
@@ -172,11 +173,15 @@ CHAPTER_BYTE_BUDGETS: dict[str, int] = {
     # residuals; a mechanism the chapter lacked, so only its two stale clauses were replaced.
     # 313400 -> 314000 (PR #1300; measured 313858 on the merged tree): the transport paragraph gains
     # the trust-bundle seam every first-party client shares; no older text to displace.
-    # 314000 -> 314800 (TZ-1 cluster E, measured 314693): the Tool API paragraph gains the bounded
-    # edit-miss locator the three exact editors share, and the roots paragraph states the
-    # read⇒list,search / write⇒edit closure of the operation matrix; neither mechanism had older
-    # text to displace, and the base sat 23 bytes under the previous budget.
-    "docs/architecture/06-agent-core.md": 314800,
+    # 314000 -> 314900 (TZ-3 PR-1, measured 314850 on the merged tree): the era run boundary with
+    # its `era_retry` record keyed to the executed Light binding, the four typed memory-maintenance
+    # events and the host stamp on `source_capture` history rows are mechanisms no older text
+    # described; the sentences they extend were rewritten in place, not appended to.
+    # 314900 -> 315600 (TZ-1 cluster E, measured 315566 on the merged tree): the Tool API paragraph
+    # gains the bounded edit-miss locator the three exact editors share, and the roots paragraph
+    # states the read⇒list,search / write⇒edit closure of the operation matrix; neither mechanism
+    # had older text to displace, and neither duplicates the TZ-3 memory prose above.
+    "docs/architecture/06-agent-core.md": 315600,
     # 36991 -> 37300: the facade paragraph names the three loop constants runtime_limits.py
     # gained (events batch bound, budget-projection retry interval); no older text to displace.
     # 37300 -> 38400 (PR #1207): the Z.ai (`zai::`) direct provider gets its own route
@@ -225,6 +230,11 @@ CHAPTER_BYTE_BUDGETS: dict[str, int] = {
     # conversation key, placeholder re-run and its lost-attempt facts, presence-local liveness,
     # previous-turn pointer and its replay repair, split in-flight budgets, silent orphaned work,
     # presence room label); the base sat 2 bytes under.
+    # 12500 -> 14300 (TZ3): the source-bound pre-effect Presence start and event
+    # identity, auth saturation, and retry/receipt boundary add contracts the old
+    # chapter could not describe. Existing transport and companion rules remain.
+    # 14300 -> 14800 (TZ3): source-bound first-round no-effect proof and successor
+    # identity must be explained beside existing Host retry/receipt custody; no new store.
     # 12500 -> 13400 (TZ2 own work): the Presence paragraph gains two contracts it had
     # no text for — what a binding's own work is and which readers/controls reach it
     # (replacing the conversation-exact cancel sentence), and the forced-final split
@@ -236,7 +246,9 @@ CHAPTER_BYTE_BUDGETS: dict[str, int] = {
     # (replacing the live-row clause), and "host diagnostics" states its ordinary-final limit.
     # 13950 -> 14100 (TZ2 review): a deferred tool-delivery finish note is
     # carried separately from prior speech in the same previous-turn pointer.
-    "docs/architecture/12-host-service-companions-and-chat-ids.md": 14100,
+    # 14100/14800 -> 17500: TZ2 binding authority and TZ3 Host retry custody
+    # coexist in one current Host/Presence map; neither overwrites the other.
+    "docs/architecture/12-host-service-companions-and-chat-ids.md": 17500,
     # 7764 -> 8600 (#1195): the fresh selected-subject + immutable peer projection
     # execution check (`skill_peer_inventory.py`, `skill_conflicts.py`) replaces
     # whole-inventory hashing; the chapter had no description of that seam to swap out.
