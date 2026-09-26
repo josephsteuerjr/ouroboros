@@ -171,7 +171,11 @@ CHAPTER_BYTE_BUDGETS: dict[str, int] = {
     # its `era_retry` record keyed to the executed Light binding, the four typed memory-maintenance
     # events and the host stamp on `source_capture` history rows are mechanisms no older text
     # described; the sentences they extend were rewritten in place, not appended to.
-    "docs/architecture/06-agent-core.md": 314900,
+    # 314900 -> 315900 (TZ-3 #1291 reconcile, measured 315773): the automatic anchored-edit
+    # contract for ordinary notes (body-only edits, the `summary` sibling and the typed
+    # nomination-shape refusals) replaces the "edit adds storage capability, not a semantic
+    # writer policy" clause it makes stale; no older text described that structural rule.
+    "docs/architecture/06-agent-core.md": 315900,
     # 36991 -> 37300: the facade paragraph names the three loop constants runtime_limits.py
     # gained (events batch bound, budget-projection retry interval); no older text to displace.
     # 37300 -> 38400 (PR #1207): the Z.ai (`zai::`) direct provider gets its own route

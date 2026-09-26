@@ -335,7 +335,7 @@ def _run_block_consolidation(
     chunks_to_process = (len(new_entries) + BLOCK_SIZE - 1) // BLOCK_SIZE if force_tail else len(new_entries) // BLOCK_SIZE
     processed = 0
     knowledge_instruction = (KNOWLEDGE_MAINTENANCE_PROMPT + "\nAfter the episodic summary, optionally add "
-                             'a final line KNOWLEDGE_ENTRIES_JSON: [{"topic":"...","scope":"global","content":"complete updated Markdown"}].\n'
+                             'a final line KNOWLEDGE_ENTRIES_JSON: [{"topic":"...","scope":"global","edits":[...]}] ("content" for a new topic).\n'
                              if knowledge_context is not None else "")
     block = None
 
@@ -720,8 +720,12 @@ does not refute prior knowledge; an earlier episode cutoff does not undo later k
 events. Preserve useful established facts, sources, uncertainty, unknown metadata and
 links. Correct, remove or reorganize stale or unsupported understanding when the
 evidence warrants it; memory is revisable, not append-only. Read the whole current
-note before replacing it, rather than merely repeating fragments. New topics may be
-created without a prior read.
+note before changing it, rather than merely repeating fragments. An existing note changes by
+"edits": [{"old_text": a passage occurring exactly once in its body, "new_text": its replacement,
+empty to remove it, "basis": source and reason}]; spans never overlap and unmentioned text stays,
+so a broader rewrite or reorganization quotes the whole span it replaces. Edits reach only the body;
+revise the summary with "summary": "new text" beside them (other metadata survives). A new topic
+takes only "content" with complete Markdown and needs no prior read.
 Understanding of the people involved — preferences, recurring reactions, shared history,
 tentative interpretations with their source — is ordinary knowledge to nominate in global scope;
 a pattern across several moments is worth more than one; revise the existing note rather than minting a rule,
@@ -1156,8 +1160,8 @@ def maintain_memory_pressure(memory: Any, llm_client: Any, context: Any, *,
         knowledge = KnowledgeReadContext(context, "knowledge_maintenance")
         prompt = KNOWLEDGE_MAINTENANCE_PROMPT + (
             "\nThe shared memory projection exceeds the current task's measured working window. "
-            "Read the complete global overview with knowledge_read, then nominate a shorter authored "
-            "overview preserving the whole scope of current understanding and source-relative links to details. "
+            "Read the complete global overview with knowledge_read, then nominate edits making the authored "
+            "overview shorter while preserving the whole scope of current understanding and source-relative links to details. "
             "Do not remove useful uncertainty or evidence merely to save space. Use ordinary knowledge notes "
             "for detail when useful. Return JSON: {\"knowledge_entries\": [...]}.\n" + identity)
         if not (shelf / "overview.md").exists():
@@ -1411,19 +1415,8 @@ def consolidate_scratchpad(
     *, pressure: bool = False, knowledge_context: Any = None,
 ) -> Optional[Dict[str, Any]]:
     blocks = memory.load_scratchpad_blocks()
-
-    if not blocks or (len(blocks) < 3 and not pressure):
-        return None
-    return _consolidate_scratchpad_blocks(memory, blocks, knowledge_dir, llm_client, identity_text,
-                                        pressure=pressure, knowledge_context=knowledge_context)
-
-
-def _consolidate_scratchpad_blocks(
-    memory: Any, blocks: List[Dict[str, Any]], knowledge_dir: pathlib.Path, llm_client: Any,
-    identity_text: str, *, pressure: bool = False, knowledge_context: Any = None,
-) -> Optional[Dict[str, Any]]:
     total_chars = sum(len(b.get("content", "")) for b in blocks)
-    if total_chars <= SCRATCHPAD_CONSOLIDATION_THRESHOLD and not pressure:
+    if not blocks or not pressure and (len(blocks) < 3 or total_chars <= SCRATCHPAD_CONSOLIDATION_THRESHOLD):
         return None
 
     compress_count = len(blocks) if pressure else max(2, len(blocks) // 2)
@@ -1441,10 +1434,10 @@ The oldest {compress_count} blocks need compression.
 
 Rules:
 1. Identify insights, patterns, lessons, and architectural decisions worth
-   preserving long-term. Output them as knowledge_entries with topic + content.
-   Topics are source-relative Markdown paths; preserve their exact identities.
+   preserving long-term. Output them as knowledge_entries with topic + content
+   for a new note. Topics are source-relative Markdown paths; preserve their exact identities.
    For an existing topic, read its complete current source using knowledge_read,
-   then propose the full revised note, not a blind append of the new fragment.
+   then propose its anchored edits, not a blind append of the new fragment.
 2. Compress the old blocks into a SINGLE shorter summary block. Keep active
    tasks, unresolved questions, admin instructions still in force. Remove
    stale/completed items and routine status updates.
@@ -1458,7 +1451,7 @@ Identity context: {identity_text if identity_text else "(not available)"}
 {old_content}
 
 Respond with JSON only (no fences), after any useful knowledge reads:
-{{"knowledge_entries": [{{"topic": "topic/path", "scope": "global", "content": "complete Markdown note"}}], "compressed_block": "single compressed block text"}}
+{{"knowledge_entries": [{{"topic": "topic/path", "scope": "global", "edits": [{{"old_text": "exact passage", "new_text": "revision", "basis": "source and reason"}}]}}], "compressed_block": "single compressed block text"}}
 """
 
     usage: Dict[str, Any] = {}
@@ -1561,8 +1554,10 @@ def _write_knowledge_entries(
     ``route``: provenance is per nomination. That field is HOST-authored only —
     ``KnowledgeReadContext.bind_entries`` strips every underscore key a model
     supplied, and the room seam stamps it after binding from the correction
-    call's own usage — so the writer never trusts model output for it."""
-    from ouroboros.knowledge import KnowledgeAddress, sanitize_topic, write_knowledge_note
+    call's own usage — so the writer never trusts model output for it. A note this operation
+    read (``expected_revision``) takes anchored ``edits`` (+ ``summary``), never whole ``content``;
+    an unread topic is create-only (``nomination_write_form`` owns the shape)."""
+    from ouroboros.knowledge import KnowledgeAddress, nomination_write_form, sanitize_topic, write_knowledge_note
     from ouroboros.tools.knowledge import _address, _record_backlog_history
 
     outcomes = []
@@ -1570,11 +1565,9 @@ def _write_knowledge_entries(
         if not isinstance(entry, dict):
             outcomes.append({"topic": "", "ok": False, "reason": "malformed_nomination"})
             continue
-        topic, content = entry.get("topic"), entry.get("content")
-        if not isinstance(content, str) or not content.strip():
-            outcomes.append({"topic": topic, "ok": False, "reason": "empty_nomination"})
-            continue
+        topic, content, revision = entry.get("topic"), entry.get("content"), entry.get("expected_revision")
         try:
+            form = nomination_write_form(entry)  # every refusal still leaves this entry's one outcome
             topic = sanitize_topic(topic)
             address = (_address(context, topic, str(entry.get("scope") or "")) if context is not None
                        else KnowledgeAddress(knowledge_dir.parent.parent, knowledge_dir, topic))
@@ -1590,10 +1583,12 @@ def _write_knowledge_entries(
             entry_stamp = dict(stamp or {})
             if entry.get("_nomination_route") is not None:
                 entry_stamp["route"] = entry["_nomination_route"]
-            result = write_knowledge_note(address, content, expected_revision=entry.get("expected_revision"),
-                                          task_id=str(entry.get("task_id") or ""), **entry_stamp)
-            outcomes.append({"topic": topic, "scope": address.scope, "ok": result.ok,
-                             "reason": result.reason,
+            if form["mode"] == "overwrite" and revision is not None:  # a read existing note: never a whole replacement
+                outcomes.append({"topic": topic, "scope": address.scope, "ok": False, "reason": "existing_note_requires_edits"})
+                continue
+            result = write_knowledge_note(address, expected_revision=revision, task_id=str(entry.get("task_id") or ""),
+                                          **form, **entry_stamp)
+            outcomes.append({"topic": topic, "scope": address.scope, "ok": result.ok, "reason": result.reason,
                              "source_ref": result.current.source_ref() if result.current else None})
         except (ValueError, OSError) as exc:
             outcomes.append({"topic": topic, "ok": False, "reason": str(exc)})
