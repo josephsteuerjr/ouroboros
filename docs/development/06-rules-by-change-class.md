@@ -209,14 +209,14 @@ successor-parity and artifact-transport rules are review-only.
   that reason).
 - Durable artifacts are NOT age-pruned: genesis projects
   (`OUROBOROS_SUBAGENT_PROJECTS_ROOT`) and forensic observability blobs (kept
-  compressed indefinitely by contract; startup runs a census, never a
-  deletion).
+  compressed indefinitely by contract; blobs are never deleted or
+  counted).
 - Review continuations are recovery state, not disposable GC: archive a record
   (collision-safe move, never delete) only when its owner task is settled, it
   stayed un-resumed past the seven-day threshold and no recorded obligation
   remains open; any uncertainty or move error leaves the live record intact.
 
-Enforcement: `tests/test_phase3c_observability_gc.py` (the unified knob and the cutoff math) and `tests/test_observability_retention.py` (the census and preserve-indefinitely contract); the review-continuation archive rule has no automated surface — review-only.
+Enforcement: `tests/test_phase3c_observability_gc.py` (the unified knob and the cutoff math) and `tests/test_observability_retention.py` (the preserve-indefinitely contract); the review-continuation archive rule has no automated surface — review-only.
 
 ### Live subagents
 
@@ -266,6 +266,12 @@ and 23 (`delegated_transport`), both critical. The imperatives:
   never mint task authority. Do not parse assignment prose to choose a profile
   or repeat competing native access instructions; preserve owner constraints
   in the complete work order.
+- A live message into a running run (`delegate_message`) is gated by the
+  engine's operation catalog and the route row's declared `liveInput`, never
+  by a harness name; outcomes mirror the engine's typed enum plus the host's
+  `not_found`; the host-minted `message_id` is the wire Idempotency-Key and is
+  reused ONLY after `delivery_unknown`. No retry loop, no stall detector, no
+  custody row (ARCHITECTURE §6 "Delegated subagents").
 - `subagents.route_health` is the ONE route reader for every consumer, and
   quota readers project one `ClaudexorGateway.quota_state()` envelope
   (`tests/test_available_subagents_runtime.py`): a fully-used ratio without a
@@ -309,7 +315,7 @@ and 23 (`delegated_transport`), both critical. The imperatives:
   stale-replica regression at BOTH seams
   (`tests/test_available_subagents_runtime_review_fixes.py`). Do not broaden
   generic data-tool behavior while fixing isolation (`forward_to_worker`
-  writes only to validated running tasks in the current task/root lineage).
+  writes only to validated running or queued tasks in the current lineage).
 - A custody row carries its owner's kind; every sweep, audit and counter over
   custody rows states which kinds it covers. A review-owned run
   (`RunCustody.review_owned`) belongs to its panel — never the task's open
@@ -337,7 +343,7 @@ and 23 (`delegated_transport`), both critical. The imperatives:
   rides the reminder round (`tests/test_v6570_swarm_honesty.py`). `wait_tasks`
   stays batch-compact;
   `control_task_results._wait_for_tasks` owns its projection, documented under
-  ARCHITECTURE's "Waiting on children"; full untruncated handoff belongs to `get_task_result` and `wait_task`, and the
+  ARCHITECTURE's "Waiting on children"; full untruncated handoff belongs to `get_task_result` and a settled `wait_task`, and the
   model result and the optional `terminal_host_notice` stay separate. No
   shared ledgers, automatic memory merges or new settings/endpoints unless the
   accepted plan calls for them. Push/live events are wakeups, not terminal
@@ -814,6 +820,8 @@ and what enforces each.
   an addressed task/owner message, a direct-child signal, control/recovery judgment or a
   model-requested one-shot checkpoint wakes it. No caller-visible `wait_sec`, repeating
   timers, progress wakes or host semantic stall detector.
+- Wake facts are measured over the interval the actor experienced (whole-call `sleep` stamped at
+  the one publication point, never a tick's `waited_sec`); the acked child cursor is task-scoped.
 - Wait/continue/stop is a structured fact — terminal status plus heartbeat freshness
   from `queue_snapshot.json` via `task_status.py` — never a keyword or regex over
   content (BIBLE P5). Fixed kill-timeouts (hard task/tool ceilings, watchdog) stay the
