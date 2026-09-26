@@ -377,17 +377,22 @@ def test_an_unsupported_engine_build_refuses_the_answer_typed(tmp_path, monkeypa
     assert json.loads(result.text)["reason"] == "interaction_answers_unsupported"
 
 
-def test_the_expired_wait_window_and_its_cache_horizon_note_stay_valid_json(tmp_path, monkeypatch):
-    """The note is a FIELD of the window payload; appended after the JSON it made
-    the whole result unparseable for every reader of this family."""
+def test_the_supervising_wake_and_its_cache_horizon_note_stay_valid_json(tmp_path, monkeypatch):
+    """The note is a FIELD of the wake payload, stamped once at the wake's publication
+    (never per 3 s tick, never appended after the rendered JSON, which once left the
+    whole result unparseable for every reader of this family). Drives the REAL
+    observing tick through the supervising wait: an event during a quiet tick wakes
+    with the note, and without the per-tick window's waited_sec or cancel advice."""
     import json
 
+    import ouroboros.delegate_supervision as supervision
     import ouroboros.tools.control as control
     import ouroboros.tools.delegate as delegate
     from ouroboros.gateways import claudexor as gw
 
     _own_run(tmp_path)
     monkeypatch.setattr(control, "cache_horizon_note", lambda *_a, **_k: "the prompt cache expires soon")
+    monkeypatch.setattr(delegate.time, "sleep", lambda _sec: None)
 
     class _Alive:
         engine_version = "3.10.2"
@@ -398,11 +403,18 @@ def test_the_expired_wait_window_and_its_cache_horizon_note_stay_valid_json(tmp_
         def close(self): pass
 
     monkeypatch.setattr(gw, "ClaudexorGateway", lambda *a, **k: _Alive())
-    ctx = SimpleNamespace(repo_dir=tmp_path, drive_root=tmp_path, task_id="t-family")
-    raw = delegate._delegate_wait(ctx, "run-1", wait_sec=1, since_seq=0)
+    checks = []
+    # First check lets the tick observe; the second (after it) delivers a control.
+    monkeypatch.setattr(supervision, "_control_wakes",
+                        lambda _ctx: checks.append(1) or ([{"type": "deadline"}] if len(checks) > 1 else []))
+    ctx = SimpleNamespace(repo_dir=tmp_path, drive_root=tmp_path, task_id="t-family", task_attempt=1)
+    raw = supervision.supervised_wait(ctx, "run-1").text
     payload = json.loads(raw)          # the contract: still ONE JSON object
     assert payload["cache_horizon_note"] == "the prompt cache expires soon"
     assert payload["status"] in {"progress", "no_progress"}
+    assert payload["wake_events"] == [{"type": "deadline"}]
+    assert "waited_sec" not in payload and "delegate_cancel" not in str(payload.get("note") or "")
+    assert payload["sleep"]["quiet_renewals"] == 0
 
 
 def _wait_ctx(tmp_path, task_id="t-nanny"):

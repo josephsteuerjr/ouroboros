@@ -1143,10 +1143,6 @@ def _delegate_wait(ctx: ToolContext, run_id: str, wait_sec: Optional[int] = None
                 # PREVIEW path too: a payload big enough to spill is exactly the one whose
                 # containment block a reader is least likely to reach.
                 _record_containment(ctx, entry, payload)
-                from ouroboros.tools.control import cache_horizon_note
-                _horizon = cache_horizon_note(ctx, time.monotonic() - started)
-                if _horizon:
-                    payload["cache_horizon_note"] = _horizon
                 return json.dumps(payload, ensure_ascii=False, indent=2)
             if last_seq > baseline:
                 # The STREAM is not collapsed — the TIMER is. Every advance reaches the
@@ -1174,10 +1170,9 @@ def _delegate_wait(ctx: ToolContext, run_id: str, wait_sec: Optional[int] = None
                                                     if entry.work_order_source_request else {}
                                                 ))
             def _expired() -> str:
-                # The window payload is a DICT here, and the cache-horizon note is a
-                # field in it: appending the note after the rendered JSON left the
-                # result unparseable for every reader of this family — the supervising
-                # loop included, which then read the whole window as a `fault`.
+                # The window payload is a DICT; the supervising wake adds its own
+                # whole-sleep facts (``sleep``, one cache-horizon note) as fields at
+                # publication, never per tick and never after the rendered JSON.
                 payload = progress.window_payload(
                     run_id=rid, state=state, last_seq=last_seq,
                     window=(time.monotonic() - started) if observation_only else window,
@@ -1188,9 +1183,6 @@ def _delegate_wait(ctx: ToolContext, run_id: str, wait_sec: Optional[int] = None
                     pending_interactions=_bounded_interactions(pending) if pending else None,
                     detail=detail, seen=seen,
                     budget=tool_result_limit("delegate_wait"))
-                from ouroboros.tools.control import cache_horizon_note
-                if _horizon := cache_horizon_note(ctx, time.monotonic() - started):
-                    payload["cache_horizon_note"] = _horizon
                 return json.dumps(payload, ensure_ascii=False, indent=2)
 
             if observation_only or time.monotonic() >= deadline:
@@ -1431,7 +1423,10 @@ def get_tools() -> List[ToolEntry]:
                 "Terminal settlement, a new interaction, "
                 "fault, addressed owner/task message, a direct-child attention/terminal event, "
                 "cancel/deadline control, recovery judgment, or an explicit one-shot checkpoint "
-                "wakes exactly once. A run that asks its "
+                "wakes exactly once. Every wake carries `sleep` (measured over this whole call), "
+                "`leaf_live_input` (the route's declared live-input capability, 'unknown' when "
+                "unread) and, once the prompt-cache horizon has passed since your last model "
+                "response, one cache_horizon_note. A run that asks its "
                 "user a question returns IMMEDIATELY as status='waiting_on_user' with "
                 "the full question set (interaction/question ids ride WHOLE, never "
                 "truncated): answer it with delegate_answer, or raise it with the "
