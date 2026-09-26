@@ -243,7 +243,8 @@ def _record_owner_directive(
 def _initialize_owner_directives(ctx: Any, messages: List[Dict[str, Any]]) -> None:
     """Capture the run's first user turn before system notices are added.
 
-    The row is always recorded, but its label states only what the host knows:
+    A task-authored objective copies its retained owner corpus, not the draft.
+    Other runs record the first user row, labelled only by what the host knows:
     ``initial_user`` when the owner door stamped this run (``run_origin``'s
     ``owner_ingress``), ``initial_text`` otherwise — a Presence event, a wake, a
     schedule, a follow-up, a child's work order or an unmarked context. The bytes of
