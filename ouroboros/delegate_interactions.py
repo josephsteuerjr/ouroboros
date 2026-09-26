@@ -667,7 +667,8 @@ _MESSAGE_NOTES = {
                  "(the timeline's message.* rows carry messageId and outcome). This "
                  "message_id is spent: a further message needs a NEW one (omit message_id).",
     "accepted": "The harness's acceptance boundary was observed; CONSUMPTION is unproved "
-                "until a message.delivered timeline row appears. Keep watching with "
+                "until a timeline row with this message_id reads outcome=delivered (Codex "
+                "answers accepted first; the consumption echo lands as a later status row). Keep watching with "
                 "delegate_wait. This message_id is spent: a further message needs a NEW one.",
     "rejected": "An explicit refusal of THIS submission (see reason/detail): the vendor "
                 "refused the steer on a still-active turn, the call itself was in error, "

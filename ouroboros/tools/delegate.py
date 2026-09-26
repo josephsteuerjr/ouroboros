@@ -1533,7 +1533,7 @@ def get_tools() -> List[ToolEntry]:
                 "otherwise the typed outcome is unsupported and nothing is sent. Typed "
                 "outcomes mirror the engine: delivered (the harness consumed it in the "
                 "live turn; obedience unproved); accepted (the acceptance boundary was "
-                "observed; consumption unproved until a message.delivered timeline row); "
+                "observed; consumption unproved until a timeline row with this message_id reads outcome=delivered); "
                 "rejected (an explicit refusal of THIS submission — see reason); "
                 "not_active (no live target: terminal/settled run, turn gap, attempt "
                 "mismatch, or a PENDING question — answer that with delegate_answer); "
