@@ -214,7 +214,13 @@ CHAPTER_BYTE_BUDGETS: dict[str, int] = {
     # 20800 -> 22000 (PR #1300; measured 21921): the Docker subsection maps the single-Dockerfile layout
     # (browsers above the lock copy, the shared browser path, cache mounts, the CI lanes that exercise
     # them) and points at the extra-CA setting; the base sat 16 bytes under the previous budget.
-    "docs/architecture/08-git-branching-ci-and-build.md": 22000,
+    # 22000 -> 22500 (PR #1150 merged with v7.5.0; measured 22454): the platform-gate sentence maps
+    # the credential-free toolchain lane and script (real managed Node/npm with no ambient Node,
+    # no harness install claimed) and the Windows consumer lane (real pinned Codex install through
+    # the production seam, resolution and doctor; no login or task), CI contracts the chapter had
+    # no text for; the same 533 bytes the PR carried on its own base (measured 21317 there), now
+    # on top of the #1300 Docker subsection. No text of either paragraph was touched in the merge.
+    "docs/architecture/08-git-branching-ci-and-build.md": 22500,
     # 12405 -> 14400 (issue #1142): the ordinary-close paragraph gains the mechanism the chapter had
     # no text for — graceful stop signals the server PID only, the server half (stop event at the
     # signal, bounded uvicorn drain) is self-sufficient against an old group-SIGTERM launcher.
