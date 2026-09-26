@@ -940,6 +940,13 @@ export function renderSettingsPage() {
                         </div>
                     </div>
 
+                    <div class="form-section" data-autostart-section hidden>
+                        <h3>Startup</h3>
+                        <label class="local-toggle ui-field ui-field-inline"><input type="checkbox" id="windows-autostart" class="ui-checkbox"> Run at logon (Windows)</label>
+                        <div class="settings-section-copy">Uses this desktop launcher in the Windows startup registry. Changes apply immediately, independently of Save Settings.</div>
+                        <div id="windows-autostart-status" role="status"></div>
+                    </div>
+
                     <div class="form-section">
                         <h3>Cleanup</h3>
                         <!-- The two subagent path roots moved to Agents →

@@ -854,6 +854,12 @@
  */
 
 /**
+ * @typedef {Object} OwnerAutostartResponse
+ * @property {boolean} available
+ * @property {boolean} enabled
+ */
+
+/**
  * @typedef {Object} InstalledSkill
  * @property {string} name
  * @property {string} type

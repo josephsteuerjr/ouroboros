@@ -3,6 +3,7 @@ export { accountCatalogRefreshKey } from './settings_catalog.js';
 import { getNotifier } from './notifications.js';
 import { bindEffortSegments, syncEffortSegments, readCustomSecretDraft, collectCustomSecretDraft, paintSettingsFieldErrors, settingsWriteFailure } from './settings_controls.js';
 import { bindLocalModelControls } from './settings_local_model.js';
+import { bindAutostartControl } from './settings_autostart.js';
 import { applyMcpSettings, collectMcpSettings, initMcpSettings, validateMcpSettings } from './mcp_settings.js';
 import { adoptSubagentRoster, collectReviewerSlots, initReviewerSlots, reloadReviewerSlots, validateReviewerSlots, noteReviewerSlotsSaveAttempt, discardReviewerSlotsDraft, setReviewerProcessingPreference, setReviewerSourceContext } from './reviewer_slots.js';
 import {
@@ -469,6 +470,7 @@ export function initSettings({ state, setBeforePageLeave, ws } = {}) {
     getNotifier().mountSettings(page);
     const disposeLocalModel = bindLocalModelControls({ state,
         onApplication: (local) => syncRestartState({ ...restartState, local_model: local }) });
+    const autostart = bindAutostartControl(page);
     // Best-effort About version from /api/health.
     apiFetch('/api/health')
         .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
@@ -1128,7 +1130,7 @@ export function initSettings({ state, setBeforePageLeave, ws } = {}) {
     // make the server draft dirty — otherwise toggling one would ask the owner
     // to discard "unsaved settings" that do not exist.
     const onServerSettingEdited = (event) => {
-        if (event?.target?.closest?.('[data-notify-settings]')) return;
+        if (event?.target?.closest?.('[data-notify-settings], [data-autostart-section]')) return;
         onSettingsEdited();
     };
     page.addEventListener('input', onServerSettingEdited);
@@ -1172,11 +1174,13 @@ export function initSettings({ state, setBeforePageLeave, ws } = {}) {
     const accountModelCatalog = watchAccountModelCatalog();
     const disposeRestartReconnect = ws?.on?.('open', () => {
         refreshRestartState();
+        autostart.refresh();
         if (settingsLoaded) void refreshModelCatalog();
     });
 
     window.addEventListener('ouro:page-shown', (event) => {
         if (event.detail?.page === 'settings') {
+            autostart.refresh();
             refreshSettingsAfterExtensionChange('settings page shown');
             if (settingsLoaded) void refreshModelCatalog();
         }
@@ -1191,6 +1195,7 @@ export function initSettings({ state, setBeforePageLeave, ws } = {}) {
     window.addEventListener('pagehide', (event) => {
         if (event.persisted) return;
         disposeSettingsTabs();
+        autostart.dispose();
         window.removeEventListener('beforeunload', beforeUnload);
         disposeLocalModel();
         disposeRestartReconnect?.();

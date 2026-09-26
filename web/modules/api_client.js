@@ -266,6 +266,10 @@ export const apiClient = {
     ownerContextMode: (mode) => jsonPost('/api/owner/context-mode', { mode }),
     /** @returns {Promise<import('./api_types.js').OwnerSafetyModeResponse>} */
     ownerSafetyMode: (mode) => jsonPost('/api/owner/safety-mode', { mode }),
+    /** @returns {Promise<import('./api_types.js').OwnerAutostartResponse>} */
+    ownerAutostart: () => fetchJson('/api/owner/autostart', { cache: 'no-store' }),
+    /** @returns {Promise<import('./api_types.js').OwnerAutostartResponse>} */
+    setOwnerAutostart: (enabled) => jsonPost('/api/owner/autostart', { enabled }),
     logsTail: (name, limit = 2000) => fetchJson(`/api/logs/${encodeURIComponent(name)}?limit=${encodeURIComponent(limit)}`, { cache: 'no-store' }),
     ownerCapabilityAck: (payload) => jsonPost('/api/owner/capability-ack', payload),
     /** @returns {Promise<import('./api_types.js').OpenAICompatibleModelsResponse>} */
