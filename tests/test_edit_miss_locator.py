@@ -97,6 +97,35 @@ def test_a_huge_file_costs_one_bounded_pass_and_a_bounded_block():
     assert out.count("\n") <= edit_ops._LOCATE_EXCERPT_LINES + 12
 
 
+def test_a_needle_longer_than_the_compared_window_is_not_explained_by_blank_lines():
+    """TZ-1 PR1 review F2: only the first 200 needle lines are compared. When
+    those all match and the real miss sits after them, the locator used to say
+    "only leading/trailing blank lines differ" — a false diagnosis that sent the
+    editor chasing whitespace. It now says which lines were never compared and
+    widens the re-read window to the whole needle."""
+    text = "\n".join(f"row {i}" for i in range(1, 301)) + "\n"
+    needle_lines = [f"row {i}" for i in range(1, 251)]
+    needle_lines[230] = "row 231 CHANGED"  # the miss is beyond the compared window
+    out = locate_edit_miss(text, "\n".join(needle_lines))
+    assert "only leading/trailing blank lines differ" not in out, out
+    assert "the bytes match" not in out, out
+    assert out.startswith("old_str matches lines 1–200 ignoring whitespace (its first 200 lines match exactly; "
+                          "the difference is in the 50 lines after them, which were not compared)"), out
+    assert "read_file start_line=1 max_lines=250" in out, out
+    assert "(only the first 200 of 250 old_str lines were compared; the miss may be after them)" in out, out
+    # A before-the-cursor region keeps the ordering note but never claims the bytes match.
+    out = locate_edit_miss(text, "\n".join(needle_lines), cursor_line=290, needle_name="the hunk context")
+    assert "the bytes match" not in out and "BEFORE line 290" in out, out
+    # Tier 2 (a typo inside the compared window) discloses the window the same way.
+    needle_lines[100] = "row 101 TYPO"
+    out = locate_edit_miss(text, "\n".join(needle_lines))
+    assert out.startswith("Nearest region: lines 1–200 (199 of 200 old_str line(s) match"), out
+    assert "read_file start_line=1 max_lines=250" in out, out
+    assert "(only the first 200 of 250 old_str lines were compared; the miss may be after them)" in out, out
+    # A needle inside the window is untouched: no window note, the ordinary window.
+    assert "were compared" not in locate_edit_miss(_big_file(), "    def compute(x):\n        return x * 800")
+
+
 # --- the three editors --------------------------------------------------------------
 
 def test_edit_text_miss_carries_the_locator_and_previews_only_a_small_file_whole():

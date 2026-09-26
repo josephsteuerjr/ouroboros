@@ -385,8 +385,11 @@ def locate_edit_miss(
         old_lines.pop()
     if not old_lines:
         return _bounded(f"{needle_name} is whitespace only; include at least one non-blank line.", notes)
+    total = len(old_lines)  # the whole needle; only the window below is compared, and that is said
     old_lines = old_lines[:_LOCATE_MAX_OLD_LINES]
     n, positions = len(old_lines), _positions(len(old_lines))
+    if total > n:
+        notes.append(f"(only the first {n} of {total} {needle_name} lines were compared; the miss may be after them)")
     needle = [_norm_ws(line) for line in old_lines]
     hay = [_norm_ws(line) for line in file_lines]
 
@@ -408,7 +411,7 @@ def locate_edit_miss(
         if start + 1 < cursor_line:
             body.append(f"Note: that region is BEFORE line {cursor_line}, where this search started: hunks apply "
                         "in file order — move this hunk earlier or add an @@ anchor above the region.")
-        body += extra + [f"Re-read that region (read_file start_line={start + 1} max_lines={n}) "
+        body += extra + [f"Re-read that region (read_file start_line={start + 1} max_lines={total}) "
                          f"and copy the exact bytes into {needle_name}."]
         return _bounded("\n".join(body), notes)
 
@@ -417,6 +420,8 @@ def locate_edit_miss(
         start = relaxed[0]
         diff = _first_difference(file_lines, start, old_lines)
         reason = (_whitespace_reason(diff[1], diff[2]) if diff
+                  else (f"its first {n} lines match exactly; the difference is in the {total - n} lines after them, "
+                        "which were not compared") if total > n
                   else "the bytes match" if start + 1 < cursor_line else "only leading/trailing blank lines differ")
         also = f"; also at lines {', '.join(str(i + 1) for i in relaxed[1:])}" if len(relaxed) > 1 else ""
         return render(f"{needle_name} matches {span(start)} ignoring whitespace ({reason}){also}. "

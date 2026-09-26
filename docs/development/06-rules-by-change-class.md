@@ -105,9 +105,9 @@ Run roots are append-only outside `repo/` and live `data/`; the focused contract
   rejected as soon as it exceeds the source's initial regular-file size rather
   than waiting for a growing file to reach EOF. HTTP admission and
   materialization run their whole blocking operation off the event loop
-  (`gateway._helpers.run_sync_to_completion`); cancellation waits for it before
-  releasing anything, and cancelling an HTTP waiter never cancels the admitted
-  task. Directory exports carry a complete relative member/size/SHA manifest
+  (`gateway._helpers.run_sync_to_completion`); web owner chat uses it for
+  locked row → queue → echo. Cancellation settles before release; other sockets
+  stay responsive. Cancelling an HTTP waiter never cancels the admitted task. Directory exports carry a complete relative member/size/SHA manifest
   plus a streamed ZIP (outputs above 50 MiB included); a changed file or
   missing member is an explicit capture failure, while genesis LISTING is
   discovery and only capture/copy is strict.

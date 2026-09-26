@@ -13,6 +13,7 @@ from typing import Any
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from ouroboros.config import DATA_DIR
+from ouroboros.gateway._helpers import run_sync_to_completion
 from ouroboros.utils import utc_now_iso
 
 log = logging.getLogger(__name__)
@@ -390,7 +391,16 @@ async def ws_endpoint(websocket: WebSocket) -> None:
                             # land in chat.jsonl at the canonical-row writer.
                             client_surface["received_at"] = utc_now_iso()
                             task_metadata["client_surface"] = client_surface
-                        bridge.ui_send(
+                        # The web acceptance takes the single host's ingress lock and
+                        # a locked durable append (log_chat(require_write=True)); either
+                        # may wait behind a skill delivery scanning retained chat or a
+                        # slow disk, so it must not run on the ASGI loop. The settled
+                        # worker wait keeps its custody: a cancelled socket task still
+                        # lets the canonical row, the queue item and the echo complete
+                        # in that order, and this socket's frames stay ordered because
+                        # the next receive waits for it.
+                        await run_sync_to_completion(
+                            bridge.ui_send,
                             payload,
                             sender_session_id=str(msg.get("sender_session_id", "") or ""),
                             client_message_id=str(msg.get("client_message_id", "") or ""),
@@ -402,6 +412,8 @@ async def ws_endpoint(websocket: WebSocket) -> None:
                             project_id=str(msg.get("project_id", "") or ""),
                         )
                     else:
+                        # A command is a queue put only (no lock, no durable write):
+                        # it stays inline once received; another socket is not blocked by owner ingress.
                         bridge.ui_send(payload, broadcast=False)
                 except Exception:
                     await websocket.send_text(json.dumps({
