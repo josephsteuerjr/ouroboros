@@ -187,12 +187,14 @@ CHAPTER_BYTE_BUDGETS: dict[str, int] = {
     # gains the bounded edit-miss locator the three exact editors share, and the roots paragraph
     # states the read⇒list,search / write⇒edit closure of the operation matrix; neither mechanism
     # had older text to displace, and neither duplicates the TZ-3 memory prose above.
-    # 315600 -> 315900 (TZ-2 B+C merged onto TZ-1 PR-1 #1330, measured 315808 on the merged
-    # tree): TZ-2's author-stop, free `host_task_facts` row, stat-only `files_rescued` and
-    # post-work settlement sentences (+242 bytes alone, each rewritten in place) sit beside
-    # TZ-1's edit-miss locator and matrix closure; the two sides touch different paragraphs,
-    # so the union displaces nothing.
-    "docs/architecture/06-agent-core.md": 315900,
+    # 315600 -> 316600 (TZ-3 #1291 reconcile, measured 316489 after TZ-1 merge): automatic
+    # body-only anchors, the explicit summary sibling and typed nomination refusals extend
+    # the existing note-writer paragraph; neither replaces TZ-1's independent contract.
+    # 316600 -> 316800 (TZ-2 union with #1331, measured 316731): the author-stop,
+    # free host_task_facts, stat-only files_rescued and post-work settlement clauses
+    # replace their prior paragraphs (+242 bytes) independently of the memory writer;
+    # both contracts survive the merge, with no duplicated prose to displace.
+    "docs/architecture/06-agent-core.md": 316800,
     # 36991 -> 37300: the facade paragraph names the three loop constants runtime_limits.py
     # gained (events batch bound, budget-projection retry interval); no older text to displace.
     # 37300 -> 38400 (PR #1207): the Z.ai (`zai::`) direct provider gets its own route

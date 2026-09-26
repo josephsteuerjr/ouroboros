@@ -100,14 +100,17 @@ worked together, an interpretation worth testing) — append a line:
 MEMORY_ACTIONS_JSON: [...]
 A JSON array of 0-3 objects. Each object must have:
 - type: one of "scratchpad_append", "knowledge_write", "identity_update_candidate"
-- content: concise, concrete text to persist
+- content: concise, concrete text to persist (a knowledge_write to an existing note uses edits instead)
 Optional field:
 - topic: REQUIRED only for knowledge_write (shelf-relative path, e.g. "review_process")
 - scope: optional global or project:<exact project id>; omission keeps this task's shelf
 Rules for memory actions:
 - scratchpad_append: a durable working-memory note useful for near-future tasks.
-- knowledge_write: complete revised Markdown understanding under `topic`. Use
-  knowledge_read to read the whole CURRENT note before replacing it. Preserve
+- knowledge_write: complete Markdown understanding for a new `topic`. For an existing
+  note, use knowledge_read to read the whole CURRENT note, then give "edits":
+  [{{"old_text": a passage occurring exactly once in its body, "new_text": its replacement,
+  empty to remove it, "basis": source and reason}}] and optionally "summary": "revised
+  summary" (no content beside them); unmentioned text and metadata stay. Preserve
   evidence, uncertainty and useful links; new topics need no prior read. A repeated
   interpretation is not new independent evidence. No blind append of fragments.
 - identity_update_candidate: a PROPOSED identity refinement; it is only recorded as a
@@ -402,10 +405,14 @@ def _validate_memory_actions(raw: Any, task_id: str, *,
             continue
         content = (str(item.get("content") or "") if action_type == "knowledge_write"
                    else _truncate_with_notice(item.get("content", ""), 1200)).strip()
-        if not content:
+        # An existing note's knowledge_write carries anchored edits (+ summary) instead of content;
+        # present keys pass verbatim, however malformed, so the publisher's one contract refuses them.
+        change = ({key: item[key] for key in ("edits", "summary", "frontmatter") if key in item}
+                  if action_type == "knowledge_write" else {})
+        if not content and not change:
             skip(item, action_type, "empty_content")
             continue
-        action: Dict[str, Any] = {"type": action_type, "content": content, "task_id": task_id}
+        action: Dict[str, Any] = {"type": action_type, "content": content, "task_id": task_id, **change}
         if action_type == "knowledge_write":
             topic = str(item.get("topic") or "").strip()
             if not topic:
@@ -741,7 +748,8 @@ def apply_memory_actions(env: Any, actions: List[Dict[str, Any]], *, project_id:
     for action in (actions or [])[:3]:
         atype = str(action.get("type") or "")
         content = str(action.get("content") or "").strip()
-        if not content:
+        change = atype == "knowledge_write" and any(key in action for key in ("edits", "summary", "frontmatter"))
+        if not content and not change:
             skipped(action, "empty_content")
             continue
         if pid and atype in ("scratchpad_append", "identity_update_candidate"):
