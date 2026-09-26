@@ -58,29 +58,31 @@ def test_files_layout_uses_internal_scroll_contract():
 def test_files_pdf_preview_and_download_bridge_are_safe():
     source = _read("web/modules/files.js")
     download_helper = _read("web/modules/ui_helpers.js")
+    bridge = _read("ouroboros/launcher_bridge.py")
     launcher = _read("launcher.py")
     assert 'class="files-preview-frame" sandbox="allow-same-origin"' in source
     assert "downloadViaHostBridge(" in source
     assert "download_file_to_downloads" in download_helper
     assert "URL.createObjectURL" in download_helper
     assert "encodeURI(data.content_url)" not in source
-    assert 'parsed.path != "/api/files/download"' in launcher
-    assert 'parsed.path.startswith(("/api/extensions/", "/api/tasks/"))' in launcher
-    assert "parsed.port != actual_port" in launcher
+    assert 'parsed.path != "/api/files/download"' in bridge
+    assert 'parsed.path.startswith(("/api/extensions/", "/api/tasks/"))' in bridge
+    assert "parsed.port != actual_port" in bridge
 
 
 def test_chat_document_card_uses_dialog_and_safe_download_fallbacks():
     chat = _read("web/modules/chat_media.js")
     helper = _read("web/modules/ui_helpers.js")
+    bridge = _read("ouroboros/launcher_bridge.py")
     launcher = _read("launcher.py")
     css = _read("web/style.css")
 
     # Desktop bridge: open in the OS default app without navigating the WebView.
-    assert "def open_file_with_default_app(self, url: str, filename: str) -> dict:" in launcher
-    assert "open_path_external(target)" in launcher
-    assert 'tempfile.mkdtemp(prefix="ouroboros-open-")' in launcher
+    assert "def open_file_with_default_app(self, url: str, filename: str) -> dict:" in bridge
+    assert "open_path_external(target)" in bridge
+    assert 'tempfile.mkdtemp(prefix="ouroboros-open-")' in bridge
     # Shared loopback guard reused by both bridge methods (DRY).
-    assert "_resolve_bridge_file_url(url)" in launcher
+    assert "_resolve_bridge_file_url(url)" in bridge
 
     assert "export async function openViaHostBridge(url, filename = 'file', { browserUrl = '' } = {})" in helper
     assert "api?.open_file_with_default_app" in helper
@@ -110,25 +112,26 @@ def test_chat_document_card_uses_dialog_and_safe_download_fallbacks():
 
 
 def test_desktop_bridge_exposes_external_open_and_byte_save():
+    bridge = _read("ouroboros/launcher_bridge.py")
     launcher = _read("launcher.py")
     helper = _read("web/modules/ui_helpers.js")
     app = _read("web/app.js")
 
     # New MainApi methods keep the established {ok, error} bridge shape.
-    assert "def open_external_url(self, url: str) -> dict:" in launcher
+    assert "def open_external_url(self, url: str) -> dict:" in bridge
     assert 'raw.lower().startswith(("http://", "https://", "mailto:"))' in launcher
     # Bounded join on the detached opener: a settled failure (False/exception
     # recorded in the outcome list) is reported honestly; a still-running open
     # keeps the detached semantics.
     assert "_open_browser_detached(raw, outcome).join(timeout=3.0)" in launcher
     assert "if outcome and outcome[0] is not True:" in launcher
-    assert "def save_bytes_to_downloads(self, filename: str, b64: str) -> dict:" in launcher
-    assert 'base64.b64decode(str(b64 or ""), validate=True)' in launcher
+    assert "def save_bytes_to_downloads(self, filename: str, b64: str) -> dict:" in bridge
+    assert 'base64.b64decode(str(b64 or ""), validate=True)' in bridge
     # Byte saves reuse the shared ~/Downloads collision helper.
-    assert launcher.count('_unique_bridge_target(pathlib.Path.home() / "Downloads", filename)') == 2
+    assert bridge.count('_unique_bridge_target(pathlib.Path.home() / "Downloads", filename)') == 2
 
     # The loopback guard now admits durable chat-media artifact paths.
-    assert 'parsed.path.startswith(("/api/extensions/", "/api/tasks/"))' in launcher
+    assert 'parsed.path.startswith(("/api/extensions/", "/api/tasks/"))' in bridge
 
     # The shell-only interceptor is wired from the app bootstrap and classifies
     # every escape intent (file / external / bytes).
