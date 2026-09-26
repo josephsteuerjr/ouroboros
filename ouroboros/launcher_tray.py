@@ -29,8 +29,15 @@ class WindowsTray:
             clr.AddReference("System.Threading")
             from System.Drawing import Icon, SystemIcons
             from System.Threading import ApartmentState, Thread, ThreadStart
-            from System.Windows.Forms import (Application, ApplicationContext, ContextMenuStrip,
-                                              MouseButtons, NotifyIcon, Timer, ToolStripMenuItem)
+            from System.Windows.Forms import (
+                Application,
+                ApplicationContext,
+                ContextMenuStrip,
+                MouseButtons,
+                NotifyIcon,
+                Timer,
+                ToolStripMenuItem,
+            )
         except Exception:
             log.warning("Tray unavailable; window close will exit normally.", exc_info=True)
             return False
