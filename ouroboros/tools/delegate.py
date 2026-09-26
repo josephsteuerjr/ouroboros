@@ -6,10 +6,12 @@ API tokens it starts a Claudexor run, watches it, and brings the result home. Be
 the nanny IS the host, verification receipts stay host-authored and the harness's
 output is a claim, not proof.
 
-Four verbs: ``delegate_start``, a time-bounded ``delegate_wait``,
-``delegate_cancel``, and ``delegate_answer`` (a run's pending interactive question is
-answered by its own nanny — owner decision 7=A, poltergeist phase B). There is still
-no ``hurry`` — Claudexor's only control verb is ``cancel``, and cancelling a reviewer
+Five verbs: ``delegate_start``, a time-bounded ``delegate_wait``,
+``delegate_cancel``, ``delegate_answer`` (a run's pending interactive question is
+answered by its own nanny — owner decision 7=A, poltergeist phase B) and
+``delegate_message`` (a live message into the run's running turn, gated by the
+route's declared ``liveInput`` capability, never by a harness name). There is still
+no ``hurry`` — Claudexor's control verb is ``cancel``, and cancelling a reviewer
 destroys the verdict you wanted.
 
 Read-only and mutating children share ONE nanny and ONE transport. The only difference
@@ -95,6 +97,7 @@ from ouroboros.delegate_interactions import (  # noqa: F401
     _answer_delivery_unknown,
     _bounded_interactions,
     _delegate_answer,
+    _delegate_message,
     _interactions_are_news,
     _normalized_answers,
     _waiting_on_user_payload,
@@ -1293,7 +1296,7 @@ def _delegate_cancel(ctx: ToolContext, run_id: str, reason: str = "") -> ToolRes
 
 
 def _published_entry(core: Any) -> Any:
-    """The family's four REGISTERED entries, wrapped in their one string boundary.
+    """The family's five REGISTERED entries, wrapped in their one string boundary.
 
     Inside the family a result is a native ``ToolResult``; the handler ABI is
     still ``str``. Publication happens HERE, after every decorator the core ran
@@ -1444,7 +1447,8 @@ def get_tools() -> List[ToolEntry]:
                 "continuation=new_physical_run. A "
                 "large terminal result is delivered as a bounded preview plus an "
                 "artifact: read output_delivery and finish reading the artifact before "
-                "you rely on it."
+                "you rely on it. A delegate_message receipt is reconciled HERE: the "
+                "timeline's message.* rows carry messageId and outcome."
             ),
             "parameters": {"type": "object", "required": ["run_id"], "properties": {
                 "run_id": {"type": "string", "description": "Run id from delegate_start."},
@@ -1491,8 +1495,8 @@ def get_tools() -> List[ToolEntry]:
                 "— the answer did NOT land; retry the SAME answers after reset_at); "
                 "delivery_unknown "
                 "(transport died mid-answer — re-check with delegate_wait and NEVER "
-                "post a different answer for the same interaction). Codex-lane runs "
-                "have no mid-run questions: a run that ENDS needing input "
+                "post a different answer for the same interaction). A run on a route "
+                "without a mid-run question channel that ENDS needing input "
                 "(outcome_facts.reason=input_required) is answered with a plain NEW "
                 "delegate_start(subagent_id=..., prompt=...) whose prompt carries the "
                 "assignment plus the answers "
@@ -1523,6 +1527,40 @@ def get_tools() -> List[ToolEntry]:
                     "before delivering it."},
             }},
         }, _published_entry(_delegate_answer), timeout_sec=120),
+        ToolEntry("delegate_message", {
+            "name": "delegate_message",
+            "description": (
+                "Place one live message into a delegated run's RUNNING turn (a "
+                "correction, a new fact, a redirection) without cancelling it. Only the "
+                "task that started the run may send. Capability-gated, never by harness "
+                "name: the route's catalog row declares liveInput (mid_turn / "
+                "next_tool_boundary / none) and the engine must list the operation; "
+                "otherwise the typed outcome is unsupported and nothing is sent. Typed "
+                "outcomes mirror the engine: delivered (the harness consumed it in the "
+                "live turn; obedience unproved); accepted (the acceptance boundary was "
+                "observed; consumption unproved until a message.delivered timeline row); "
+                "rejected (an explicit refusal of THIS submission — see reason); "
+                "not_active (no live target: terminal/settled run, turn gap, attempt "
+                "mismatch, or a PENDING question — answer that with delegate_answer); "
+                "unsupported; delivery_unknown (it MAY have landed); not_found. Every "
+                "result returns message_id, the delivery identity: pass it back ONLY to "
+                "retry the SAME text after delivery_unknown (the engine replays the "
+                "stored receipt instead of delivering twice); after any other outcome a "
+                "new message needs a NEW id (omit message_id). A message steers only the "
+                "current attempt — a later retry or continuation never re-injects it — and "
+                "is reconciled on the delegate_wait timeline (message.* rows)."
+            ),
+            "parameters": {"type": "object", "required": ["run_id", "text"], "properties": {
+                "run_id": {"type": "string", "description": "Run id from delegate_start."},
+                "text": {"type": "string", "description":
+                    "The message, verbatim, as the harness will read it mid-turn "
+                    "(non-empty; the engine bounds its length)."},
+                "message_id": {"type": "string", "description":
+                    "ONLY the message_id a previous delivery_unknown result returned, to "
+                    "replay that exact message under its original key. Omit for a new "
+                    "message; never invent one."},
+            }},
+        }, _published_entry(_delegate_message), timeout_sec=120),
     ]
 
 

@@ -68,7 +68,9 @@ def _bounded(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     for row in rows[-_TIMELINE_TAIL:]:
         item = {"type": _label(row.get("type")), "title": _label(row.get("title")),
                 "severity": _label(row.get("severity"))}
-        for key in ("attemptId", "harnessId"):
+        # ``messageId``/``outcome`` ride the engine's ``message.*`` rows: the
+        # receipts a recovered nanny reconciles a delegate_message against (A26).
+        for key in ("attemptId", "harnessId", "messageId", "outcome"):
             if isinstance(row.get(key), str) and row[key]:
                 item[key] = _label(row[key])
         if row.get("textKind") in _TEXT_KINDS and isinstance(row.get("detail"), str):

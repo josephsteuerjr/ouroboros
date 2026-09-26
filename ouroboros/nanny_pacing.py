@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Tuple
 
 DELEGATE_ACTIVITY_TOOLS = frozenset({
     "delegate_start", "delegate_wait", "delegate_cancel", "delegate_answer",
+    "delegate_message",
 })
 
 # Only genuine ACTS of delegation reset the burn baseline: starting a physical

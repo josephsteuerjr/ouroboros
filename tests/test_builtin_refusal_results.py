@@ -144,9 +144,9 @@ def test_existing_warning_and_review_policy_are_not_blanket_reclassified(text, c
 
 # --- the external-executor family (owner Q8A) --------------------------------
 #
-# `delegate_start`/`delegate_wait`/`delegate_cancel`/`delegate_answer` speak a
-# native `ToolResult` among themselves and project a `str` at their four
-# registered entries. The incident these pin: `_fail` used to render
+# `delegate_start`/`delegate_wait`/`delegate_cancel`/`delegate_answer`/
+# `delegate_message` speak a native `ToolResult` among themselves and project a
+# `str` at their five registered entries. The incident these pin: `_fail` used to render
 # `{"status": "refused", ...}` as a plain string, which the registry's legacy
 # adapter classified as OK — so a refused wait/cancel (daemon unreachable, run
 # not owned, containment fault, refused cancel) was recorded as a SUCCESSFUL
@@ -155,7 +155,7 @@ def test_existing_warning_and_review_policy_are_not_blanket_reclassified(text, c
 
 
 def _delegate_registry(tmp_path, monkeypatch, task_id="t-family"):
-    """A real registry, with the family's four entries registered as production does."""
+    """A real registry, with the family's five entries registered as production does."""
     from ouroboros.tools.registry import ToolRegistry
     import ouroboros.safety as safety
 
@@ -163,8 +163,8 @@ def _delegate_registry(tmp_path, monkeypatch, task_id="t-family"):
     registry = ToolRegistry(repo_dir=tmp_path, drive_root=tmp_path)
     registry._ctx.task_id = task_id
     registry._ctx.task_metadata = {"root_task_id": task_id, "parent_task_id": task_id}
-    assert {"delegate_start", "delegate_wait", "delegate_cancel", "delegate_answer"} <= set(
-        registry._entries)
+    assert {"delegate_start", "delegate_wait", "delegate_cancel", "delegate_answer",
+            "delegate_message"} <= set(registry._entries)
     return registry
 
 
@@ -177,6 +177,8 @@ _PRE_DAEMON_REFUSALS = [
     ("delegate_cancel", {"run_id": ""}, "missing_run_id", "TOOL_ARG_ERROR"),
     ("delegate_answer", {"run_id": "", "interaction_id": "i-1", "answers": [{"question_id": "q"}]},
      "missing_run_id", "TOOL_ARG_ERROR"),
+    ("delegate_message", {"run_id": "run-1", "text": "   "},
+     "message_text_required", "TOOL_ARG_ERROR"),
 ]
 
 
