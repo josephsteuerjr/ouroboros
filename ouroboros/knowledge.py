@@ -383,6 +383,15 @@ def nomination_write_form(entry: Mapping[str, Any]) -> dict[str, Any]:
     return {"content": content, "mode": "overwrite"}
 
 
+def _yaml_form(metadata: Mapping[str, Any]) -> str:
+    """Loaded frontmatter spelled exactly, for comparison without ``==``.
+
+    Legal YAML may alias a node inside itself (``custom: &loop [*loop]``); ``==``
+    walks that cycle until RecursionError, while the dump spells a shared node
+    once and aliases it. Sorted keys keep dict equality's order blindness."""
+    return yaml.safe_dump(metadata, allow_unicode=True, sort_keys=True)
+
+
 def _write_content(current: KnowledgeNote | None, content: str, mode: str,
                    old_str: str | None = None, edits: Any = None, summary: str | None = None) -> bytes:
     proposed = content.encode("utf-8")
@@ -491,12 +500,14 @@ def write_knowledge_note(
                                          "change_chars": 0, "removed_headings": []})
         updated = _note(address, raw)
         # A body edit keeps the preamble bytes; a revised summary may re-render
-        # them only if every other field keeps its value (``type`` defaults).
+        # them only if every other field keeps its value (``type`` defaults, in
+        # the merge's key order), compared by exact YAML spelling.
         if mode == "edit" and (updated.parse_error or (
                 bool(updated.source.frontmatter_span) != bool(current.source.frontmatter_span) or
                 updated.raw[:current.source.body_span.start_byte] !=
                 current.raw[:current.source.body_span.start_byte]) and (
-                summary is None or updated.metadata != {"type": "note", **current.metadata, "summary": summary})):
+                summary is None or _yaml_form(updated.metadata) != _yaml_form(
+                    {**current.metadata, "summary": summary, "type": current.metadata.get("type", "note")}))):
             return KnowledgeWriteResult(False, "invalid_note: edit cannot change frontmatter", current, revision)
         old_text = current.text if current else ""
         before = (Counter((heading.level, heading.title) for heading in current.source.headings)

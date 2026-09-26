@@ -197,6 +197,21 @@ def test_edit_accepts_recursive_yaml_alias_without_comparing_metadata_graphs(tmp
     assert history(target)[-1]["old_content"] == original.text
 
 
+def test_summary_revision_still_refuses_a_rerender_that_changes_a_recursive_field(tmp_path, monkeypatch):
+    target = address(tmp_path, "recursive")
+    target.path.parent.mkdir(parents=True)
+    target.path.write_bytes(b"---\ntype: note\ncustom: &loop [*loop]\n---\nOld.\n")
+    original = store.read_knowledge_note(target)
+    write_content = store._write_content
+    # A re-render that loses the alias is a changed field, not a revised summary.
+    monkeypatch.setattr(store, "_write_content", lambda *args: write_content(*args).replace(b"- *id001", b"- []"))
+    result = store.write_knowledge_note(target, "", mode="edit", summary="New view.", expected_revision=original.revision,
+                                        edits=[{"old_text": "Old.", "new_text": "New.", "basis": "This episode."}])
+    assert result.reason == "invalid_note: edit cannot change frontmatter"
+    assert target.path.read_bytes() == original.raw
+    assert not (target.shelf.parent / "knowledge_history.jsonl").exists()
+
+
 def test_large_removed_heading_delta_keeps_tool_receipt_and_full_history(tmp_path):
     ctx = ToolContext(repo_dir=tmp_path, drive_root=tmp_path, task_id="editor")
     target = address(tmp_path, "large-headings")

@@ -177,6 +177,44 @@ def test_every_nomination_keeps_one_positional_outcome_and_its_host_stamp(tmp_pa
         f"source:0:{i}" for i in range(len(entries) - 3)}
 
 
+def test_summary_revision_keeps_recursive_yaml_and_the_rest_of_its_batch(tmp_path):
+    target = _address(tmp_path, "recursive")
+    target.path.parent.mkdir(parents=True)
+    # Legal YAML may alias a node inside itself; re-rendering the preamble for a
+    # revised summary must keep that graph and every later nomination's outcome.
+    target.path.write_bytes(b"---\ntype: note\nsummary: Old view.\ncustom: &loop [*loop]\n---\nOld.\nKept.\n")
+    original = k.read_knowledge_note(target)
+    edit = [{"old_text": "Old.", "new_text": "New.", "basis": "This episode revised it."}]
+    entries = [{"topic": "recursive", "expected_revision": original.revision, "edits": edit, "summary": "New view."},
+               {"topic": "fresh-ambiguous", "content": "A new note.", "edits": edit},
+               {"topic": "fresh", "content": "A following note."}]
+    outcomes = c._write_knowledge_entries(target.shelf, entries, stamp={"writer": "consolidation"})
+    assert [row["reason"] for row in outcomes] == [
+        "saved", "ambiguous_nomination: content creates a new note; edits and summary change a read one", "saved"]
+    current = k.read_knowledge_note(target)
+    loop = current.metadata["custom"]
+    assert len(loop) == 1 and loop[0] is loop
+    assert (current.metadata["type"], current.metadata["summary"]) == ("note", "New view.")
+    assert current.text.endswith("---\nNew.\nKept.\n")
+    assert (target.shelf / "fresh.md").exists() and not (target.shelf / "fresh-ambiguous.md").exists()
+    rows = [json.loads(line) for line in (tmp_path / "memory" / "knowledge_history.jsonl").read_text().splitlines()]
+    assert [(row["topic"], row["mode"]) for row in rows] == [("recursive", "edit"), ("fresh", "overwrite")]
+    assert (rows[0]["old_content"], rows[0]["new_content"]) == (original.text, current.text)
+    assert (rows[0]["edits"], rows[0]["summary"], rows[0]["writer"]) == (edit, "New view.", "consolidation")
+    from ouroboros.memory_nomination_receipts import prepare, settle
+    meta = {}
+    settle(meta, prepare(meta, "source", [(None, entries)]), outcomes)
+    assert [row["id"] for row in meta["pending_knowledge_nominations"]] == ["source:0:1"]
+    # The same summary and a body-only edit keep the re-rendered preamble bytes.
+    for extra, old, new in (({"summary": "New view."}, "New.", "Newer."), ({}, "Kept.", "Still kept.")):
+        before = k.read_knowledge_note(target)
+        again = c._write_knowledge_entries(target.shelf, [{"topic": "recursive", "expected_revision": before.revision,
+            "edits": [{"old_text": old, "new_text": new, "basis": "Same episode."}], **extra}])
+        assert again[0]["reason"] == "saved"
+        assert k.read_knowledge_note(target).raw == before.raw.replace(old.encode(), new.encode())
+    assert k.read_knowledge_note(target).raw.startswith(current.raw[:current.source.body_span.start_byte])
+
+
 def _scratchpad(root):
     memory = Memory(root, root)
     memory.mutate_scratchpad_blocks(lambda _: [
