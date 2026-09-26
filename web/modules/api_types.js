@@ -302,6 +302,7 @@
  * @property {"user"|"assistant"|"system"} role
  * @property {string} content
  * @property {string} ts
+ * @property {boolean=} ingress_accepted Canonical inbound row saved; not proof of task start or model delivery.
  * @property {boolean=} markdown
  * @property {boolean=} is_progress
  * @property {string=} task_id

@@ -98,7 +98,13 @@ CHAPTER_BYTE_BUDGETS: dict[str, int] = {
     # projection write per turn (the unbounded drain and per-event write they replace had
     # no sentence of their own), and the projection paragraph states the writer's slim read,
     # its retry interval and the crossing rule of the OpenRouter check.
-    "docs/architecture/05-supervisor-loop.md": 32400,
+    # 32400 -> 33600 (TZ-1 batch ingress, measured 33531): the bridge-intake paragraph is a
+    # mechanism the chapter had no text for — the bounded batch drain with per-message
+    # transport rebinding, the record-bounded canonical-row-before-echo web acceptance and
+    # its queue witness, the memory-only hand-back of the unprocessed tail on a crash or
+    # /restart, and /panic's refusal to hand anything back; the base sat 1 byte under the
+    # previous budget.
+    "docs/architecture/05-supervisor-loop.md": 33600,
     # 286850 -> 287600: "an answer that has not arrived is a gap" is a new invariant of
     # plan review and task acceptance (the slot census vocabulary, the `awaiting`
     # projection, the only-awaited task outcome); the in-flight sentence it grew from is
@@ -171,7 +177,11 @@ CHAPTER_BYTE_BUDGETS: dict[str, int] = {
     # its `era_retry` record keyed to the executed Light binding, the four typed memory-maintenance
     # events and the host stamp on `source_capture` history rows are mechanisms no older text
     # described; the sentences they extend were rewritten in place, not appended to.
-    "docs/architecture/06-agent-core.md": 314900,
+    # 314900 -> 315600 (TZ-1 cluster E, measured 315566 on the merged tree): the Tool API paragraph
+    # gains the bounded edit-miss locator the three exact editors share, and the roots paragraph
+    # states the read⇒list,search / write⇒edit closure of the operation matrix; neither mechanism
+    # had older text to displace, and neither duplicates the TZ-3 memory prose above.
+    "docs/architecture/06-agent-core.md": 315600,
     # 36991 -> 37300: the facade paragraph names the three loop constants runtime_limits.py
     # gained (events batch bound, budget-projection retry interval); no older text to displace.
     # 37300 -> 38400 (PR #1207): the Z.ai (`zai::`) direct provider gets its own route
