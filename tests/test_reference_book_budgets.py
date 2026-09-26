@@ -35,7 +35,10 @@ CHAPTER_BYTE_BUDGETS: dict[str, int] = {
     # 7 bytes on the official line); re-based here, no text of this chapter was touched.
     # 165550 -> 165900 (PR #1300): the net_transport row and the data-layout row for the merged
     # extra-CA bundle; the base sat 174 bytes under the previous budget.
-    "docs/architecture/01-high-level-architecture.md": 165900,
+    # 165900 -> 166200 (delegate_message, measured 165937): the
+    # delegate_interactions.py and tools/delegate.py rows name the fifth nanny verb; the
+    # touched row descriptions were rewritten in place, and the base sat 110 bytes under.
+    "docs/architecture/01-high-level-architecture.md": 166200,
     # 15517 -> 16200 (#1195): the session-custodied startup historical audit is a
     # new node of the startup flow (readiness no longer waits for the historical
     # seal diagnostic); the chapter had no older description of that pass to replace.
@@ -171,7 +174,13 @@ CHAPTER_BYTE_BUDGETS: dict[str, int] = {
     # its `era_retry` record keyed to the executed Light binding, the four typed memory-maintenance
     # events and the host stamp on `source_capture` history rows are mechanisms no older text
     # described; the sentences they extend were rewritten in place, not appended to.
-    "docs/architecture/06-agent-core.md": 314900,
+    # 314900 -> 316800 (delegate_message, measured 316657): the live-message
+    # verb's capability gate, its engine-mirrored outcomes with the host's `not_found`,
+    # the `message_id` idempotency custody and the attempt-local lifetime are a
+    # mechanism the chapter had no text for; the "Four nanny verbs" sentence and the
+    # harness-named "codex lane has no mid-run channel" clause were REPLACED, not
+    # appended to, and the base sat 50 bytes under the previous budget.
+    "docs/architecture/06-agent-core.md": 316800,
     # 36991 -> 37300: the facade paragraph names the three loop constants runtime_limits.py
     # gained (events batch bound, budget-projection retry interval); no older text to displace.
     # 37300 -> 38400 (PR #1207): the Z.ai (`zai::`) direct provider gets its own route
@@ -274,7 +283,10 @@ CHAPTER_BYTE_BUDGETS: dict[str, int] = {
     # bullet states the declare-in-builder / project-in-transport rule, the per-family
     # OpenRouter session and the two enforcing tests; the notice bullet gains the second
     # meaning of the `[SYSTEM NOTICE]` marker. The derived-identity sentence is replaced.
-    "docs/development/06-rules-by-change-class.md": 96700,
+    # 96700 -> 97200 (delegate_message, measured 97035): one
+    # delegated-lane bullet for the live-message verb (capability gate, mirrored outcomes,
+    # message_id custody, no retry loop); the base sat 104 bytes under the previous budget.
+    "docs/development/06-rules-by-change-class.md": 97200,
     "docs/development/07-managed-update-rule.md": 4166,
     "docs/development/08-mutation-attribution-rule.md": 2899,
     "docs/development/09-process-custody-rule.md": 10028,

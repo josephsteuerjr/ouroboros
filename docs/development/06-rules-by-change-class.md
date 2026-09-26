@@ -266,6 +266,12 @@ and 23 (`delegated_transport`), both critical. The imperatives:
   never mint task authority. Do not parse assignment prose to choose a profile
   or repeat competing native access instructions; preserve owner constraints
   in the complete work order.
+- A live message into a running run (`delegate_message`) is gated by the
+  engine's operation catalog and the route row's declared `liveInput`, never
+  by a harness name; outcomes mirror the engine's typed enum plus the host's
+  `not_found`; the host-minted `message_id` is the wire Idempotency-Key and is
+  reused ONLY after `delivery_unknown`. No retry loop, no stall detector, no
+  custody row (ARCHITECTURE §6 "Delegated subagents").
 - `subagents.route_health` is the ONE route reader for every consumer, and
   quota readers project one `ClaudexorGateway.quota_state()` envelope
   (`tests/test_available_subagents_runtime.py`): a fully-used ratio without a
