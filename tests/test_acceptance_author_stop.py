@@ -374,3 +374,84 @@ def test_a_stop_recorded_under_exhausted_rounds_keeps_its_cause_and_its_rational
         "review": {"status": "skipped", "acceptance_decision": structured}}}
     assert _completion_verdict(record, {}) == (
         TASK_CAUSE_PHRASES["review_cycles_exhausted"][:-1] + " · Not ready: the export endpoint still fails.")
+
+
+@pytest.mark.parametrize("earlier_panel", [True, False])
+def test_evidence_changing_after_an_honoured_stop_neither_reopens_nor_replaces_it(tmp_path, monkeypatch, earlier_panel):
+    """(f) Evidence that changes only AFTER the stop was honoured (a service seen stopped
+    at the post-acceptance evidence read) used to supersede the stop like a reviewed
+    boundary: the reviewed latch reset, a panel was bought and its host exit replaced
+    the stop. A stop binds no evidence: Main restates, no panel runs, and the row reads
+    the stop's cause, rationale and red objective."""
+    import ouroboros.loop as loop
+    from ouroboros.outcomes import derive_loop_outcome
+    from ouroboros.project_dialogue import _completion_verdict
+
+    real_project, late = loop._project_child_result_dispositions, []
+
+    def project(limit_ctx, llm_trace):
+        if (llm_trace.get("acceptance_decision") or {}).get("reason") == "author_stop" and not late:
+            late.append(True)
+            llm_trace.setdefault("verification_events", []).append({"kind": "services_stopped", "services": [
+                {"service_id": "late", "name": "late", "lifecycle": "stopped"}]})
+        return real_project(limit_ctx, llm_trace)
+
+    monkeypatch.setattr(loop, "_project_child_result_dispositions", project)
+    first = ["The export endpoint ships."] if earlier_panel else []
+    keep = json.dumps({"delivery_control": "keep"})
+    run = _run_stop_loop(tmp_path, monkeypatch, [*first, _stop_tool_call(),
+                                                 *[step for _ in range(4) for step in (keep, STOP_TEXT)]],
+                         stop_services=False)
+    assert late and run.panels == first, "evidence after a stop must never buy a panel"
+    decision = run.trace["acceptance_decision"]
+    assert decision["reason"] == "author_stop" and decision["author_disposition"]["rationale"] == STOP_RATIONALE
+    assert run.result == STOP_TEXT
+    axes = derive_loop_outcome(run.result, run.usage, run.trace)["outcome_axes"]
+    assert axes["objective"]["status"] == "fail" and axes["objective"]["reason"] == "author_stop"
+    verdict = _completion_verdict({"status": "completed", "reason_code": "final_message", "outcome_axes": axes}, {})
+    assert verdict.startswith("Ouroboros stopped with unfinished work") and STOP_RATIONALE.rstrip(".") in verdict
+
+
+def test_owner_input_consumes_the_stop_so_a_later_exhausted_exit_is_not_read_as_one(tmp_path, monkeypatch):
+    """(g) An explicit stop under exhausted rounds keeps its TRUE cause, its act and its
+    rationale. New owner input supersedes it; the later host exit for the same exhausted
+    rounds is the host's own, so it must not inherit the stop's act and re-read as the
+    author stopping (formerly its row repeated the stale stop rationale). The historical
+    stance stays on the record. The wallet is substituted with the panel: the substituted
+    panel records no paid claim."""
+    import ouroboros.loop as loop_mod
+    import ouroboros.task_results as task_results
+    from ouroboros.acceptance_settlement import expose_acceptance_feedback
+    from ouroboros.loop_acceptance import merge_agent_acceptance_stance
+    from ouroboros.outcomes import derive_loop_outcome
+    from ouroboros.project_dialogue import _completion_verdict
+    from ouroboros.review_records import recorded_author_stop
+
+    fx = _finality_pass(tmp_path, monkeypatch)
+    assert fx.run("initial answer") is True
+    expose_acceptance_feedback(fx.trace, fx.messages, "author-root")
+    monkeypatch.setattr(task_results, "project_task_acceptance_review_capacity", lambda *_a, **_k: {
+        "state": "unavailable", "reason": "review_cycles_exhausted", "claimed_cycles": 1, "cap_cycles": 1})
+
+    def row():
+        axes = derive_loop_outcome("answer", {}, fx.trace)["outcome_axes"]
+        assert axes["objective"]["reason"] == "review_cycles_exhausted"
+        return _completion_verdict({"status": "completed", "reason_code": "final_message", "outcome_axes": axes}, {})
+
+    fx.trace["tool_calls"].append({"tool": "task_acceptance_review", "args": {}})
+    merge_agent_acceptance_stance(fx.trace, {"explicit_finish": True, "author_action": "stop",
+                                             "rationale": STOP_RATIONALE}, fx.ctx)
+    assert fx.run(STOP_TEXT) is False
+    stop = fx.trace["acceptance_decision"]
+    assert (stop["reason"], stop["author_action"], stop["author_disposition"]["action"]) == (
+        "review_cycles_exhausted", "stop", "stop")
+    assert recorded_author_stop(stop) and STOP_RATIONALE.rstrip(".") in row()
+
+    loop_mod._supersede_task_acceptance_for_owner_followup(fx.ctx, fx.trace)
+    assert "author_action" not in fx.trace["acceptance_decision"]
+    assert fx.run("The answer to the owner's follow-up.") is False
+    later = fx.trace["acceptance_decision"]
+    assert later["reason"] == "review_cycles_exhausted" and "author_action" not in later
+    assert later["agent_rationale"] == STOP_RATIONALE  # history kept, never the act
+    assert not recorded_author_stop(later) and STOP_RATIONALE.rstrip(".") not in row()
+    assert fx.calls == ["initial answer"]

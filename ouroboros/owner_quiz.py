@@ -430,12 +430,14 @@ def late_answer_model_text(drive_root: Any, late_answer: Any, owner_text: str) -
     """The model-facing delivery of a LATE quiz answer (owner message ``owner_text``).
 
     The owner's chat row carries only their own words; the receiving model
-    needs the card they answered. The frame is rebuilt from the stored block on
-    the canonical ``drive_root`` (the same projection the ingress recorded).
-    When that block cannot be read (evicted, unanswered, or unreadable), the
-    owner's words are delivered with one host line saying so — disclosed, never
-    a silent loss of the card's context. A message with no valid ``late_answer``
-    provenance is returned unchanged."""
+    needs the card they answered. Its first line names the asking task, which
+    had finished (a late answer is only accepted after it did; TZ-2 B3); the
+    frame is rebuilt from the stored block on the canonical ``drive_root`` (the
+    same projection the ingress recorded). When that block cannot be read
+    (evicted, unanswered, or unreadable), the owner's words are delivered with
+    one host line saying so — disclosed, never a silent loss of the card's
+    context. A message with no valid ``late_answer`` provenance is returned
+    unchanged."""
     ref = late_answer_ref(late_answer)
     if ref is None:
         return owner_text
@@ -444,11 +446,11 @@ def late_answer_model_text(drive_root: Any, late_answer: Any, owner_text: str) -
         block = quiz_states(drive_root, ref["task_id"]).get(ref["quiz_id"]) or {}
     except Exception:
         block = {}
+    head = f"[Late answer to a question asked by task {ref['task_id']}, which had finished]\n"
     if isinstance(block, dict) and str(block.get("state") or "") == STATE_ANSWERED:
-        return recorded_answer_frame(block)
+        return head + recorded_answer_frame(block)
     return (
-        f"{owner_text}\n"
-        f"[Host note] This owner message answers quiz {ref['quiz_id']} of task "
-        f"{ref['task_id']}; that card could not be read, so only the owner's own "
-        "words are shown."
+        f"{head}{owner_text}\n"
+        f"[Host note] This owner message answers quiz {ref['quiz_id']}; that card "
+        "could not be read, so only the owner's own words are shown."
     )

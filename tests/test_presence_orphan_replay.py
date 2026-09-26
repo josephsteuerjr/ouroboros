@@ -797,8 +797,12 @@ def test_an_unwritable_inbound_row_fails_the_turn_before_the_model_runs(tmp_path
     assert load_task_result(tmp_path, _task_id(_admission(), kwargs["event"])) is None  # no lost attempt to inherit
     monkeypatch.setattr(presence_runner, "append_jsonl", real_append)
     first = run_presence_turn(**kwargs)
-    rows = [json.loads(line) for line in (tmp_path / "logs" / "chat.jsonl").read_text(encoding="utf-8").splitlines()]
-    assert first.text == "Real answer" and [r["direction"] for r in rows if r.get("task_id") == first.task_id] == ["in"]
+    rows = [r for r in _chat_rows(tmp_path) if r.get("task_id") == first.task_id]
+    # The retry logged the inbound row once and spoke nothing itself; the root's free host-facts
+    # row (a system row with empty text) is bookkeeping in the room's history, not speech.
+    facts = [r for r in rows if r.get("summary_kind") == "host_task_facts"]
+    assert first.text == "Real answer" and [r["direction"] for r in rows if r not in facts] == ["in"]
+    assert rows[0]["source"] == "presence:telegram" and all(r["direction"] == "system" and r["text"] == "" for r in facts)
 
 
 def _sending_agent(calls, reply, drive_root, *, part, rotate_first=False):

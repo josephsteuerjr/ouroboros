@@ -24,6 +24,9 @@ from ouroboros.owner_quiz import (
 )
 from tests.test_quiz_answer import _decision_app, _post
 
+# TZ-2 B3: the model-facing first line of every late answer (never the owner's row).
+LATE_HEAD = "[Late answer to a question asked by task {}, which had finished]"
+
 
 def _late_bridge(tmp_path, monkeypatch):
     """A real bridge for the late-answer path: named ingress plus the WS echo."""
@@ -361,13 +364,13 @@ def test_the_drained_late_answer_gives_the_model_the_rebuilt_frame_while_the_row
     _drain_incoming_messages(messages, queue_mod.Queue(), tmp_path, "live-root", None, set(),
                              owner_ctx=ctx)
     delivered = str(messages[-1]["content"])
-    assert "[Owner quiz answer] quiz q1" in delivered
+    assert f"{LATE_HEAD.format('task-1')}\n[Owner quiz answer] quiz q1" in delivered
     assert f"asked {block['asked_at']}" in delivered and f"answered {block['answered_at']}" in delivered
     assert "Question was: Which db for the pilot?" in delivered
     assert ("The owner answered in their own words without choosing an offered option. "
             "Verbatim: neither -- use duckdb") in delivered
     [directive] = [row for row in ctx._owner_directives if row["source"] == "owner_mailbox"]
-    assert "[Owner quiz answer] quiz q1" in directive["content"]
+    assert directive["content"].startswith(LATE_HEAD.format("task-1") + "\n[Owner quiz answer] quiz q1")
     assert "Verbatim: neither -- use duckdb" in directive["content"]
     # The steer relay's delivery fact stays the owner's own message.
     assert ctx.last_owner_delivery["text"] == "neither -- use duckdb"
@@ -410,8 +413,8 @@ def test_an_unreadable_card_is_disclosed_with_the_owners_words(tmp_path):
     _drain_incoming_messages(messages, queue_mod.Queue(), tmp_path, "live-root", None, set(),
                              owner_ctx=ctx)
     delivered = str(messages[-1]["content"])
-    assert "2. postgres" in delivered
-    assert "answers quiz q9 of task task-gone; that card could not be read" in delivered
+    assert f"{LATE_HEAD.format('task-gone')}\n2. postgres\n" in delivered
+    assert "answers quiz q9; that card could not be read" in delivered
     assert "[Owner quiz answer]" not in delivered
 
 
@@ -442,7 +445,8 @@ def test_a_late_answer_direct_turn_starts_with_the_rebuilt_frame(tmp_path, monke
         "late_answer": {"task_id": "task-1", "quiz_id": "q1"},
     })
     content = str(build_user_content(agent.task))
-    assert "[Owner quiz answer] quiz q1" in content
+    assert agent.task["text"].startswith(LATE_HEAD.format("task-1") + "\n[Owner quiz answer] quiz q1")
+    assert LATE_HEAD.format("task-1") in content
     assert f"answered {block['answered_at']}" in content
     assert "The owner chose option 2: postgres" in content
     assert "Owner comment (verbatim): prod parity" in content
