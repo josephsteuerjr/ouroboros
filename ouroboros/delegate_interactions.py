@@ -22,7 +22,7 @@ import json
 import logging
 import time
 import uuid
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Callable, Any, Dict, List, Optional, Tuple
 
 from ouroboros.delegate_output import _PAYLOAD_ENVELOPE_HEADROOM, _stage_full_output
 from ouroboros.delegate_shared import (
@@ -664,7 +664,8 @@ def _delegate_answer(
 _MESSAGE_NOTES = {
     "delivered": "The harness CONSUMED this message inside the live turn (a correlated "
                  "native echo); obedience is unproved. Keep watching with delegate_wait "
-                 "(the timeline's message.* rows carry messageId and outcome). This "
+                 "(timeline rows carrying this messageId — message.* receipts and the harness "
+                 "status row — carry messageId and outcome). This "
                  "message_id is spent: a further message needs a NEW one (omit message_id).",
     "accepted": "The harness's acceptance boundary was observed; CONSUMPTION is unproved "
                 "until a timeline row with this message_id reads outcome=delivered (Codex "
@@ -683,13 +684,22 @@ _MESSAGE_NOTES = {
                    "Steer by cancel + a new delegate_start, or wait for the terminal.",
     "delivery_unknown": "The message MAY have landed (transport loss, timeout, malformed "
                         "reply, receipt-save failure). Do NOT send a different message. "
-                        "Re-check the timeline with delegate_wait (message.* rows carry "
-                        "messageId and outcome); to retry, call delegate_message again "
+                        "Re-check the timeline with delegate_wait (rows carrying this messageId "
+                        "carry its outcome); to retry, call delegate_message again "
                         "with the SAME message_id and the SAME text — the engine replays "
                         "the stored receipt instead of delivering twice.",
     "not_found": "The daemon answered 404 for this run after advertising the operation "
                  "and the route's live-input capability: the run is unknown to it. "
                  "Custody is untouched; re-read the run with delegate_wait first.",
+}
+
+# A reason that overrides the outcome note: a FAILED capability read is not a
+# missing channel, so the note must not prescribe cancel + restart.
+_MESSAGE_REASON_NOTES = {
+    "capability_read_failed": "The route's live-input capability could not be READ (daemon "
+                              "or catalog error), so nothing was sent and the channel is "
+                              "unknown, not absent. Keep the run; re-check with delegate_wait "
+                              "and send again later with a NEW message_id.",
 }
 
 # The 4xx problem bodies that are a PAYLOAD verdict about these message bytes
@@ -707,20 +717,26 @@ _MESSAGE_PAYLOAD_VERDICT_CODES = frozenset({400, 413, 422})
 _MESSAGE_DEADLINE_SEC = 100.0
 
 
-def _live_input_unsupported(gateway: Any, route_id: str) -> Tuple[str, str, str]:
+def _live_input_unsupported(gateway: Any, route_id: str,
+                            left: Callable[[], float]) -> Tuple[str, str, str]:
     """``(reason, detail, live_input)`` — reason empty when the route CAN take a
     live message. Discovery is structural (A18): the engine's own route catalog
     must list the operation AND the route's catalog row must declare a
     ``liveInput`` other than ``none``; a read that fails is ``unsupported`` too
     (no POST on a guess), never a refusal that spends a model round."""
+    from ouroboros.delegate_progress import poll_bound
     from ouroboros.gateways.claudexor import RUN_MESSAGE_OPERATION, run_message_supported
 
     try:
-        if not run_message_supported(gateway.operations()):
+        if left() <= 0:
+            return ("deadline_exhausted", "budget spent before the operations read", "unknown")
+        if not run_message_supported(gateway.operations(timeout_sec=poll_bound(left()))):
             return ("engine_lacks_operation",
                     f"the engine's /v2/operations catalog does not list "
                     f"{' '.join(RUN_MESSAGE_OPERATION)}", "")
-        catalog = gateway.agent_capabilities()
+        if left() <= 0:
+            return ("deadline_exhausted", "budget spent before the capability read", "unknown")
+        catalog = gateway.agent_capabilities(timeout_sec=poll_bound(left()))
         row = next((item for item in (catalog.get("harnesses") or [])
                     if isinstance(item, dict) and str(item.get("id") or "") == route_id), None)
     except Exception as exc:  # noqa: BLE001 — a failed read is "unknown", answered typed
@@ -776,7 +792,8 @@ def _message_result(ctx: ToolContext, facts: Dict[str, Any], *, outcome: str,
         "harness_id": str(engine.get("harness_id") or "") or None,
         "live_input": str(engine.get("live_input") or "") or None,
         "native_turn_id": str(engine.get("native_turn_id") or "") or None,
-        "detail": detail, "note": _MESSAGE_NOTES.get(outcome, ""),
+        "detail": detail,
+        "note": _MESSAGE_REASON_NOTES.get(reason) or _MESSAGE_NOTES.get(outcome, ""),
     }
     if host_code:
         payload.update({"ok": False, "host_code": host_code})
@@ -834,16 +851,18 @@ def _delegate_message(ctx: ToolContext, run_id: str, text: Any,
     def _left() -> float:
         return deadline - time.monotonic()
 
+    gateway = ClaudexorGateway()
     try:
-        gateway = ClaudexorGateway()
         gateway.handshake(timeout_sec=poll_bound(min(_left(), _ANSWER_HANDSHAKE_MAX_SEC)))
     except ClaudexorUnavailable as exc:
+        gateway.close()
         return _fail("delegate_message", exc.code, str(exc), run_id=rid, message_id=mid)
     try:
         live_input = ""
         if not replay:
-            reason, detail, live_input = _live_input_unsupported(gateway, str(entry.route_id or ""))
-            if reason:
+            reason, detail, live_input = _live_input_unsupported(
+                gateway, str(entry.route_id or ""), _left)
+            if reason and reason != "deadline_exhausted":
                 return _message_result(ctx, facts, outcome="unsupported", reason=reason,
                                        host_code=SUBSTRATE_REFUSAL_CODE, detail=detail,
                                        live_input=live_input)

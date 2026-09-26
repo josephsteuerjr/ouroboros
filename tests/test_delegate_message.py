@@ -77,13 +77,13 @@ class _Stub:
     def handshake(self, **_kw):
         return {}
 
-    def operations(self):
+    def operations(self, **_kw):
         self.reads.append("operations")
         if self.capability_error is not None:
             raise self.capability_error
         return list(self.operations_rows)
 
-    def agent_capabilities(self):
+    def agent_capabilities(self, **_kw):
         self.reads.append("agent_capabilities")
         return {"harnesses": list(self.harnesses)}
 
@@ -290,7 +290,12 @@ def test_an_incapable_route_is_unsupported_without_a_post(tmp_path, monkeypatch,
     assert payload["live_input"] == live_input
     assert out.code == SUBSTRATE_REFUSAL_CODE and payload["ok"] is False
     assert stub.posts == []
-    assert "delegate_start" in payload["note"]
+    if reason == "capability_read_failed":
+        # A failed READ is not a missing channel: the note keeps the run and never
+        # prescribes cancel + restart.
+        assert "unknown, not absent" in payload["note"] and "cancel" not in payload["note"]
+    else:
+        assert "delegate_start" in payload["note"]
 
 
 def test_a_capable_route_reads_both_facts_then_posts_once(tmp_path, monkeypatch):

@@ -1216,7 +1216,7 @@ class ClaudexorGateway:
             raise ValueError(f"unknown setup job op: {op!r}")
         return body if isinstance(body, dict) else {}
 
-    def operations(self) -> List[Dict[str, Any]]:
+    def operations(self, *, timeout_sec: Optional[float] = None) -> List[Dict[str, Any]]:
         """GET /v2/operations — the engine's own implemented-route catalog.
 
         The handshake advertises this path (``operationsPath``); the catalog is
@@ -1224,7 +1224,7 @@ class ClaudexorGateway:
         on version folklore (verified live: ``{protocolMajor, operations:[{id,
         method, path, ...}]}``).
         """
-        body = self._request("GET", "/v2/operations")
+        body = self._request("GET", "/v2/operations", timeout_sec=timeout_sec)
         ops = body.get("operations") if isinstance(body, dict) else None
         return [row for row in (ops or []) if isinstance(row, dict)]
 

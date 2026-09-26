@@ -1442,8 +1442,9 @@ def get_tools() -> List[ToolEntry]:
                 "continuation=new_physical_run. A "
                 "large terminal result is delivered as a bounded preview plus an "
                 "artifact: read output_delivery and finish reading the artifact before "
-                "you rely on it. A delegate_message receipt is reconciled HERE: the "
-                "timeline's message.* rows carry messageId and outcome."
+                "you rely on it. A delegate_message receipt is reconciled HERE: timeline "
+                "rows carrying its messageId (message.* receipts and the harness status "
+                "row whose outcome reads delivered) carry messageId and outcome."
             ),
             "parameters": {"type": "object", "required": ["run_id"], "properties": {
                 "run_id": {"type": "string", "description": "Run id from delegate_start."},
