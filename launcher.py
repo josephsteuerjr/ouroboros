@@ -396,7 +396,7 @@ def start_agent(port: int = AGENT_SERVER_PORT) -> subprocess.Popen:
     env["OUROBOROS_APP_VERSION"] = str(APP_VERSION)
     env["OUROBOROS_MANAGED_BY_LAUNCHER"] = "1"
     env["OUROBOROS_MANAGED_REPO_DIR"] = str(REPO_DIR.resolve())
-    # Windows autostart discovery: env-only; re-stamped each restart.
+    # Windows autostart discovery: env-only; re-stamped per restart.
     if sys.platform == "win32" and getattr(sys, "frozen", False):
         env["OUROBOROS_LAUNCHER_EXE"] = str(pathlib.Path(sys.executable).resolve())
     # Owner Surface Fact: the launcher alone knows presentation; `_headless` is decided in main() before the
@@ -404,8 +404,9 @@ def start_agent(port: int = AGENT_SERVER_PORT) -> subprocess.Popen:
     # back through here, so the export is re-stamped fresh each time. Absence of
     # the var (source mode, Docker, Colab, CLI server) truthfully means "web".
     # Env-only by design — never a SETTINGS_DEFAULTS key (pop-on-absent would
-    # erase an injected value). Known bounded lie: a SIGKILLed launcher can orphan
-    # the server with a stale "desktop_window" until the next launcher reaps it.    env["OUROBOROS_PRESENTATION"] = (
+    # erase an injected value). Known bounded lie: a SIGKILLed launcher can
+    # orphan the server with a stale "desktop_window" until the next reaps it.
+    env["OUROBOROS_PRESENTATION"] = (
         str(os.environ.get("OUROBOROS_PRESENTATION") or "web")
         if _external_ui else "browser_fallback" if _headless else "desktop_window"
     )
