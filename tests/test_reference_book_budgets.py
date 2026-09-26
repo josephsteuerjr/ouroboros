@@ -174,13 +174,15 @@ CHAPTER_BYTE_BUDGETS: dict[str, int] = {
     # its `era_retry` record keyed to the executed Light binding, the four typed memory-maintenance
     # events and the host stamp on `source_capture` history rows are mechanisms no older text
     # described; the sentences they extend were rewritten in place, not appended to.
-    # 314900 -> 316800 (delegate_message, measured 316657): the live-message
-    # verb's capability gate, its engine-mirrored outcomes with the host's `not_found`,
-    # the `message_id` idempotency custody and the attempt-local lifetime are a
-    # mechanism the chapter had no text for; the "Four nanny verbs" sentence and the
-    # harness-named "codex lane has no mid-run channel" clause were REPLACED, not
-    # appended to, and the base sat 50 bytes under the previous budget.
-    "docs/architecture/06-agent-core.md": 316800,
+    # 314900 -> 318000 (PROVISIONAL, re-measured on the merged tree below): delegate_message
+    # (the live-message verb's capability gate, engine-mirrored outcomes with the host's
+    # `not_found`, `message_id` idempotency custody, attempt-local lifetime; the "Four nanny
+    # verbs" sentence and the harness-named "codex lane has no mid-run channel" clause were
+    # REPLACED), reclaim low-water (the context-fit paragraph's "deficit-sized" pass becomes
+    # "deficit-triggered, low-water-sized" with the binding boundary, the structural divisor,
+    # the checkpoint's requested-margin/achieved-headroom facts and the overflow minimum),
+    # and the supervision/waiting sentences of the same sprint.
+    "docs/architecture/06-agent-core.md": 318000,
     # 36991 -> 37300: the facade paragraph names the three loop constants runtime_limits.py
     # gained (events batch bound, budget-projection retry interval); no older text to displace.
     # 37300 -> 38400 (PR #1207): the Z.ai (`zai::`) direct provider gets its own route
@@ -264,7 +266,12 @@ CHAPTER_BYTE_BUDGETS: dict[str, int] = {
     # 23400 -> 23500: the long-work continuity merge landed the chapter at 23471 on the
     # official line; re-based here, no text of this chapter was touched.
     "docs/development/03-module-size-and-complexity.md": 23500,
-    "docs/development/04-core-governance-artifacts.md": 16431,
+    # 16431 -> 17000 (reclaim low-water, measured 16930): the "Compaction must earn its
+    # rewrite" invariant states the trigger (positive deficit against the binding boundary),
+    # the low-water sizing with its SSOT constant and pin, and the requested-versus-achieved
+    # separation; the older "deficit-driven" clause was replaced, not appended to, and the
+    # chapter sat 2 bytes under the previous budget.
+    "docs/development/04-core-governance-artifacts.md": 17000,
     "docs/development/05-review-and-commit-protocol.md": 12956,
     # 94197 -> 94520: the usage-ledger lock rule gains its reader contract (a display read
     # on the supervisor loop or a gateway thread rides the last validated snapshot; money
