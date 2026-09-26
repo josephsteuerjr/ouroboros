@@ -186,9 +186,9 @@ class ChatOutbound(TypedDict):
     executor_observation: NotRequired[Dict[str, Any]]
     # The completion-seam EVIDENCE the route decision is reconciled against (subagents.envelope_from_task):
     # delegated runs started/settled/succeeded, terminal failure states, disclosed subscription spend (+estimated
-    # flag), engine-reported models, the additive `nanny_nudge_recorded` flag (a non-empty finalization nudge
-    # was durably stamped), and the additive `delegate_start_attempted` flag (any durable delegate_start
-    # attempt, refused or started). Terminal frames only; absence means "no evidence yet", never "ran natively".
+    # flag), engine-reported models, `nanny_nudge_recorded` (a finalization nudge was durably
+    # stamped), `delegate_start_attempted` (any durable delegate_start attempt, refused or started).
+    # Terminal frames only; absence means "no evidence yet", never "ran natively".
     execution_evidence: NotRequired[Dict[str, Any]]
     # The FACT beside the executor_route plan, from the same custody evidence:
     # "harness_used" | "harness_attempted" | "native_only". Terminal frames only; absent =
