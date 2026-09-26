@@ -78,6 +78,7 @@ def collect_routes(
         api_onboarding_subagents_preview,
     )
     from ouroboros.gateway.settings import api_reviewer_slots
+    from ouroboros.gateway.autostart import api_owner_autostart_get, api_owner_autostart_post
     from ouroboros.gateway.mcp import api_mcp_refresh, api_mcp_status, api_mcp_test
     from ouroboros.gateway.models import (
         api_local_model_install_runtime,
@@ -188,11 +189,7 @@ def collect_routes(
         Route("/api/marketplace/clawhub/uninstall/{name}", endpoint=api_marketplace_uninstall, methods=["POST"]),
         Route("/api/marketplace/ouroboroshub/catalog", endpoint=api_ouroboroshub_catalog, methods=["GET"]),
         Route("/api/marketplace/ouroboroshub/installed", endpoint=api_ouroboroshub_installed, methods=["GET"]),
-        Route(
-            "/api/marketplace/ouroboroshub/preview/{slug:path}",
-            endpoint=api_ouroboroshub_preview,
-            methods=["GET"],
-        ),
+        Route("/api/marketplace/ouroboroshub/preview/{slug:path}", endpoint=api_ouroboroshub_preview, methods=["GET"]),
         Route("/api/marketplace/ouroboroshub/install", endpoint=api_ouroboroshub_install, methods=["POST"]),
         Route("/api/marketplace/ouroboroshub/update/{name}", endpoint=api_ouroboroshub_update, methods=["POST"]),
         Route("/api/marketplace/ouroboroshub/publication/{name}/clear", endpoint=api_ouroboroshub_clear_publication, methods=["POST"]),
@@ -223,6 +220,8 @@ def collect_routes(
         Route("/api/ui/preferences", endpoint=api_ui_preferences_get, methods=["GET"]),
         Route("/api/ui/preferences", endpoint=api_ui_preferences_post, methods=["POST"]),
         Route("/api/owner/runtime-mode", endpoint=api_owner_runtime_mode, methods=["POST"]),
+        Route("/api/owner/autostart", endpoint=api_owner_autostart_get, methods=["GET"]),
+        Route("/api/owner/autostart", endpoint=api_owner_autostart_post, methods=["POST"]),
         Route("/api/owner/auto-grant", endpoint=api_owner_auto_grant, methods=["POST"]),
         Route("/api/owner/context-mode", endpoint=api_owner_context_mode, methods=["POST"]),
         Route("/api/owner/safety-mode", endpoint=api_owner_safety_mode, methods=["POST"]),

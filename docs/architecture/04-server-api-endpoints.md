@@ -70,6 +70,8 @@ Every `/api/files/*` operation resolves its requested path and refuses the opera
 | DELETE | `/api/claudexor/credential-profiles/{harness}/{profile_id}` | `gateway.claudexor_accounts.api_claudexor_credential_profile` |
 | PATCH | `/api/claudexor/credential-profiles/{harness}/{profile_id}` | `gateway.claudexor_accounts.api_claudexor_credential_profile` |
 | POST | `/api/owner/runtime-mode` | `gateway.settings.api_owner_runtime_mode` |
+| GET | `/api/owner/autostart` | `gateway.autostart.api_owner_autostart_get` (Windows packaged desktop availability and current HKCU Run value) |
+| POST | `/api/owner/autostart` | `gateway.autostart.api_owner_autostart_post` (opt-in registry mutation; independent of settings.json) |
 | POST | `/api/owner/auto-grant` | `gateway.settings.api_owner_auto_grant` |
 | POST | `/api/owner/context-mode` | `gateway.settings.api_owner_context_mode` |
 | POST | `/api/owner/safety-mode` | `gateway.settings.api_owner_safety_mode` |

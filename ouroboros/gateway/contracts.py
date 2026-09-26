@@ -180,15 +180,11 @@ class ChatOutbound(TypedDict):
     # It is the route the run was sent to, not a receipt from the engine saying where it landed: a landing below the
     # ask is disclosed on `capability_delta`, not by rewriting this field.
     executor_route: NotRequired[str]
-    # Latest observed progress actor, NOT terminal evidence or current liveness. Own
-    # task_id/task_attempt/run_id/attempt_id, harness_id, phase, revision; optional model has explicit model_source
-    # (requested or observed).
+    # Latest progress actor, NOT terminal evidence/liveness; task/attempt/run/harness identity,
+    # phase/revision and optional model with explicit model_source (requested or observed).
     executor_observation: NotRequired[Dict[str, Any]]
-    # The completion-seam EVIDENCE the route decision is reconciled against (subagents.envelope_from_task):
-    # delegated runs started/settled/succeeded, terminal failure states, disclosed subscription spend (+estimated
-    # flag), engine-reported models, the additive `nanny_nudge_recorded` flag (a non-empty finalization nudge was
-    # durably stamped), and the additive `delegate_start_attempted` flag (any durable delegate_start attempt,
-    # refused or started). Terminal frames only; its absence means "no evidence yet", never "ran natively".
+    # Terminal-only custody evidence (subagents.envelope_from_task): run outcomes, spend,
+    # observed models, nudge and attempted starts. Absence never proves native-only.
     execution_evidence: NotRequired[Dict[str, Any]]
     # The FACT beside the executor_route plan, from the same custody evidence:
     # "harness_used" | "harness_attempted" | "native_only". Terminal frames only; absent =
@@ -198,10 +194,8 @@ class ChatOutbound(TypedDict):
     task_group_id: NotRequired[str]
     task_event: NotRequired[str]
     status: NotRequired[str]
-    # v6.82 (P5): host-attested marker, stamped by the supervisor's delivery seam ONLY for a task POST /api/tasks/{id}/cancel
-    # will actually stop — a lineage-resolved pooled ROOT (its RUNNING row) or the live in-process direct-chat turn (resolved
-    # through the same ownership reader the endpoint uses, supervisor.workers.direct_chat_turn); never a subagent frame, never
-    # an ephemeral decision turn. Gates the UI "Cancel run" action.
+    # Host-attested cancel eligibility for a pooled root or live direct turn, not
+    # a child or ephemeral decision; gates the UI Cancel action.
     cancelable: NotRequired[bool]
     _is_direct_chat: NotRequired[bool]  # lane fact stamped on a direct turn's own frames
     narration: NotRequired[bool]  # progress VOICE: the model's own round narration (true) vs a host note (false); absent = legacy
@@ -861,6 +855,11 @@ class OwnerRuntimeModeResponse(TypedDict):
 
 class OwnerAutoGrantResponse(TypedDict):
     ok: bool
+    enabled: bool
+
+
+class OwnerAutostartResponse(TypedDict):
+    available: bool
     enabled: bool
 
 
@@ -1538,6 +1537,7 @@ __all__ = [
     "SettingsSaveResponse",
     "OwnerRuntimeModeResponse",
     "OwnerAutoGrantResponse",
+    "OwnerAutostartResponse",
     "OwnerContextModeResponse",
     "OwnerSafetyModeResponse",
     "OwnerSkillPresenceRuntimeRequest",

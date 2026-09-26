@@ -49,6 +49,9 @@ def test_settings_complete_draft_validation_and_local_stop(direct_server_with_da
                 route.fulfill(response=response, json=data)
 
             def owner_route(route):
+                if route.request.url.endswith('/api/owner/autostart') and route.request.method == 'GET':
+                    route.fulfill(json={"available": False, "enabled": False})
+                    return
                 owner_writes.append(route.request.url)
                 route.fulfill(json={"ok": True, "runtime_mode": "light", "restart_required": False})
 

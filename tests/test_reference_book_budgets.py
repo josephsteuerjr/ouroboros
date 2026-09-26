@@ -47,7 +47,9 @@ CHAPTER_BYTE_BUDGETS: dict[str, int] = {
     # 166450 -> 167000 (merge of the moved target into the plan-review branch, measured 166885): both
     # sides' replaced paragraphs land together; no text was appended by the merge itself.
     # 167000 -> 167300 (merge of the moved target into the plan-review branch, measured 167032): both sides' paragraphs land together.
-    "docs/architecture/01-high-level-architecture.md": 167300,
+    # 167300 -> 167650: rebased Windows autostart adds three module-map owners while
+    # the updated upstream base expanded other rows; measured merged chapter 167563.
+    "docs/architecture/01-high-level-architecture.md": 167650,
     # 15517 -> 16200 (#1195): the session-custodied startup historical audit is a
     # new node of the startup flow (readiness no longer waits for the historical
     # seal diagnostic); the chapter had no older description of that pass to replace.
@@ -91,8 +93,13 @@ CHAPTER_BYTE_BUDGETS: dict[str, int] = {
     # earlier-plan facts as read-side projections (one clause); the base sat 22 bytes under.
     # 107300 -> 107500 (merge of the moved target into the plan-review branch, measured 107392): both
     # sides' replaced paragraphs land together; no text was appended by the merge itself.
-    "docs/architecture/03-web-ui-pages-and-buttons.md": 107500,
-    "docs/architecture/04-server-api-endpoints.md": 26833,
+    # 107500 -> 107900: Windows logon startup gets its own registry-backed
+    # Settings flow, distinct from saved settings; measured chapter 107846.
+    "docs/architecture/03-web-ui-pages-and-buttons.md": 107900,
+    # 26833 -> 27200: two autostart method rows mirror the owner registry endpoint.
+    # The moving upstream base grew by 153 bytes before rebase (base now 26825);
+    # merged chapter 27109. Keep a measured allowance, not a false green.
+    "docs/architecture/04-server-api-endpoints.md": 27200,
     # 27137 -> 30400: the schedule table gains a documented write contract the
     # chapter had no text for — one transaction owning the lock ORDER, the strict
     # store read's three refusal cases, intent-then-outcome audit with its
