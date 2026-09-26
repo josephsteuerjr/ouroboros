@@ -40,7 +40,7 @@ from typing import Any, Dict, Optional, Tuple
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from ouroboros.gateway._helpers import request_drive_root, request_json_or
+from ouroboros.gateway._helpers import request_drive_root, request_json_or, run_sync_to_completion
 from ouroboros.task_results import resolve_task_lineage, validate_task_id
 
 log = logging.getLogger(__name__)
@@ -475,9 +475,13 @@ async def answer_decision(drive_root: pathlib.Path, body: Any, *, source: str = 
             # live task already received is never forwarded when its lost HTTP
             # response is retried after the task ended (that would be a second
             # owner turn).
+            # The named ingress waits for the single host's ingress lock, which
+            # an off-loop socket acceptance or skill delivery may hold across a
+            # slow state read or chat scan: wait for it off the ASGI loop too. A
+            # cancelled waiter still lets row → queue → echo settle first.
             try:
-                forwarded, forward_reason = _forward_late_quiz_answer(
-                    drive_root, task_id, quiz_id, block, source=source,
+                forwarded, forward_reason = await run_sync_to_completion(
+                    _forward_late_quiz_answer, drive_root, task_id, quiz_id, block, source=source,
                 )
             except Exception:
                 log.warning("Late quiz answer delivery failed for %s", quiz_id, exc_info=True)
