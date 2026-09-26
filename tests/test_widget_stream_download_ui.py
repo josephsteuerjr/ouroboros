@@ -1,21 +1,17 @@
 """Optional real-browser/native-window widget exports through installed skill routes."""
 from __future__ import annotations
 
-import ast
-import base64
 import hashlib
 import json
-import logging
 import os
-from pathlib import Path
 import shutil
 import socket
-import tempfile
 import threading
 import time
-from types import SimpleNamespace
 import urllib.parse
 import urllib.request
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -96,15 +92,16 @@ window.fixtureReady=true;
 
 @pytest.fixture
 def widget_server(tmp_path, monkeypatch):
+    import uvicorn
     from starlette.applications import Starlette
     from starlette.responses import HTMLResponse
     from starlette.routing import Mount, Route
     from starlette.staticfiles import StaticFiles
-    import uvicorn
+
     from ouroboros import extension_loader
-    from ouroboros.gateway.extensions import api_extension_module, api_extension_dispatch
-    from ouroboros.skill_loader import find_skill, save_enabled, save_review_state, SkillReviewState
-    from tests._extension_loader_shared import _write_ext_skill, _add_fake_native_dep, _mark_isolated_deps_installed
+    from ouroboros.gateway.extensions import api_extension_dispatch, api_extension_module
+    from ouroboros.skill_loader import SkillReviewState, find_skill, save_enabled, save_review_state
+    from tests._extension_loader_shared import _add_fake_native_dep, _mark_isolated_deps_installed, _write_ext_skill
     from tests._shared import clean_extension_runtime_state
 
     root, skills = tmp_path / 'drive', tmp_path / 'skills'

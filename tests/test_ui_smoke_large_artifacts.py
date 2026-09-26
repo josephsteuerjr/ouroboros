@@ -1,20 +1,18 @@
 """Real upload -> task tool -> supervisor document event -> UI/native download."""
 from __future__ import annotations
 
-import ast
 import base64
-from hashlib import sha256
 import json
-import logging
 import os
-from pathlib import Path
 import shutil
-import tempfile
-from types import SimpleNamespace
 import urllib.parse
 import urllib.request
+from hashlib import sha256
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+
 from tests.ui_chat_viewport_smoke import _CAPTURE_TEST_SOCKET
 
 pytest_plugins = ("tests.test_ui_smoke_playwright",)
@@ -30,7 +28,6 @@ def _digest(path):
 
 def _native_file_api(port, read_sizes):
     """Execute the launcher's real nested API without starting another application."""
-    import pathlib
     source = Path(__file__).resolve().parents[1] / "ouroboros/launcher_bridge.py"
     def open_recorded(*args, **kwargs):
         response = urllib.request.urlopen(*args, **kwargs)
@@ -64,6 +61,7 @@ def test_large_attachment_returns_through_real_document_handler_and_download(
     direct_server_with_data, monkeypatch, tmp_path,
 ):
     from playwright.sync_api import sync_playwright
+
     from tests import fixtures_mock_llm
 
     root = direct_server_with_data["data_dir"]

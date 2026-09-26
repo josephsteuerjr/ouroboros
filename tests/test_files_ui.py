@@ -59,7 +59,6 @@ def test_files_pdf_preview_and_download_bridge_are_safe():
     source = _read("web/modules/files.js")
     download_helper = _read("web/modules/ui_helpers.js")
     bridge = _read("ouroboros/launcher_bridge.py")
-    launcher = _read("launcher.py")
     assert 'class="files-preview-frame" sandbox="allow-same-origin"' in source
     assert "downloadViaHostBridge(" in source
     assert "download_file_to_downloads" in download_helper
@@ -74,7 +73,6 @@ def test_chat_document_card_uses_dialog_and_safe_download_fallbacks():
     chat = _read("web/modules/chat_media.js")
     helper = _read("web/modules/ui_helpers.js")
     bridge = _read("ouroboros/launcher_bridge.py")
-    launcher = _read("launcher.py")
     css = _read("web/style.css")
 
     # Desktop bridge: open in the OS default app without navigating the WebView.

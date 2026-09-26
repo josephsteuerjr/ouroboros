@@ -2,8 +2,8 @@
 
 import pytest
 
-from tests.test_onboarding_host import _install_fake_webview
 from ouroboros.launcher_bridge import create_main_api
+from tests.test_onboarding_host import _install_fake_webview
 
 
 @pytest.mark.parametrize("settled", [True, False, RuntimeError("no browser"), None])
