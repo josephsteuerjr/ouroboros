@@ -165,7 +165,7 @@ export function createChatDecision({
     // What the copy can offer: the form needs the question and its options; only a known open or
     // finished question takes an answer. Either may arrive later than the first delivery.
     const mirrorShape = (row) => {
-        const complete = Boolean(row.question) && (row.options?.length || 0) >= 2;
+        const complete = Boolean(row.question) && Array.isArray(row.options) && row.options.length <= MAX_QUIZ_OPTIONS;
         return { complete, answerable: complete && ANSWERABLE_QUIZ_STATES.includes(row.quiz_state) };
     };
 
@@ -185,7 +185,9 @@ export function createChatDecision({
         const current = view.needsValidation && state !== 'answered'
             ? { ...frame, state: 'unknown' } : observe({ ...frame, state }, live);
         for (const field of MIRROR_FIELDS)
-            if (field in current && (current[field] == null || current[field] === '' || current[field]?.length === 0)) delete current[field];
+            if (field in current && (current[field] == null || current[field] === ''
+                || (current[field]?.length === 0
+                    && (field !== 'options' || view.row.options?.length > 0)))) delete current[field];
         view.row = { ...view.row, ...current, quiz_state: current.state };
         return view.row;
     }
@@ -366,11 +368,12 @@ export function createChatDecision({
                 ...(src.recommended_index === index ? { recommended: true } : {}) } : option));
         const corrupt = normalized.some(
             (option) => !option || typeof option !== 'object' || !String(option.label || '').trim());
-        const options = corrupt ? [] : normalized.slice(0, MAX_QUIZ_OPTIONS);
+        const optionsKnown = Array.isArray(src.options) && !corrupt && normalized.length <= MAX_QUIZ_OPTIONS;
         return {
             quizId: String(src.quiz_id || ''),
             question: String((nested ? msg.text : src.question) || ''),
-            options,
+            options: optionsKnown ? normalized : [],
+            optionsKnown,
             stake: String(src.stake || ''),
             assumption: String(src.assumption || ''),
             // The host's sentence (asking task, run start, the owner's last message): plain text.
@@ -409,7 +412,6 @@ export function createChatDecision({
         badge.textContent = 'recommended';
         button.append(badge);
     }
-
 
     async function submitAnswer(card, quiz, index, comment, settle = setCardState) {
         if (card.dataset.pending === '1') return;
@@ -557,10 +559,9 @@ export function createChatDecision({
             }
             const buttons = card.querySelectorAll('.chat-quiz-option');
             buttons.forEach((btn, i) => {
-                const disabled = !answerable;
                 const chosen = state === 'answered' && answeredIndex !== null && i === answeredIndex;
-                if (btn.disabled !== disabled) {
-                    btn.disabled = disabled;
+                if (btn.disabled !== !answerable) {
+                    btn.disabled = !answerable;
                     changed = true;
                 }
                 if (btn.classList.contains('chosen') !== chosen) {
@@ -584,7 +585,7 @@ export function createChatDecision({
         const quiz = normalizeQuiz(msg);
         // A Main mirror keeps its way to the Project even while its row cannot carry the whole
         // form yet: then it shows what is known and takes no answer (never a guessed one).
-        const complete = Boolean(quiz.question) && quiz.options.length >= 2;
+        const complete = Boolean(quiz.question) && quiz.optionsKnown;
         if (!quiz.quizId || !quiz.taskId || !(complete || mirror)) return null;
         const key = questionKey(quiz.taskId, quiz.quizId);
         const frame = { task_id: quiz.taskId, quiz_id: quiz.quizId, state: quiz.state,
@@ -703,8 +704,8 @@ export function createChatDecision({
             });
             optionsBox.append(btn);
         });
-        if (complete) card.append(optionsBox);
-        if (complete && quiz.detailsUnavailable) {
+        if (complete && quiz.options.length) card.append(optionsBox);
+        if (complete && quiz.options.length && quiz.detailsUnavailable) {
             const note = document.createElement('div');
             note.className = 'chat-quiz-stake chat-quiz-details-unavailable';
             note.textContent = 'Option details were not retained for this older question.';

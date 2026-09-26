@@ -287,7 +287,14 @@ in details and Logs, but do not relabel the whole still-working task. A failed c
 authoritative status. Internal reason codes belong in details and diagnostics,
 not compact headlines. Where a card does show a cause, it says it in the owner's
 words while the record keeps the machine code; a cause with no sentence yet stays
-raw rather than borrowing a wrong one. The routing receipt under an owner
+raw rather than borrowing a wrong one. The rails that end a task are such
+causes: the loop's forced finalization (round limit, deadline, grace window,
+context, unabsorbed children) and the supervisor's timeout reaper (maximum
+running time, deadline, idle silence) keep their typed codes on the record and
+on the incident key, and the card, the reaper's grace toast, kill notice and
+salvage line, and the loop's own fallback text all say the one sentence from
+the shared table (`project_dialogue.TASK_CAUSE_PHRASES`, whose browser twin
+lives in `log_events.js`). The routing receipt under an owner
 message is such a surface: a refused addressing act carries the host-composed
 `cause` sentence (`project_dialogue.routing_refusal_cause` — one host table for
 the receipt line, the System row and the picker toast), a landed act carries
@@ -637,7 +644,7 @@ answer keep both forms readable. Anatomy, top to bottom:
    one word that answers "is there an unanswered question for me?":
    `Waiting for your answer` needs positive wait evidence (the task's live wait
    record, or the original required flag before any record exists); a resumed
-   wait — the owner typed instead, or the bound closed — reads `Unanswered · the
+   wait — owner input or other mail woke the task, or the bound closed — reads `Unanswered · the
    task continued; an answer is still accepted`; an open question without any
    wait evidence reads `Unanswered · an answer is still accepted`;
    `Unanswered · the task finished; a late answer is accepted as your message`
@@ -658,11 +665,11 @@ answer keep both forms readable. Anatomy, top to bottom:
    started and when the owner last wrote in this chat, with unknown facts said
    as unknown; the line is absent when the card carries no `host_facts`.
 3. **Stake** — optional one-liner (`At stake: …`), `--type-meta`, `--text-meta`.
-4. **Options** — real owner actions: buttons with `--text-primary` labels,
+4. **Options** — zero to six real owner actions: buttons with `--text-primary` labels,
    legible at rest; an optional per-option detail steps down to meta ink.
    After settlement buttons drop to `--text-disabled`; the chosen option keeps
    the ok pair. Options are capped by the shared Python↔JS constant
-   (`MAX_QUIZ_OPTIONS`).
+   (`MAX_QUIZ_OPTIONS`); with none, the free answer is the whole answer.
 5. **Free answer** — while the card is open, a compact always-visible field
    (`Your answer or comment…`) with a `Send my answer` button, enabled only
    once something is typed. No option ever has to be the least wrong one: the

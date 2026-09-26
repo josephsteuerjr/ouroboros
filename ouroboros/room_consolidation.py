@@ -230,6 +230,9 @@ def summarize_source(
             return False
         midpoint = start + len(halves[0])
         pending.extend([(midpoint, end), (start, midpoint)])
+        # The refusal is answered by its halves, each accounted by its own row; the
+        # attempt stays in the usage history, never read as an unresolved failure.
+        failure["resolution"] = "split"
         return True
 
     while pending:

@@ -431,6 +431,9 @@ def _register_followup(ctx: ToolContext, task_id: str, drive_root: Any,
                 # `or ""` before str(): an absent/None root_task_id must fall back
                 # to task_id, never become the literal string "None".
                 "origin_root_task_id": str(root_task_id or "") or task_id,
+                # TZ-2 B3: the same author stamp a promote carries — the successor's
+                # first turn is this task's note, framed as such, never an owner directive.
+                "objective_author": {"kind": "task", "task_id": task_id},
             },
             **({"chat_id": source_chat_id} if source_chat_id not in (None, "") else {}),
         },

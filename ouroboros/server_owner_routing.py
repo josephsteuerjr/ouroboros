@@ -224,6 +224,15 @@ def _route_project_chat_to_running_task(
                 )
                 if live_meta is None and not still_pending:
                     return ""
+                # A worker may remain RUNNING to finish paid post-work after its
+                # answer/result settled. Its solve loop no longer drains this
+                # mailbox; accepting an owner follow-up here would label it
+                # delivered, then terminal cleanup would erase it unread. One
+                # predicate with the quiz ingress (TZ-2 D15).
+                from ouroboros.owner_mailbox import mailbox_drain_ended
+
+                if mailbox_drain_ended(task_drive, tid):
+                    return ""
                 # Phase A: a task whose cancellation is PENDING must not accept a
                 # new owner message — same refusal the steer_task route makes,
                 # checked inside this admission transaction. Falling through to

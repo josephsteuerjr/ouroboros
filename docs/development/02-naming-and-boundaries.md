@@ -333,9 +333,9 @@ ARCHITECTURE §6 "Owner routing verbs").
 
 ### The owner corpus archives inputs; the owner door's stamp is the only authority
 
-The first user turn of every run is recorded in the owner corpus so that acceptance,
-Safety and the post-task synthesis read the same physical archive, but its label states
-only what the host knows: `initial_user` when owner routing stamped the run
+A task-authored objective copies only its retained owner corpus, never the draft itself.
+Other runs record their first user turn for acceptance, Safety and reflection, labelled by
+what the host knows: `initial_user` when owner routing stamped the run
 (`metadata.origin_message_ref` or `origin_suppressed`, which a promoted root inherits by
 value), `initial_text` otherwise — a Presence event, a wake, a schedule, a follow-up, a
 child's work order, an unmarked context. `dialogue_provenance.run_origin` mints that fact

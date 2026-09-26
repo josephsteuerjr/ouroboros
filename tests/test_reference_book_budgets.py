@@ -104,7 +104,13 @@ CHAPTER_BYTE_BUDGETS: dict[str, int] = {
     # its queue witness, the memory-only hand-back of the unprocessed tail on a crash or
     # /restart, and /panic's refusal to hand anything back; the base sat 1 byte under the
     # previous budget.
-    "docs/architecture/05-supervisor-loop.md": 33600,
+    # 33600 -> 33700 (TZ-2 B+C merged onto TZ-1 PR-1 #1330, measured 33688 on the merged tree):
+    # TZ-2's D15 settled-result sentence (fast mail and typed steer refuse a settled Project
+    # result; a quiz answer takes the late-answer path), its post-work ceiling clause and its
+    # typed timeout-cause sentence join TZ-1's bridge-intake paragraph; TZ-2 had compressed the
+    # owner-wait and heartbeat paragraphs it touched in place (+103 bytes alone), TZ-1's
+    # paragraph is new, so the union displaces nothing.
+    "docs/architecture/05-supervisor-loop.md": 33700,
     # 286850 -> 287600: "an answer that has not arrived is a gap" is a new invariant of
     # plan review and task acceptance (the slot census vocabulary, the `awaiting`
     # projection, the only-awaited task outcome); the in-flight sentence it grew from is
@@ -184,7 +190,11 @@ CHAPTER_BYTE_BUDGETS: dict[str, int] = {
     # 315600 -> 316600 (TZ-3 #1291 reconcile, measured 316489 after TZ-1 merge): automatic
     # body-only anchors, the explicit summary sibling and typed nomination refusals extend
     # the existing note-writer paragraph; neither replaces TZ-1's independent contract.
-    "docs/architecture/06-agent-core.md": 316600,
+    # 316600 -> 316800 (TZ-2 union with #1331, measured 316731): the author-stop,
+    # free host_task_facts, stat-only files_rescued and post-work settlement clauses
+    # replace their prior paragraphs (+242 bytes) independently of the memory writer;
+    # both contracts survive the merge, with no duplicated prose to displace.
+    "docs/architecture/06-agent-core.md": 316800,
     # 36991 -> 37300: the facade paragraph names the three loop constants runtime_limits.py
     # gained (events batch bound, budget-projection retry interval); no older text to displace.
     # 37300 -> 38400 (PR #1207): the Z.ai (`zai::`) direct provider gets its own route
@@ -283,11 +293,17 @@ CHAPTER_BYTE_BUDGETS: dict[str, int] = {
     # descendant is a Presence caller (inherited binding authority, never speaker metadata).
     # 95150 -> 95200 (TZ2 repair, measured 95191): the promotion/follow-up clause names the
     # one carrier it copies instead of "the Presence metadata".
-    # 95200 -> 96700 (OpenAI-family cache layout incl. the Claudexor route, measured 96596): the cache-friendliness
+    # 95200 -> 95400 (tz2 7a387f717): the C4 explicit-stop rule took the chapter to 95223
+    # before this diff; nothing displaced.
+    # 95400 -> 96700 (OpenAI-family cache layout incl. the Claudexor route, measured 96596): the cache-friendliness
     # bullet states the declare-in-builder / project-in-transport rule, the per-family
     # OpenRouter session and the two enforcing tests; the notice bullet gains the second
     # meaning of the `[SYSTEM NOTICE]` marker. The derived-identity sentence is replaced.
-    "docs/development/06-rules-by-change-class.md": 96700,
+    # 96700 -> 96800 (TZ-2 B+C merged onto TZ-1 PR-1 #1330, measured 96752 on the merged tree):
+    # each side fit alone (TZ-2 96666, TZ-1 96682); TZ-2's reflection-custody and stop-freshness
+    # clauses and TZ-1's off-loop ingress-lock clause rewrite different bullets in place, so
+    # the union displaces nothing.
+    "docs/development/06-rules-by-change-class.md": 96800,
     "docs/development/07-managed-update-rule.md": 4166,
     "docs/development/08-mutation-attribution-rule.md": 2899,
     "docs/development/09-process-custody-rule.md": 10028,

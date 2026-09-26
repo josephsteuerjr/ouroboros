@@ -11,7 +11,7 @@ from urllib.parse import quote
 
 from ouroboros.artifacts import store_chat_media_bytes
 from ouroboros.contracts.chat_id_policy import is_a2a_chat_id
-from ouroboros.event_bus import CHAT_DOCUMENT, CHAT_LINKS, CHAT_OUTBOUND, CHAT_PHOTO, CHAT_QUIZ, CHAT_TYPING, CHAT_VIDEO, publish_event
+from ouroboros.event_bus import CHAT_DOCUMENT, CHAT_LINKS, CHAT_OUTBOUND, CHAT_PHOTO, CHAT_QUIZ, CHAT_QUIZ_STATE, CHAT_TYPING, CHAT_VIDEO, publish_event
 from supervisor.state import append_jsonl, load_state
 from ouroboros.projects_registry import stamp_project_thread
 from ouroboros.tools.core import (
@@ -1161,8 +1161,6 @@ class LocalChatBridge:
         ``comment`` is the owner's recorded free-text answer (#471): the live
         card renders it exactly as the replayed one does; absent when empty.
         """
-        if not self._broadcast_fn:
-            return
         msg: Dict[str, Any] = {
             "type": "quiz_state",
             "quiz_id": str(quiz_id or ""),
@@ -1180,10 +1178,15 @@ class LocalChatBridge:
             msg["wait_for_answer"] = bool(wait_for_answer)
         if int(chat_id or 0):
             msg["chat_id"] = int(chat_id or 0)
-        try:
-            self._broadcast_fn(msg)
-        except Exception:
-            log.debug("quiz_state broadcast failed", exc_info=True)
+        if self._broadcast_fn:
+            try:
+                self._broadcast_fn(msg)
+            except Exception:
+                log.debug("quiz_state broadcast failed", exc_info=True)
+        # The WebSocket reaches only the SPA. Transport skills need the same
+        # lifecycle fact to edit an already delivered card without a reload.
+        quiz_transport = dict(self._chat_transports.get(int(chat_id or 0), {}) or {})
+        publish_event(CHAT_QUIZ_STATE, {**msg, "transport": quiz_transport})
 
     def push_log(self, event: dict):
         """Stream append_jsonl events to UI."""

@@ -64,7 +64,9 @@ def _live_root_task(task_id: str) -> Tuple[Optional[Dict[str, Any]], str]:
     """Queue-lock read: the live task row, or a refusal reason.
 
     ``task_not_live`` is NOT a hard refusal for a quiz answer — the caller
-    consults the durable projection for the honest late-answer state."""
+    consults the durable projection for the honest late-answer state; nor is
+    ``task_settled``, a RUNNING worker whose result already settled (its
+    mailbox is no longer drained, TZ-2 D15)."""
     from supervisor import queue as q
 
     with q._queue_lock:
@@ -99,7 +101,16 @@ def _live_root_task(task_id: str) -> Tuple[Optional[Dict[str, Any]], str]:
             # Decision-31 hierarchy: owner quiz cards come only from ROOT
             # tasks (a subagent escalates to its parent, never to a card).
             return None, "not_a_root_task"
-        return task, ""
+    from supervisor.queue import _task_drive_for_task
+
+    from ouroboros.owner_mailbox import mailbox_drain_ended
+
+    if mailbox_drain_ended(_task_drive_for_task(task, task_id), task_id):
+        # Still RUNNING for paid post-work, but the solve loop settled: nothing
+        # drains the mailbox any more — the same fact that refuses owner mail
+        # sends the answer down the late path instead of into a dead mailbox.
+        return None, "task_settled"
+    return task, ""
 
 
 def _quiz_answer_frame(
@@ -113,6 +124,16 @@ def _quiz_answer_frame(
     from ouroboros.owner_quiz import quiz_answer_frame
 
     return quiz_answer_frame(block, option_index, comment)
+
+
+def _send_quiz_state(quiz_id: str, task_id: str, state: str, **fields: Any) -> None:
+    """Best-effort live card update; the durable projection is the truth."""
+    try:
+        from supervisor.message_bus import get_bridge
+
+        get_bridge().send_quiz_state(quiz_id, task_id, state, **fields)
+    except Exception:
+        log.debug("quiz_state broadcast failed for %s", quiz_id, exc_info=True)
 
 
 def _refused(message: str, status: int, **extra: Any) -> Tuple[int, Dict[str, Any]]:
@@ -376,11 +397,15 @@ async def answer_decision(drive_root: pathlib.Path, body: Any, *, source: str = 
         from ouroboros.owner_quiz import record_answered, reconcile_terminal
 
         if task is None:
-            # The author is gone. Normally the task-done seam already expired
-            # its open quizzes; a crash window can leave one open — heal it
-            # here so the card's lifecycle state is structurally truthful
-            # before the late answer is recorded on it.
-            reconcile_terminal(drive_root, task_id)
+            # The author is gone, or settled into post-work. Normally the
+            # task-done seam expires its open quizzes; a crash window or the
+            # post-work window leaves one open — heal it here so the card's
+            # lifecycle state is structurally truthful before the late answer
+            # is recorded on it. The task-done seam announces only what IT
+            # expires, so the sibling cards healed here learn it now.
+            for sibling in reconcile_terminal(drive_root, task_id):
+                if sibling != quiz_id:
+                    _send_quiz_state(sibling, task_id, "expired_terminal")
         outcome = record_answered(
             drive_root, task_id,
             quiz_id=quiz_id, option_index=raw_index,
@@ -490,16 +515,11 @@ async def answer_decision(drive_root: pathlib.Path, body: Any, *, source: str = 
                     "— retry to deliver it",
                     503, task_id=task_id, reason_code="late_answer_not_delivered",
                 )
-        try:
-            from supervisor.message_bus import get_bridge
-
-            get_bridge().send_quiz_state(
-                quiz_id, task_id, str(outcome.get("state") or "answered"),
-                answered_index=block.get("answered_index"),
-                comment=str(block.get("comment") or ""),
-            )
-        except Exception:
-            log.debug("quiz_state broadcast failed for %s", quiz_id, exc_info=True)
+        _send_quiz_state(
+            quiz_id, task_id, str(outcome.get("state") or "answered"),
+            answered_index=block.get("answered_index"),
+            comment=str(block.get("comment") or ""),
+        )
     except Exception as exc:
         return 503, {"error": str(exc)}
     payload_ok: Dict[str, Any] = {

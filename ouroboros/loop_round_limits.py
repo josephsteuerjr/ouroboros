@@ -490,7 +490,12 @@ def _handle_forced_finalization(ctx: _RoundLimitContext, reason: str) -> Tuple[s
         return _handle_owner_stop_finalization(ctx, str(reason))
     if reason_lines and reason_lines[0].strip() == REASON_OWNER_STOPPED_DIRECT_TURN:
         return _handle_direct_turn_hard_stop(ctx)
-    fallback = f"⚠️ Task reached {reason or 'deadline'}; finalization grace produced no answer."
+    from ouroboros.project_dialogue import TASK_CAUSE_PHRASES
+
+    # The host fallback speaks the rail's owner sentence; an unknown rail stays raw.
+    rail = (reason_lines[0].strip() if reason_lines else "") or "deadline"
+    cause = TASK_CAUSE_PHRASES.get(rail, f"Task reached {rail}")
+    fallback = f"⚠️ {cause}; finalization grace produced no answer."
     prompt = (
         f"[FINALIZE_NOW] The supervisor opened a finalization grace window (reason: {reason or 'deadline'}). "
         "The task will be stopped shortly. Produce your best final answer NOW from the verified "

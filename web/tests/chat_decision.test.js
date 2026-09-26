@@ -193,10 +193,32 @@ test('an accepted answer marks the chosen option; degenerate cards refuse to ren
         assert.ok(buttons[1].classList.contains('chosen'));
         assert.ok(buttons.every((btn) => btn.disabled));
 
-        assert.equal(fx.decision.buildQuizCard({ ...WS_MSG, options: [{ label: 'only' }] }), null);
+        assert.equal(fx.decision.buildQuizCard({ ...WS_MSG, quiz_id: 'one', options: [{ label: 'only' }] })
+            .querySelectorAll('.chat-quiz-option').length, 1);
         assert.equal(fx.decision.buildQuizCard({ ...WS_MSG, quiz_id: '' }), null);
         // An anonymous quiz has no answer address: refuse to render buttons.
         assert.equal(fx.decision.buildQuizCard({ ...WS_MSG, task_id: '' }), null);
+    } finally { fx.restore(); }
+});
+
+test('an open question offers a free-text answer without fabricated options', async () => {
+    const fx = fixture();
+    try {
+        const card = fx.decision.buildQuizCard({ ...WS_MSG, quiz_id: 'open', options: [] });
+        assert.ok(card);
+        assert.equal(card.querySelectorAll('.chat-quiz-option').length, 0);
+        const answer = card.querySelector('.chat-quiz-comment');
+        assert.ok(answer);
+        answer.value = 'I would take a different route.';
+        answer.listeners.get('input')();
+        card.querySelector('.chat-quiz-send').click();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        const body = JSON.parse(fx.calls[0].init.body);
+        assert.equal(body.comment, 'I would take a different route.');
+        assert.equal(Object.hasOwn(body, 'option_index'), false);
+        assert.equal(fx.decision.buildQuizCard({ ...WS_MSG, quiz_id: 'absent', options: undefined }), null);
+        assert.equal(fx.decision.buildQuizCard({ ...WS_MSG, quiz_id: 'too-many',
+            options: Array.from({ length: 7 }, (_, i) => ({ label: `Choice ${i}` })) }), null);
     } finally { fx.restore(); }
 });
 

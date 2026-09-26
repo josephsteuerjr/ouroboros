@@ -942,19 +942,19 @@ def _call_consolidation_llm(
             break
     except Exception as error:
         from ouroboros.llm_claudexor import propagate_model_error
-        propagate_model_error(error)
         from ouroboros.loop_llm_call import classify_llm_exception
-        from ouroboros.transport_custody import _capture_on_chain
-
-        capture = _capture_on_chain(error)
+        from ouroboros.transport_custody import outcome_unknown_on_chain
+        from ouroboros.usage_accounting import BudgetExceeded
+        propagate_model_error(error)
         if getattr(error, "route", None):
             # A refusal belongs to the actual account, which can differ from
             # catalog discovery. Rebind its facts without masking the refusal
             # with a second preflight exception or sending another request.
             prepare({**prepared_values, "_model_observed_route": error.route}, check_fit=False)
         preflight = isinstance(error, SummarizerContextOverflow) or not invoked
-        kind = ("context_overflow" if isinstance(error, SummarizerContextOverflow)
-                else "provider_outcome_unknown" if getattr(capture, "state", "") in {"dispatched", "unresolved"}
+        kind = ("budget_exhausted" if isinstance(error, BudgetExceeded)
+                else "context_overflow" if isinstance(error, SummarizerContextOverflow)
+                else "provider_outcome_unknown" if outcome_unknown_on_chain(error)
                 else classify_llm_exception(error).kind)
         message = str(error)
         usage = dict(getattr(error, "usage", None) or {})
