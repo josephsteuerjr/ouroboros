@@ -31,12 +31,7 @@ def _digest(path):
 def _native_file_api(port, read_sizes):
     """Execute the launcher's real nested API without starting another application."""
     import pathlib
-    source = Path(__file__).resolve().parents[1] / "launcher.py"
-    names = {"_resolve_bridge_file_url", "_unique_bridge_target", "_fetch_bridge_url_to", "MainApi"}
-    selected = [node for node in ast.walk(ast.parse(source.read_text()))
-                if isinstance(node, (ast.FunctionDef, ast.ClassDef)) and node.name in names]
-    assert {node.name for node in selected} == names
-
+    source = Path(__file__).resolve().parents[1] / "ouroboros/launcher_bridge.py"
     def open_recorded(*args, **kwargs):
         response = urllib.request.urlopen(*args, **kwargs)
         original = response.read
@@ -47,11 +42,20 @@ def _native_file_api(port, read_sizes):
         response.read = read
         return response
 
-    namespace = {"actual_port": port, "pathlib": pathlib, "shutil": shutil,
-                 "tempfile": tempfile, "base64": base64, "log": logging.getLogger(__name__),
-                 "urllib": SimpleNamespace(parse=urllib.parse, request=SimpleNamespace(urlopen=open_recorded))}
-    exec(compile(ast.Module(body=selected, type_ignores=[]), str(source), "exec"), namespace)
-    return namespace["MainApi"](), sha256(source.read_bytes()).hexdigest()
+    namespace = {"__name__": "launcher_bridge_fixture", "__file__": str(source)}
+    exec(compile(source.read_text(encoding="utf-8"), str(source), "exec"), namespace)
+    namespace["urllib"] = SimpleNamespace(parse=urllib.parse, request=SimpleNamespace(urlopen=open_recorded))
+    api = namespace["create_main_api"](
+        actual_port=port, get_window=lambda: None, load_settings=lambda: {},
+        normalize_runtime_mode=lambda value: value,
+        request_runtime_mode_change=lambda *args: {},
+        request_auto_grant_reviewed_skills_change=lambda *args: {},
+        request_skill_key_grant=lambda *args: {},
+        open_external_url=lambda url: {"ok": False},
+        request_native_attention=lambda *args, **kwargs: {},
+        open_path_external=lambda path: None,
+    )
+    return api, sha256(source.read_bytes()).hexdigest()
 
 
 @pytest.mark.ui_browser

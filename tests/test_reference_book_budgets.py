@@ -276,7 +276,8 @@ CHAPTER_BYTE_BUDGETS: dict[str, int] = {
     # 12405 -> 14400 (issue #1142): the ordinary-close paragraph gains the mechanism the chapter had
     # no text for — graceful stop signals the server PID only, the server half (stop event at the
     # signal, bounded uvicorn drain) is self-sufficient against an old group-SIGTERM launcher.
-    "docs/architecture/09-shutdown-and-process-cleanup.md": 14400,
+    # The Windows tray adds a distinct non-exit X-close before the shared Exit path.
+    "docs/architecture/09-shutdown-and-process-cleanup.md": 14700,
     # 17655 -> 20400: the supervisor-reliability sprint adds eight invariants the chapter lacked
     # (typed permanent engine refusal, interrupted parent, stalled-loop facts, source-ack
     # pre-check, host-owed round, reviewer tool bound, off-thread custody, fence transport) —

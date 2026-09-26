@@ -1100,9 +1100,11 @@ never *look, I am still working*. It exists so the owner can leave the window
 and still be reached by a question or a finished task.
 
 **When the client runs.** Notifications are a property of a running client. This
-version adds no tray agent, no background process and no push channel, so
-closing Ouroboros ends them. The existing Telegram bridge remains the separate
-path that reaches the owner while nothing is open.
+notification feature adds no background process or push channel. On Windows,
+X hides the still-running desktop client in the tray; tray Exit (or a real app
+shutdown) ends its notifications. On other platforms closing the window ends
+them. The existing Telegram bridge remains the separate path that reaches the
+owner while the app is closed.
 
 **Focus does not suppress, and neither does a closed room.** While a category is
 on, its event notifies whether or not the window has focus and whether or not
@@ -1170,8 +1172,10 @@ the conversation. No reply is composed from the banner.
 owner turns message text on, because a banner can appear on a shared screen.
 
 **Deliberately absent.** No numeric badge, no repeated reminder, no inline
-reply, no tray icon, no Telegram escalation, and no promise of a native
-Notification Center/toast banner or attention after the application closes.
+reply, no notification-specific tray icon, no Telegram escalation, and no
+promise of a native Notification Center/toast banner or attention after the
+application exits. The Windows launcher tray icon is a window/Exit control,
+not a notification channel.
 When the packaged desktop launcher exposes its optional `request_attention`
 bridge, a live notification may raise that window and ask the operating system
 for one standard sound. This is a native attention cue, not proof that a
