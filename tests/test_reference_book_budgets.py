@@ -171,7 +171,11 @@ CHAPTER_BYTE_BUDGETS: dict[str, int] = {
     # its `era_retry` record keyed to the executed Light binding, the four typed memory-maintenance
     # events and the host stamp on `source_capture` history rows are mechanisms no older text
     # described; the sentences they extend were rewritten in place, not appended to.
-    "docs/architecture/06-agent-core.md": 314900,
+    # 314900 -> 316400 (truthful waiting D+E, measured 316282): "Waiting on children" gains the
+    # unsettled wait_task body (shared compact projection + dated delegated-run observation facts,
+    # no liveness verdict) and the one `_wait_window` ladder inside the executor's emit window;
+    # the full-handoff sentence was rewritten in place, the new contracts had no older text.
+    "docs/architecture/06-agent-core.md": 316400,
     # 36991 -> 37300: the facade paragraph names the three loop constants runtime_limits.py
     # gained (events batch bound, budget-projection retry interval); no older text to displace.
     # 37300 -> 38400 (PR #1207): the Z.ai (`zai::`) direct provider gets its own route
