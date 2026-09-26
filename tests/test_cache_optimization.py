@@ -476,8 +476,6 @@ def test_cache_horizon_reachability_matches_the_wait_clamps():
     cannot reach it at all; at '5m' all three do. The stream report advertised it as
     a live capability of all three at the default — this pin makes the truth loud and
     fails if a clamp, the ceiling, or the tier scale moves without revisiting it."""
-    import inspect
-    import re
     from types import SimpleNamespace
 
     from ouroboros.config import DELEGATE_WAIT_WINDOW_MAX_SEC
@@ -485,14 +483,15 @@ def test_cache_horizon_reachability_matches_the_wait_clamps():
     from ouroboros.tools import control_task_results as control_mod
     from ouroboros.tools.control import cache_horizon_note
 
-    def _clamp(fn):
-        found = re.findall(r"min\(int\(timeout_sec\),\s*(\d+)\)", inspect.getsource(fn))
-        assert len(found) == 1, f"{fn.__name__}: expected one timeout clamp, found {found}"
-        return int(found[0])
+    def _clamp(ceiling):
+        # The one window ladder both task waits use, probed without a deadline.
+        window = control_mod._wait_window(SimpleNamespace(), 10**9, clamp=ceiling, minimum=0, margin=30)
+        assert window == (ceiling, "ceiling")
+        return window[0]
 
     ceilings = {
-        "wait_task": _clamp(control_mod._wait_for_task),
-        "wait_tasks": _clamp(control_mod._wait_for_tasks),
+        "wait_task": _clamp(control_mod._WAIT_TASK_CLAMP_SEC),
+        "wait_tasks": _clamp(control_mod._WAIT_TASKS_CLAMP_SEC),
         "delegate_wait": DELEGATE_WAIT_WINDOW_MAX_SEC,
     }
     assert ceilings == {"wait_task": 3600, "wait_tasks": 7200, "delegate_wait": 1800}
