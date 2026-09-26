@@ -554,8 +554,9 @@ class ClaudexorGateway:
         self._engine_build_sha = str(engine.get("sha") or "")
         return body
 
-    def agent_capabilities(self) -> Dict[str, Any]:
-        body = self._request("GET", "/v2/agent-capabilities")
+    def agent_capabilities(self, *, timeout_sec: Optional[float] = None) -> Dict[str, Any]:
+        body = self._request("GET", "/v2/agent-capabilities",
+                             **({"timeout_sec": timeout_sec} if timeout_sec is not None else {}))
         return body if isinstance(body, dict) else {}
 
     # Model operations use the same private control transport, not Agent runs
