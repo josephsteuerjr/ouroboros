@@ -35,9 +35,12 @@ CHAPTER_BYTE_BUDGETS: dict[str, int] = {
     # 7 bytes on the official line); re-based here, no text of this chapter was touched.
     # 165550 -> 165900 (PR #1300): the net_transport row and the data-layout row for the merged
     # extra-CA bundle; the base sat 174 bytes under the previous budget.
-    # 165900 -> 166100 (steer sprint 2026-09-26, measured 165937 on the merged tree: delegate_message,
+    # 165900 -> 166450 (TZ-1 PR-2 custody, measured 166432): module-map rows for the two new
+    # owners (task_custody.py, gateway/task_archive.py) and the data-layout row for the
+    # settlement's staging/trash; the artifact-route sentence was replaced, not appended to.
+    # 166450 -> 166700 (steer sprint 2026-09-26, measured 166595 on the merged tree: delegate_message,
     # truthful waiting A-E, low-water reclaim; see the sprint ledger).
-    "docs/architecture/01-high-level-architecture.md": 166100,
+    "docs/architecture/01-high-level-architecture.md": 166700,
     # 15517 -> 16200 (#1195): the session-custodied startup historical audit is a
     # new node of the startup flow (readiness no longer waits for the historical
     # seal diagnostic); the chapter had no older description of that pass to replace.
@@ -75,7 +78,9 @@ CHAPTER_BYTE_BUDGETS: dict[str, int] = {
     # vocabulary (#931/#1061); the touched descriptions were REPLACED and
     # compressed (net chapter growth is under the added owner's paragraph size),
     # and the merged #1236 base already sat 5 bytes under the previous budget.
-    "docs/architecture/03-web-ui-pages-and-buttons.md": 107000,
+    # 107000 -> 107200 (TZ-1 PR-2, measured 107174): one module row for result_files.js, the
+    # card's Files row; no older text described task result files on the card.
+    "docs/architecture/03-web-ui-pages-and-buttons.md": 107200,
     "docs/architecture/04-server-api-endpoints.md": 26833,
     # 27137 -> 30400: the schedule table gains a documented write contract the
     # chapter had no text for — one transaction owning the lock ORDER, the strict
@@ -112,7 +117,11 @@ CHAPTER_BYTE_BUDGETS: dict[str, int] = {
     # typed timeout-cause sentence join TZ-1's bridge-intake paragraph; TZ-2 had compressed the
     # owner-wait and heartbeat paragraphs it touched in place (+103 bytes alone), TZ-1's
     # paragraph is new, so the union displaces nothing.
-    "docs/architecture/05-supervisor-loop.md": 33700,
+    # 33700 -> 34100 (TZ-1 PR-2, measured 34059): the reconcile pass moved off the loop thread
+    # (own latch, the attempt-basis fence, the drive-custody pass: child-ref retry then bounded
+    # drive settlements under the queue interlock, generation re-asked per item and commit) and
+    # the watchdog watches startup with the stall stack; the sentences they change were replaced.
+    "docs/architecture/05-supervisor-loop.md": 34100,
     # 286850 -> 287600: "an answer that has not arrived is a gap" is a new invariant of
     # plan review and task acceptance (the slot census vocabulary, the `awaiting`
     # projection, the only-awaited task outcome); the in-flight sentence it grew from is
@@ -196,9 +205,14 @@ CHAPTER_BYTE_BUDGETS: dict[str, int] = {
     # free host_task_facts, stat-only files_rescued and post-work settlement clauses
     # replace their prior paragraphs (+242 bytes) independently of the memory writer;
     # both contracts survive the merge, with no duplicated prose to displace.
-    # 316800 -> 322400 (steer sprint 2026-09-26, measured 322273 on the merged tree: delegate_message,
+    # 316800 -> 317750 (TZ-1 PR-2 custody, measured 317713): the startup-prune sentence is
+    # replaced by the one deletion owner (settle_child_drive): its obligations (recorded rows
+    # first, unrecorded files, the input closure, exact unread lines), the shared custody lock,
+    # the queue interlock the move needs and the identity-ranked view; the forward_to_worker
+    # clause gains the queued receipt and the terminal unread-mail custody.
+    # 317750 -> 323400 (steer sprint 2026-09-26, measured 323255 on the merged tree: delegate_message,
     # truthful waiting A-E, low-water reclaim; see the sprint ledger).
-    "docs/architecture/06-agent-core.md": 322400,
+    "docs/architecture/06-agent-core.md": 323400,
     # 36991 -> 37300: the facade paragraph names the three loop constants runtime_limits.py
     # gained (events batch bound, budget-projection retry interval); no older text to displace.
     # 37300 -> 38400 (PR #1207): the Z.ai (`zai::`) direct provider gets its own route
@@ -315,7 +329,7 @@ CHAPTER_BYTE_BUDGETS: dict[str, int] = {
     # each side fit alone (TZ-2 96666, TZ-1 96682); TZ-2's reflection-custody and stop-freshness
     # clauses and TZ-1's off-loop ingress-lock clause rewrite different bullets in place, so
     # the union displaces nothing.
-    # 96800 -> 97500 (steer sprint 2026-09-26, measured 97396 on the merged tree: delegate_message,
+    # 96800 -> 97500 (steer sprint 2026-09-26, measured 97380 on the merged tree: delegate_message,
     # truthful waiting A-E, low-water reclaim; see the sprint ledger).
     "docs/development/06-rules-by-change-class.md": 97500,
     "docs/development/07-managed-update-rule.md": 4166,
