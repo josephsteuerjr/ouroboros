@@ -502,18 +502,15 @@ def cache_horizon_note(ctx: Any, elapsed_sec: Any) -> str:
     (batch waits, longer single windows), while "~X tokens will re-write" is a
     counterfactual — the next send may reroute, compact, or still hit a live cache.
 
-    REACHABILITY, honestly (each wait tool clamps its own window, so "all three
-    wait tools carry the line" is a capability, not a per-configuration promise):
-    at the shipped default TTL ``1h`` (3600s horizon) only ``wait_tasks`` (7200s
-    clamp) can genuinely emit it; ``wait_task`` clamps at exactly 3600s and can
-    only cross by the result reads after its (sleep-clipped) window, and ``delegate_wait``
-    clamps its WINDOW at ``config.DELEGATE_WAIT_WINDOW_MAX_SEC`` (1800s; the
-    2100s ToolEntry ceiling above it is the kill timeout, not the window — F5)
-    and cannot cross at all.
-    At ``5m`` all three emit it. Pinned by
-    tests/test_cache_optimization.py::test_cache_horizon_reachability_matches_the_wait_clamps —
-    the call sites stay on all three because the tier is an owner setting, not a
-    constant, and a wait tool that silently could not disclose would be worse.
+    REACHABILITY, honestly: the root waits (``wait_task``, ``wait_tasks``) feed
+    their own elapsed window, a LOWER bound on cache age, so at the shipped ``1h``
+    tier only ``wait_tasks`` (7200s ceiling) can cross inside the window and
+    ``wait_task`` sits on the 3600s horizon; at ``5m`` both cross. ``delegate_wait``
+    feeds the time since the task's last recorded model response, once per wake, so
+    its line is reachable at ANY tier and no longer depends on the 3 s tick. Pinned by
+    tests/test_cache_optimization.py::test_cache_horizon_reachability_matches_the_wait_clamps
+    and the supervising-wake tests; the tier is an owner setting, not a constant, and
+    a wait tool that silently could not disclose would be worse.
     """
     try:
         elapsed = float(elapsed_sec)
@@ -529,8 +526,8 @@ def cache_horizon_note(ctx: Any, elapsed_sec: Any) -> str:
     if horizon is None or elapsed <= horizon:
         return ""
     return (
-        f"⚠️ configured prompt-cache horizon ({applied_ttl}, {horizon}s) elapsed during "
-        f"this wait ({elapsed:.0f}s); the next model send may be cold."
+        f"⚠️ configured prompt-cache horizon ({applied_ttl}, {horizon}s) elapsed since the "
+        f"last model response ({elapsed:.0f}s ago); the next model send may be cold."
     )
 
 
@@ -819,7 +816,7 @@ def await_messages_entry() -> ToolEntry:
             "off you and its completion counts as progress, so your next round starts inside a "
             "full idle window — call again to keep waiting. It delivers nothing itself: the message "
             "reaches you at the next round top, exactly as after a wait_task early return. The "
-            "result says when the applied prompt-cache horizon elapsed during the wait."
+            "result says when the applied prompt-cache horizon elapsed since the last model response."
         ),
         "parameters": {"type": "object", "required": ["timeout_sec"], "properties": {
             "timeout_sec": {"type": "integer", "description":

@@ -174,7 +174,7 @@ CHAPTER_BYTE_BUDGETS: dict[str, int] = {
     # its `era_retry` record keyed to the executed Light binding, the four typed memory-maintenance
     # events and the host stamp on `source_capture` history rows are mechanisms no older text
     # described; the sentences they extend were rewritten in place, not appended to.
-    # 314900 -> 318000 (PROVISIONAL, re-measured on the merged tree below): delegate_message
+    # 314900 -> 320500 (measured 320322 on the merged sprint tree): delegate_message
     # (the live-message verb's capability gate, engine-mirrored outcomes with the host's
     # `not_found`, `message_id` idempotency custody, attempt-local lifetime; the "Four nanny
     # verbs" sentence and the harness-named "codex lane has no mid-run channel" clause were
@@ -182,7 +182,7 @@ CHAPTER_BYTE_BUDGETS: dict[str, int] = {
     # "deficit-triggered, low-water-sized" with the binding boundary, the structural divisor,
     # the checkpoint's requested-margin/achieved-headroom facts and the overflow minimum),
     # and the supervision/waiting sentences of the same sprint.
-    "docs/architecture/06-agent-core.md": 318000,
+    "docs/architecture/06-agent-core.md": 320500,
     # 36991 -> 37300: the facade paragraph names the three loop constants runtime_limits.py
     # gained (events batch bound, budget-projection retry interval); no older text to displace.
     # 37300 -> 38400 (PR #1207): the Z.ai (`zai::`) direct provider gets its own route
@@ -290,10 +290,10 @@ CHAPTER_BYTE_BUDGETS: dict[str, int] = {
     # bullet states the declare-in-builder / project-in-transport rule, the per-family
     # OpenRouter session and the two enforcing tests; the notice bullet gains the second
     # meaning of the `[SYSTEM NOTICE]` marker. The derived-identity sentence is replaced.
-    # 96700 -> 97200 (delegate_message, measured 97035): one
+    # 96700 -> 97400 (delegate_message + supervision facts + waiting D, measured 97240 on the merged sprint tree): one
     # delegated-lane bullet for the live-message verb (capability gate, mirrored outcomes,
     # message_id custody, no retry loop); the base sat 104 bytes under the previous budget.
-    "docs/development/06-rules-by-change-class.md": 97200,
+    "docs/development/06-rules-by-change-class.md": 97400,
     "docs/development/07-managed-update-rule.md": 4166,
     "docs/development/08-mutation-attribution-rule.md": 2899,
     "docs/development/09-process-custody-rule.md": 10028,

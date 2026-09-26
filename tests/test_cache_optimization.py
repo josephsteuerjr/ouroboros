@@ -480,7 +480,6 @@ def test_cache_horizon_reachability_matches_the_wait_clamps(tmp_path, monkeypatc
     from types import SimpleNamespace
 
     from ouroboros.llm import cache_ttl_seconds
-    from ouroboros.task_results import STATUS_COMPLETED, write_task_result
     from ouroboros.tools import control_task_results as control_mod
     from ouroboros.tools.control import cache_horizon_note
 
@@ -493,9 +492,8 @@ def test_cache_horizon_reachability_matches_the_wait_clamps(tmp_path, monkeypatc
     ceilings = {
         "wait_task": _clamp(control_mod._WAIT_TASK_CLAMP_SEC),
         "wait_tasks": _clamp(control_mod._WAIT_TASKS_CLAMP_SEC),
-        "delegate_wait": DELEGATE_WAIT_WINDOW_MAX_SEC,
     }
-    assert ceilings == {"wait_task": 3600, "wait_tasks": 7200, "delegate_wait": 1800}
+    assert ceilings == {"wait_task": 3600, "wait_tasks": 7200}
 
     def _emits(tier, ceiling):
         ctx = SimpleNamespace(_accumulated_usage={"_last_prompt_cache_ttl": tier})
