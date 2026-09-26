@@ -294,9 +294,6 @@ CHAPTER_BYTE_BUDGETS: dict[str, int] = {
     # delegated-lane bullet for the live-message verb (capability gate, mirrored outcomes,
     # message_id custody, no retry loop); the base sat 104 bytes under the previous budget.
     "docs/development/06-rules-by-change-class.md": 97200,
-    # 96700 -> 96800 (truthful waiting A-C, measured 96791): one Timeout & Wait Control bullet —
-    # wake facts measured over the interval the actor experienced; no older text to displace.
-    "docs/development/06-rules-by-change-class.md": 96800,
     "docs/development/07-managed-update-rule.md": 4166,
     "docs/development/08-mutation-attribution-rule.md": 2899,
     "docs/development/09-process-custody-rule.md": 10028,

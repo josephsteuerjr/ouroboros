@@ -477,7 +477,6 @@ def test_cache_horizon_reachability_matches_the_wait_clamps(tmp_path, monkeypatc
     model response, so it can emit at ANY tier (pinned in the supervising-wake test
     below). Fails if a clamp, the ceiling or the tier scale moves without revisiting
     the disclosure."""
-    import json
     from types import SimpleNamespace
 
     from ouroboros.llm import cache_ttl_seconds
@@ -485,21 +484,18 @@ def test_cache_horizon_reachability_matches_the_wait_clamps(tmp_path, monkeypatc
     from ouroboros.tools import control_task_results as control_mod
     from ouroboros.tools.control import cache_horizon_note
 
-    write_task_result(tmp_path, "child42", STATUS_COMPLETED, result="done")
-    handed = []
+    def _clamp(ceiling):
+        # The one window ladder both task waits use, probed without a deadline.
+        window = control_mod._wait_window(SimpleNamespace(), 10**9, clamp=ceiling, minimum=0, margin=30)
+        assert window == (ceiling, "ceiling")
+        return window[0]
 
-    def _record(*_args, timeout_sec=None, **_kwargs):
-        handed.append(timeout_sec)
-        return {"all_terminal": True, "elapsed_sec": 0.0, "tasks": {}}
-
-    monkeypatch.setattr(control_mod, "wait_for_effective_tasks", _record)
-    ctx = SimpleNamespace(drive_root=tmp_path)
-    control_mod._wait_for_task(ctx, "child42", timeout_sec=10 ** 6)
-    json.loads(control_mod._wait_for_tasks(ctx, ["child42"], timeout_sec=10 ** 6))
-    ceilings = {"wait_task": handed[0], "wait_tasks": handed[1]}
-    assert ceilings == {"wait_task": control_mod._WAIT_TASK_CLAMP_SEC,
-                        "wait_tasks": control_mod._WAIT_TASKS_CLAMP_SEC}
-    assert ceilings == {"wait_task": 3600, "wait_tasks": 7200}
+    ceilings = {
+        "wait_task": _clamp(control_mod._WAIT_TASK_CLAMP_SEC),
+        "wait_tasks": _clamp(control_mod._WAIT_TASKS_CLAMP_SEC),
+        "delegate_wait": DELEGATE_WAIT_WINDOW_MAX_SEC,
+    }
+    assert ceilings == {"wait_task": 3600, "wait_tasks": 7200, "delegate_wait": 1800}
 
     def _emits(tier, ceiling):
         ctx = SimpleNamespace(_accumulated_usage={"_last_prompt_cache_ttl": tier})

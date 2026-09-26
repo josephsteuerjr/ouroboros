@@ -343,7 +343,7 @@ and 23 (`delegated_transport`), both critical. The imperatives:
   rides the reminder round (`tests/test_v6570_swarm_honesty.py`). `wait_tasks`
   stays batch-compact;
   `control_task_results._wait_for_tasks` owns its projection, documented under
-  ARCHITECTURE's "Waiting on children"; full untruncated handoff belongs to `get_task_result` and `wait_task`, and the
+  ARCHITECTURE's "Waiting on children"; full untruncated handoff belongs to `get_task_result` and a settled `wait_task`, and the
   model result and the optional `terminal_host_notice` stay separate. No
   shared ledgers, automatic memory merges or new settings/endpoints unless the
   accepted plan calls for them. Push/live events are wakeups, not terminal
