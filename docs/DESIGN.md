@@ -226,6 +226,13 @@ inside it. `tests/test_appearance_static.py` holds both facts.
 A status has **an explicit foreground/background pair**, never a foreground
 derived from whatever generic opacity happens to sit on the element.
 
+The connected Chat header says `Starting…` until a complete server-ready
+observation confirms the supervisor can assign work; a live socket alone means
+only that the UI transport is open. `Online` is reserved for a ready, idle
+runtime, while known queued or active work retains its own factual label. A
+durably accepted incoming message likewise proves acceptance, not that its
+task has begun or that a model has read it.
+
 Status, owner action, and urgent notification are separate product concepts:
 
 - **Status** states a fact about the affected object. It does not imply that the

@@ -208,15 +208,16 @@ def _str_match_replace(
     """Shared exact, byte-level, single-occurrence replacement for both str-replace
     editors — the repo editor (``git._str_replace_editor``) and the data-plane editor
     (``_edit_text``) — so they give IDENTICAL match feedback (deferral 4). Returns
-    ``(new_text, None)`` on a unique match, else ``(None, error_message)`` with the
-    count==0 file preview / count>1 positional hints. ``error_tag`` is the caller's
-    error prefix (e.g. ``STR_REPLACE_ERROR`` / ``EDIT_TEXT_ERROR``)."""
+    ``(new_text, None)`` on a unique match, else ``(None, error_message)``: a miss
+    carries the bounded edit-miss locator (plus the whole file when it is small),
+    duplicates name positions. ``error_tag`` is the caller's error prefix (e.g.
+    ``STR_REPLACE_ERROR`` / ``EDIT_TEXT_ERROR``)."""
     count = text.count(old_str)
     if count == 0:
-        preview = text[:2000]
+        from ouroboros.tools.edit_ops import locate_edit_miss, whole_file_preview
         return None, (
             f"⚠️ {error_tag}: old_str not found in {display_path}.\n"
-            f"File preview (first 2000 chars):\n{preview}"
+            f"{locate_edit_miss(text, old_str)}{whole_file_preview(text)}"
         )
     if count > 1:
         positions = []

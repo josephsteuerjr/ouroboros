@@ -823,6 +823,8 @@ def _collect_chat_rows(
                 # (the key is simply ignored), and ``transport`` is the
                 # provenance surface.
             }
+            if role == "user" and entry.get("ingress_accepted") is True:
+                rec["ingress_accepted"] = True
             if rec["system_type"] in {"project_started", "project_handoff", "project_completion_summary"}:
                 # Read-side plain normalization for lifecycle rows persisted
                 # before the producer stripped markdown; a no-op on new rows.

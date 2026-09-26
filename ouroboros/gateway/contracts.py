@@ -113,18 +113,16 @@ class ChatOutbound(TypedDict):
     role: Literal["user", "assistant", "system"]
     content: str
     ts: str
+    ingress_accepted: NotRequired[bool]  # Canonical inbound row saved; not processing/start proof.
     markdown: NotRequired[bool]
     is_progress: NotRequired[bool]
     task_id: NotRequired[str]
     origin_message_ref: NotRequired[Dict[str, Any]]
     # X3: a repair receipt whose managed task id the router mints only at promotion (typed truth, no invented id).
     task_id_pending: NotRequired[bool]
-    # "finalizing" on a root's early final answer: the answer is delivered
-    # while post-task synthesis still runs, so the frame is NOT the task's
-    # terminal conclusion — task_done settles the card/turn.
+    # "finalizing": early answer during synthesis, NOT terminal; task_done settles the card/turn.
     task_phase: NotRequired[str]
-    # Direct/ephemeral finals and errors settle client activity without a snapshot:
-    # completed/failed/cancelled/rejected_duplicate, not an early answer.
+    # Direct/ephemeral completed/failed/cancelled/rejected_duplicate settles activity, not early answers.
     task_terminal_status: NotRequired[str]
     ephemeral_decision: NotRequired[bool]
     tool_calls: NotRequired[int]
