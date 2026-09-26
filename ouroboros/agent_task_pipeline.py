@@ -42,7 +42,6 @@ from ouroboros.subagents import envelope_from_task, substrate_result_fields
 from ouroboros.subagent_messages import initiator_meta, subagent_message_meta
 from ouroboros.utils import utc_now_iso, append_jsonl, truncate_review_artifact as _truncate_with_notice
 from ouroboros.utils import in_worker_process
-from ouroboros.llm_claudexor import propagate_model_error
 from ouroboros.post_task_checkpoint import (
     POST_TASK_SYNTHESIS_INFLIGHT as _POST_TASK_SYNTHESIS_INFLIGHT,
     POST_TASK_SYNTHESIS_LOCK as _POST_TASK_SYNTHESIS_LOCK,
@@ -201,8 +200,15 @@ def _run_post_task_processing_async(
                 if is_presence_task(task_snapshot):
                     return ""
                 # Project facts stay scoped; generic process lessons remain global.
-                _update_improvement_backlog(env, reflection_entry)
                 failure = ""
+                try:
+                    _update_improvement_backlog(env, reflection_entry)
+                except Exception as error:
+                    propagate_paid_interruption(error)
+                    # A lost append or grooming pass is this stage's own typed
+                    # failure (degraded, nothing skipped); the chooser still runs.
+                    failure = "backlog_update_failed"
+                    log.warning("Improvement backlog update failed", exc_info=True)
                 try:
                     from ouroboros.post_task_evolution import maybe_promote
 
@@ -258,13 +264,14 @@ def _run_post_task_processing_async(
                         stage_errors = True
                         log.warning("Post-task stage %s failed for %s: %s", name, stage_task_id, stage_reason)
                 except Exception as error:
-                    if isinstance(error, BudgetExceeded):
+                    # The adapters' own classifier: a control, the wallet and an
+                    # unresolved attempt on any provider's chain stop later paid work.
+                    try:
+                        propagate_paid_interruption(error)
+                    except BudgetExceeded:
                         interrupted = "budget_exhausted"
-                    else:
-                        try:
-                            propagate_model_error(error)
-                        except Exception as control:
-                            interrupted = post_task_interruption(control)
+                    except Exception as control:
+                        interrupted = post_task_interruption(control)
                     if interrupted:
                         skipped = [stage for stage, _run in stages[index + 1:]]
                         log.warning("Post-task paid stage %s interrupted for %s: %s",

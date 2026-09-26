@@ -738,6 +738,10 @@ def merge_agent_acceptance_stance(trace: Dict[str, Any], decision: dict, ctx: An
             # fresh read, so an unverifiable stance is never honoured as ready.
             "evidence_fingerprint": observed_delivery_evidence(ctx, trace),
         }
+    from ouroboros.review_records import recorded_author_stop
+
+    if merged.get("agent_finish_intent") and recorded_author_stop(previous):
+        ctx._task_acceptance_reviewed = False  # the author's next decision reopens an honoured stop
     trace["acceptance_decision"] = merged
 
 

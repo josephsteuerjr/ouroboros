@@ -533,17 +533,19 @@ function joinCauseClauses(clauses) {
         .join(' · ');
 }
 
+// The explicit author stop (TZ-2 C4): the typed author_stop, or the structured stop recorded under its TRUE
+// cause when the review rounds ran out. The twin of review_records.recorded_author_stop.
+const explicitAuthorStop = (d) => d?.reason === 'author_stop' || (d?.reason === 'review_cycles_exhausted'
+    && d.author_action === 'stop' && d.author_disposition?.action === 'stop');
+// Its AUTHOR's reason beside the typed sentence (never a finish's or reviewer prose). Twin: project_dialogue._author_stop_rationale.
+const authorStopRationale = (d) => (explicitAuthorStop(d) ? String(d.author_disposition?.rationale || '').split(/\s+/).filter(Boolean).join(' ') : '');
+
 // Standing limitations of the delivered answer, from facts already on the
 // record: deferred children, and a plan review still open at delivery (the
 // result's terminal_plan_review_open flag), worded by its class when one is
 // named. The twin of project_dialogue._terminal_limitations.
 // The open-review classes that state a standing limitation (never the merely awaited case).
 const PLAN_REVIEW_OPEN_CLASSES = new Set(['plan_review_unanswered', 'plan_review_none_answered', 'plan_review_answered_open']);
-
-// The AUTHOR's own reason for an explicit stop, beside the typed sentence (TZ-2 C4); the reviewer
-// rationale stays in the card. The twin of project_dialogue._author_stop_rationale.
-const authorStopRationale = (d) => (d?.reason === 'author_stop' && typeof d.author_disposition === 'object'
-    ? String(d.author_disposition?.rationale || '').split(/\s+/).filter(Boolean).join(' ') : '');
 
 function terminalLimitations(record, reason, held = false) {
     const deferred = Number(record?.outcome_axes?.objective?.deferred_count || 0) > 0;
@@ -576,11 +578,10 @@ export function taskReasonDetail(evt) {
     if (taskStoppedWithSummary(evt)) {
         // An owner-requested stop is a success and carries its own marker instead.
         clause = '';
-    } else if (((severity !== 'error' && severity !== 'cancelled') || (decisionCause === 'author_stop' && severity === 'error'))
+    } else if (((severity !== 'error' && severity !== 'cancelled') || (explicitAuthorStop(decision) && severity === 'error'))
         && decision?.status && (decision.status !== 'accepted' || Object.hasOwn(TASK_CAUSE_PHRASES, decisionCause))) {
-        // A REVIEW-caused warning, or the explicit author stop that ended a red card, is explained
-        // by the host's acceptance decision in its own typed reason (an accepted decision only when
-        // it has a sentence); the stored reviewer rationale stays in the card, the result and Logs.
+        // A REVIEW-caused warning, or the explicit author stop that ended a red card, speaks through the
+        // decision's TRUE typed reason (an accepted one only with a sentence); reviewer prose stays in the card.
         clause = taskReasonPhrase(decisionCause);
     } else if (severity === "cancelled" && origin && typeof origin === "object"
         && !Array.isArray(origin) && Object.keys(origin).length) {

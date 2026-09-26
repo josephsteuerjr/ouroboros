@@ -660,6 +660,14 @@ def generate_reflection(
         backlog_candidates = []
         memory_actions = []
         reflection_route = "unknown"
+        # The placeholder is a stage that lost its work, never a clean one: the
+        # post-task coordinator reads this typed row and degrades the checkpoint
+        # while later stages still run; an interruption row keeps precedence there.
+        from ouroboros.utils import sanitize_tool_result_for_log
+
+        memory_operation_errors = [*memory_operation_errors, {
+            "kind": "reflection_failed", "label": "Task reflection",
+            "message": sanitize_tool_result_for_log(str(e)) or type(e).__name__}]
 
     return {
         "ts": utc_now_iso(),

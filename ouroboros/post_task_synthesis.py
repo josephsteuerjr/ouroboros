@@ -273,26 +273,20 @@ def _update_improvement_backlog(
     env: Any,
     reflection_entry: Dict[str, Any] | None,
 ) -> int:
-    """Persist LLM-nominated follow-up improvements into the durable backlog."""
-    try:
-        from ouroboros.improvement_backlog import append_backlog_items
+    """Persist LLM-nominated follow-up improvements into the durable backlog.
 
-        candidates = list((reflection_entry or {}).get("backlog_candidates") or [])
-        if not candidates:
-            return 0
-        added = append_backlog_items(env.drive_root, candidates)
-        try:
-            from ouroboros.improvement_backlog import groom_backlog
+    Returns the number appended; 0 is a genuine no-op (nothing nominated), never a
+    swallowed failure. An append or grooming failure raises to the promotion stage,
+    which isolates an ordinary one and stops later paid work on an interruption.
+    """
+    from ouroboros.improvement_backlog import append_backlog_items, groom_backlog
 
-            groom_backlog(env.drive_root)  # size-triggered; no-op while small
-        except Exception as error:
-            propagate_paid_interruption(error)
-            log.debug("Backlog grooming failed", exc_info=True)
-        return added
-    except Exception as error:
-        propagate_paid_interruption(error)
-        log.debug("Improvement backlog update failed", exc_info=True)
+    candidates = list((reflection_entry or {}).get("backlog_candidates") or [])
+    if not candidates:
         return 0
+    added = append_backlog_items(env.drive_root, candidates)
+    groom_backlog(env.drive_root)  # size-triggered; no-op while small
+    return added
 
 
 def _apply_reflection_memory_actions(
@@ -524,8 +518,12 @@ def _record_task_facts(env: Any, task: Dict[str, Any], usage: Dict[str, Any],
         stored_result = _atp().load_task_result(result_root, task_id) or {}
         review_projection = _compact_review_projection(llm_trace)
         # TZ-2 C2: how many files the task rescued into its store(s) — positive, zero or
-        # unknown — by stat alone; the fact discloses that no hash was computed.
-        files_rescued = rescued_files_fact(task_id, artifact_store_roots(canonical_root, task_id, child_root=result_root))
+        # unknown — by stat alone; the fact discloses that no hash was computed. A split
+        # non-Project root synthesizes on the canonical drive (parent env and task): its
+        # actor store is then the row's recorded ``child_drive_root``, else this drive.
+        canonical = result_root.resolve(strict=False) == canonical_root.resolve(strict=False)
+        files_rescued = rescued_files_fact(task_id, artifact_store_roots(
+            canonical_root, task_id, task=task, child_root=None if canonical else result_root))
         append_canonical_task_summary(canonical_root, {
             "ts": utc_now_iso(), "direction": "system", "type": "task_summary",
             "summary_kind": "host_task_facts", "summary_id": f"task-facts:{task_id}",
@@ -555,15 +553,18 @@ POST_TASK_INTERRUPT_KINDS = frozenset({"budget_exhausted", "provider_outcome_unk
 def propagate_paid_interruption(error: BaseException) -> None:
     """Re-raise what must stop later paid post-work; return for an ordinary failure.
 
-    ``propagate_model_error`` carries the control and unknown-provider facts; the
-    wallet's ``BudgetExceeded`` is the third (TZ-2 C3). A stage adapter that only
-    logged it let the coordinator run the next paid stage and write ``completed``.
-    Anything else returns, so the caller isolates the failure to its own stage.
+    ``propagate_model_error`` carries the control and typed unknown-provider facts;
+    the wallet's ``BudgetExceeded`` and an unresolved attempt on ANY provider's
+    exception chain — the consolidator's own classifier, never a broadened global
+    one — are the others (TZ-2 C3). A stage adapter that only logged them let the
+    coordinator run the next paid stage and write ``completed``. Anything else
+    returns, so the caller isolates the failure to its own stage.
     """
     propagate_model_error(error)
+    from ouroboros.transport_custody import outcome_unknown_on_chain
     from ouroboros.usage_accounting import BudgetExceeded
 
-    if isinstance(error, BudgetExceeded):
+    if isinstance(error, BudgetExceeded) or outcome_unknown_on_chain(error):
         raise error
 
 
@@ -579,9 +580,9 @@ def post_task_interruption(control: BaseException) -> str:
     if reason:
         return reason
     code = str(getattr(control, "code", "") or "")
-    capture = getattr(control, "physical_attempt_capture", None)
-    if (not code or code == "model_outcome_unknown"
-            or getattr(capture, "state", None) in {"dispatched", "unresolved"}):
+    from ouroboros.transport_custody import outcome_unknown_on_chain
+
+    if not code or code == "model_outcome_unknown" or outcome_unknown_on_chain(control):
         return "provider_outcome_unknown"
     return code
 

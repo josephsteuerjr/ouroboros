@@ -683,3 +683,175 @@ def test_ordinary_promotion_failure_degrades_the_checkpoint_but_keeps_the_global
     assert checkpoint["post_task_synthesis"] == "degraded"
     assert not checkpoint.get("post_task_stop_reason")
     assert f.stages[-2:] == ["backlog", "promotion-model"] and len(callbacks) == 1
+
+
+def _generic_unknown(carrier):
+    """A generic API exception (not the typed Claudexor error) whose physical attempt
+    was dispatched with no terminal provider fact — directly or on ``__cause__``."""
+    inner = RuntimeError("connection reset mid-request")
+    inner.physical_attempt_capture = SimpleNamespace(state="unresolved")
+    if carrier == "direct":
+        return inner
+    try:
+        raise RuntimeError("request failed") from inner
+    except RuntimeError as wrapped:
+        return wrapped
+
+
+def _real_promotion_chooser(monkeypatch, f):
+    from ouroboros import post_task_evolution as promotion
+
+    monkeypatch.setattr("ouroboros.post_task_evolution.maybe_promote", f.real_promote)
+    monkeypatch.setattr(config, "get_post_task_evolution_enabled", lambda: True)
+    monkeypatch.setattr(config, "get_runtime_mode", lambda: "advanced")
+    monkeypatch.setattr(config, "get_post_task_evolution_cadence", lambda: "llm")
+    monkeypatch.setattr(promotion, "_eligible", lambda *_: True)
+    monkeypatch.setattr(promotion, "_is_canonical_run", lambda *_: True)
+    monkeypatch.setattr(promotion, "_closed_objectives_digest", lambda *_: "")
+
+
+@pytest.mark.parametrize("carrier", ["direct", "cause"])
+@pytest.mark.parametrize("seam", ["groom", "chooser"])
+def test_generic_unknown_outcome_in_a_real_adapter_stops_every_later_paid_call(phase, monkeypatch, seam, carrier):
+    """F1: only the typed Claudexor error and ``BudgetExceeded`` were interruptions,
+    so a generic API exception carrying an unresolved attempt was swallowed by
+    ``groom_backlog`` and the promotion stage then bought the chooser and the global
+    callback. The consolidator's chain classifier now reads it provider-independently
+    in the REAL grooming and chooser adapters: nothing paid runs after it."""
+    import functools
+    from ouroboros import improvement_backlog, llm_observability, post_task_synthesis
+
+    f = phase
+    error = _generic_unknown(carrier)
+
+    def dispatch(*_args, call_type="", **_kwargs):
+        f.stages.append(call_type)
+        raise error
+
+    monkeypatch.setattr(llm_observability, "chat_observed", dispatch)
+    monkeypatch.setattr(pipeline, "_update_improvement_backlog", post_task_synthesis._update_improvement_backlog)
+    if seam == "groom":
+        monkeypatch.setattr(improvement_backlog, "groom_backlog",
+                            functools.partial(improvement_backlog.groom_backlog, cap=0))
+        monkeypatch.setattr("ouroboros.post_task_evolution.maybe_promote", lambda *a: f.stages.append("chooser"))
+    else:
+        _real_promotion_chooser(monkeypatch, f)
+    monkeypatch.setattr(pipeline, "_run_reflection", lambda *a, **k: f.stages.append("reflection") or {
+        "backlog_candidates": [{"summary": "one auto item", "category": "process", "source": "execution_reflection"}],
+        "memory_actions": [{"type": "knowledge_write"}]})
+    applied, callbacks = [], []
+    monkeypatch.setattr(pipeline, "_apply_reflection_memory_actions", lambda *a, **k: applied.append(1))
+    pipeline._run_post_task_processing_async(
+        f.env, f.task, {"rounds": 3}, {}, {}, f.root / "logs", event_queue=f.events,
+        on_reflection=lambda *args: callbacks.append(args))
+    assert f.done.wait(5)
+    checkpoint = load_task_result(f.root, f.task["id"])["root_phase_checkpoint"]
+    assert checkpoint["post_task_synthesis"] == "degraded"
+    assert checkpoint["post_task_stop_reason"] == "provider_outcome_unknown:skipped="
+    paid = "backlog_groom" if seam == "groom" else "post_task_evolution_decision"
+    assert f.stages == ["facts", "chat", "scratch", "reflection", paid], "no paid call after an unknown outcome"
+    assert callbacks == [] and not f.engine.creates
+    assert applied == [1], "the completed reflection's free actions are kept, applied once"
+
+
+@pytest.mark.parametrize("outcome", ["failure", "no_op"])
+def test_ordinary_grooming_failure_degrades_the_checkpoint_and_keeps_the_chooser(phase, monkeypatch, outcome):
+    """F3: ``groom_backlog`` turned a confirmed ordinary provider failure into 0, the
+    backlog adapter returned added-or-0 and the promotion stage ignored it, so a stage
+    that lost its grooming wrote ``completed``. Through the REAL adapters the failure
+    reaches the stage: degraded, nothing skipped, the chooser and the global callback
+    still run. A genuine no-op (the backlog is below the grooming trigger) completes."""
+    import functools
+    from ouroboros import improvement_backlog, llm_observability, post_task_synthesis
+
+    f = phase
+
+    def dispatch(*_args, **_kwargs):
+        f.stages.append("groom-model")
+        raise RuntimeError("grooming provider failed")
+
+    monkeypatch.setattr(llm_observability, "chat_observed", dispatch)
+    if outcome == "failure":
+        monkeypatch.setattr(improvement_backlog, "groom_backlog",
+                            functools.partial(improvement_backlog.groom_backlog, cap=0))
+    monkeypatch.setattr(pipeline, "_update_improvement_backlog", post_task_synthesis._update_improvement_backlog)
+    monkeypatch.setattr(pipeline, "_run_reflection", lambda *a, **k: f.stages.append("reflection") or {
+        "backlog_candidates": [{"summary": "one auto item", "category": "process", "source": "execution_reflection"}]})
+    monkeypatch.setattr("ouroboros.post_task_evolution.maybe_promote", lambda *a: f.stages.append("chooser"))
+    callbacks = []
+    pipeline._run_post_task_processing_async(
+        f.env, f.task, {"rounds": 3}, {}, {}, f.root / "logs", event_queue=f.events,
+        on_reflection=lambda *args: callbacks.append(args))
+    assert f.done.wait(5)
+    checkpoint = load_task_result(f.root, f.task["id"])["root_phase_checkpoint"]
+    assert checkpoint["post_task_synthesis"] == ("degraded" if outcome == "failure" else "completed")
+    assert not checkpoint.get("post_task_stop_reason")
+    assert f.stages == (["facts", "chat", "scratch", "reflection"]
+                        + (["groom-model"] if outcome == "failure" else []) + ["chooser"])
+    assert len(callbacks) == 1
+    assert improvement_backlog.load_backlog_items(f.root), "the appended candidate survives a failed grooming"
+
+
+def test_reflection_preparation_failure_degrades_the_checkpoint_with_a_typed_row(phase, monkeypatch):
+    """F3: ``generate_reflection``'s own catch returned a placeholder WITHOUT
+    ``memory_operation_errors``, so the coordinator read a clean reflection and wrote
+    ``completed`` over a stage that lost its work. Through the REAL adapters (no stub
+    of ``generate_reflection``) the placeholder carries a typed row: degraded, nothing
+    skipped, no reflection call bought, and the promotion stage still runs."""
+    from ouroboros import consolidator, post_task_synthesis, reflection
+
+    f = phase
+    monkeypatch.setattr(pipeline, "_run_reflection", post_task_synthesis._run_reflection)
+    monkeypatch.setattr(reflection, "should_generate_reflection", lambda *a, **k: True)
+
+    def unwritable(*_args, **_kwargs):
+        f.stages.append("retain")
+        raise RuntimeError("retention store unwritable")
+
+    monkeypatch.setattr(consolidator, "retain_memory_source", unwritable)
+    entries = []
+    monkeypatch.setattr(reflection, "append_reflection_routed", lambda _env, _task, entry: entries.append(entry))
+    launch(f)
+    assert f.done.wait(5)
+    checkpoint = load_task_result(f.root, f.task["id"])["root_phase_checkpoint"]
+    assert checkpoint["post_task_synthesis"] == "degraded"
+    assert not checkpoint.get("post_task_stop_reason")
+    assert f.stages == ["facts", "chat", "scratch", "retain", "backlog"]
+    assert not f.engine.creates, "a failed preparation buys no reflection call"
+    [entry] = entries
+    assert entry["reflection"].startswith("(reflection generation failed")
+    assert [row["kind"] for row in entry["memory_operation_errors"]] == ["reflection_failed"]
+    assert "retention store unwritable" in entry["memory_operation_errors"][0]["message"]
+
+
+def test_split_root_facts_row_counts_the_actor_store_when_synthesis_runs_canonically(phase, monkeypatch):
+    """F2 (TZ-2 C2): a split NON-Project root synthesizes with the parent env and task,
+    so ``env.drive_root`` IS the canonical drive; passing it as the child store folded
+    two identical canonical stores into one, and a file present only in the actor's
+    child store (before copy-back) was never walked — a confirmed-looking zero. Through
+    the real dispatch the actor store is the row's recorded ``child_drive_root``."""
+    import json
+    from ouroboros import post_task_synthesis
+    from ouroboros.headless import task_artifacts_dir
+
+    f = phase
+    child = f.root.parent / "child"
+    child.mkdir()
+    (task_artifacts_dir(child, f.task["id"]) / "report.md").write_text("r", encoding="utf-8")
+    monkeypatch.setattr(pipeline, "_record_task_facts", post_task_synthesis._record_task_facts)
+    monkeypatch.setattr(pipeline, "_run_reflection", lambda *a, **k: None)
+    child_env = SimpleNamespace(drive_root=child, repo_dir=f.root.parent, drive_path=lambda rel: child / rel)
+    child_task = {**f.task, "budget_drive_root": str(f.root), "drive_root": str(child)}
+    parent_task = {**child_task, "drive_root": str(f.root), "child_drive_root": str(child)}
+    pipeline._dispatch_root_post_task(
+        child_env, child_task, "Already answered", None, [], {"rounds": 3}, {}, {}, child / "logs",
+        budget_drive_root=str(f.root), split_drive=True, project_scoped=False, project_task=False,
+        parent_env=f.env, parent_task=parent_task)
+    assert f.done.wait(5)
+    rows = [json.loads(line) for line in (f.root / "logs" / "chat.jsonl").read_text(encoding="utf-8").splitlines()]
+    [row] = [r for r in rows if r.get("summary_id") == f"task-facts:{f.task['id']}"]
+    fact = row["files_rescued"]
+    assert (fact["count"], fact["state"], fact["hash_computed"]) == (1, "positive", False)
+    assert [s["store"] for s in fact["stores"]] == [
+        str(task_artifacts_dir(f.root, f.task["id"], create=False)),
+        str(task_artifacts_dir(child, f.task["id"], create=False))]

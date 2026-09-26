@@ -369,11 +369,10 @@ export function createChatDecision({
         const corrupt = normalized.some(
             (option) => !option || typeof option !== 'object' || !String(option.label || '').trim());
         const optionsKnown = Array.isArray(src.options) && !corrupt && normalized.length <= MAX_QUIZ_OPTIONS;
-        const options = optionsKnown ? normalized : [];
         return {
             quizId: String(src.quiz_id || ''),
             question: String((nested ? msg.text : src.question) || ''),
-            options,
+            options: optionsKnown ? normalized : [],
             optionsKnown,
             stake: String(src.stake || ''),
             assumption: String(src.assumption || ''),
@@ -413,7 +412,6 @@ export function createChatDecision({
         badge.textContent = 'recommended';
         button.append(badge);
     }
-
 
     async function submitAnswer(card, quiz, index, comment, settle = setCardState) {
         if (card.dataset.pending === '1') return;
@@ -561,10 +559,9 @@ export function createChatDecision({
             }
             const buttons = card.querySelectorAll('.chat-quiz-option');
             buttons.forEach((btn, i) => {
-                const disabled = !answerable;
                 const chosen = state === 'answered' && answeredIndex !== null && i === answeredIndex;
-                if (btn.disabled !== disabled) {
-                    btn.disabled = disabled;
+                if (btn.disabled !== !answerable) {
+                    btn.disabled = !answerable;
                     changed = true;
                 }
                 if (btn.classList.contains('chosen') !== chosen) {

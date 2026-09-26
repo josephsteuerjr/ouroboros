@@ -270,3 +270,107 @@ def test_the_row_reason_slot_carries_the_stop_rationale():
     # No rationale recorded (a malformed or stale disposition): the typed sentence alone.
     record["outcome_axes"]["review"]["acceptance_decision"]["author_disposition"] = ""
     assert _completion_verdict(record, {}) == TASK_CAUSE_PHRASES["author_stop"]
+
+
+def test_a_stop_after_an_earlier_panel_keeps_its_finality_through_the_keep_round(tmp_path, monkeypatch):
+    """(c) FAIL panel → action-only stop → keep: the stop honoured after an EARLIER
+    panel used to lose its finality on the next delivery pass — the stale reviewed
+    subject of that panel cleared the reviewed latch, the finish intent had been
+    consumed, the keep/replace control re-armed, a SECOND panel ran and Cyber's
+    advisory ``author_finish`` replaced the stop. One panel, final reason
+    ``author_stop``, the agent's rationale on the record, and never Done."""
+    from ouroboros.outcomes import derive_loop_outcome
+
+    run = _run_stop_loop(tmp_path, monkeypatch, [
+        "The export endpoint ships.",                       # reviewed: FAIL, capsule fed back
+        _stop_tool_call(),                                  # action-only stop after the feedback
+        json.dumps({"delivery_control": "keep"}),           # the host's control round: keep the stop
+        STOP_TEXT, json.dumps({"delivery_control": "keep"}), STOP_TEXT,
+        json.dumps({"delivery_control": "keep"}), STOP_TEXT,
+    ], stop_services=False)
+    assert run.panels == ["The export endpoint ships."], "an honoured stop must never buy a second panel"
+    decision = run.trace["acceptance_decision"]
+    assert decision["reason"] == "author_stop" and decision["author_action"] == "stop"
+    assert decision["author_disposition"]["action"] == "stop"
+    assert decision["author_disposition"]["rationale"] == STOP_RATIONALE
+    assert run.result == STOP_TEXT
+    axes = derive_loop_outcome(run.result, run.usage, run.trace)["outcome_axes"]
+    assert axes["objective"]["status"] == "fail" and axes["objective"]["reason"] == "author_stop"
+
+
+def _honoured_stop_after_a_panel(tmp_path, monkeypatch):
+    """A FAIL panel, its feedback exposed, then an action-only stop the host honours."""
+    from ouroboros.acceptance_settlement import expose_acceptance_feedback
+    from ouroboros.loop_acceptance import merge_agent_acceptance_stance
+
+    fx = _finality_pass(tmp_path, monkeypatch)
+    assert fx.run("initial answer") is True
+    expose_acceptance_feedback(fx.trace, fx.messages, "author-root")
+    fx.trace["tool_calls"].append({"tool": "task_acceptance_review", "args": {}})
+    merge_agent_acceptance_stance(fx.trace, {"explicit_finish": True, "author_action": "stop",
+                                             "rationale": STOP_RATIONALE}, fx.ctx)
+    assert fx.run(STOP_TEXT) is False
+    assert fx.trace["acceptance_decision"]["reason"] == "author_stop"
+    return fx
+
+
+def test_an_honoured_stop_holds_until_the_authors_next_decision_replaces_it(tmp_path, monkeypatch):
+    """(d) The earlier panel's reviewed subject no longer reopens review on a later
+    delivery pass (the stop binds no subject), over the same or a changed text; the
+    author's next explicit decision is still heard — a finish replaces the stop
+    without another panel."""
+    from ouroboros.loop_acceptance import merge_agent_acceptance_stance
+
+    fx = _honoured_stop_after_a_panel(tmp_path, monkeypatch)
+    for text in (STOP_TEXT, "A restated unfinished answer."):
+        assert fx.run(text) is False
+        assert fx.trace["acceptance_decision"]["reason"] == "author_stop"
+    fx.trace["tool_calls"].append({"tool": "task_acceptance_review", "args": {}})
+    merge_agent_acceptance_stance(fx.trace, {"disposition": "partial", "explicit_finish": True,
+                                             "author_action": "finish",
+                                             "rationale": "Fixed the empty-input case after all."}, fx.ctx)
+    assert fx.run("revised answer") is False
+    decision = fx.trace["acceptance_decision"]
+    assert decision["reason"] == "author_finish" and decision["author_disposition"]["action"] == "finish"
+    assert fx.calls == ["initial answer"], "neither the held stop nor the finish bought a panel"
+
+
+def test_owner_input_after_an_honoured_stop_takes_the_ordinary_review_path(tmp_path, monkeypatch):
+    """(e) New owner input supersedes the stop exactly as it supersedes any terminal
+    acceptance: Main answers it and that answer is reviewed normally."""
+    import ouroboros.loop as loop_mod
+
+    fx = _honoured_stop_after_a_panel(tmp_path, monkeypatch)
+    loop_mod._supersede_task_acceptance_for_owner_followup(fx.ctx, fx.trace)
+    assert fx.trace["acceptance_decision"]["reason"] == "owner_followup"
+    assert fx.run("The answer to the owner's follow-up.") is True
+    assert fx.calls == ["initial answer", "The answer to the owner's follow-up."]
+    assert fx.trace["acceptance_decision"]["reason"] != "author_stop"
+
+
+def test_a_stop_recorded_under_exhausted_rounds_keeps_its_cause_and_its_rationale():
+    """A2: when the review rounds ran out, ``_finish_advisory_author`` records the
+    stop under its TRUE cause, ``review_cycles_exhausted``, with ``author_action``
+    and the disposition's action ``stop``. The row keeps that cause's sentence and
+    still carries the author's rationale; a finish, or a bare inherited stop action
+    without the author's stop disposition, carries none."""
+    from ouroboros.project_dialogue import TASK_CAUSE_PHRASES, _author_stop_rationale, _completion_verdict
+    from ouroboros.review_records import recorded_author_stop
+
+    author = {"action": "stop", "rationale": "Not ready:  the export endpoint still fails.", "source": "author"}
+    structured = {"status": "finalized_unaccepted", "reason": "review_cycles_exhausted",
+                  "author_action": "stop", "author_disposition": author}
+    finish = {"status": "finalized_unaccepted", "reason": "review_cycles_exhausted", "author_action": "finish",
+              "author_disposition": {"action": "finish", "rationale": "Shipping as is.", "source": "author"}}
+    bare = {"status": "finalized_unaccepted", "reason": "review_cycles_exhausted", "author_action": "stop"}
+    assert recorded_author_stop(structured) and recorded_author_stop({"reason": "author_stop"})
+    assert _author_stop_rationale(structured) == "Not ready: the export endpoint still fails."
+    for other in (finish, bare, {**structured, "reason": "capsule_spent"}, {}, None):
+        assert not recorded_author_stop(other)
+    assert _author_stop_rationale(finish) == _author_stop_rationale(bare) == ""
+    record = {"status": "completed", "reason_code": "final_message", "outcome_axes": {
+        "execution": {"status": "ok"},
+        "objective": {"status": "fail", "source": "task_acceptance_review", "reason": "review_cycles_exhausted"},
+        "review": {"status": "skipped", "acceptance_decision": structured}}}
+    assert _completion_verdict(record, {}) == (
+        TASK_CAUSE_PHRASES["review_cycles_exhausted"][:-1] + " · Not ready: the export endpoint still fails.")

@@ -424,13 +424,17 @@ async def apply_retained_fact(api, token: str, lang: str, *, client_factory) -> 
 
 async def _mark_answered(api, client, record: Dict[str, Any], answer: str, lang: str) -> None:
     token = mint_token(str(record.get("task_id") or ""), str(record.get("quiz_id") or ""))
-    remember_state(api, token, record, "answered")
-    message_id = int(record.get("message_id") or 0)
-    if not message_id:
-        return
-    await client.edit_message_text_with_inline_keyboard(
-        int(record.get("chat_id") or 0), message_id, _answered_text(record, answer, lang), [], parse_mode="",
-    )
+    # The card's lifecycle lock (``_CARD_LOCKS``): an expiry edit already on the wire
+    # lands first, then this answer re-reads the stored card and settles it last.
+    async with card_lock(token):
+        record = quiz_for_token(api, token) or record
+        remember_state(api, token, record, "answered")
+        message_id = int(record.get("message_id") or 0)
+        if not message_id:
+            return
+        await client.edit_message_text_with_inline_keyboard(
+            int(record.get("chat_id") or 0), message_id, _answered_text(record, answer, lang), [], parse_mode="",
+        )
 
 
 async def answer_from_callback(

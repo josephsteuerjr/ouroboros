@@ -672,6 +672,11 @@ def _finish_advisory_author(ctx: _TaskAcceptanceContext) -> bool:
         _loop()._supersede_task_acceptance_for_owner_followup(ctx.tools._ctx, ctx.llm_trace)
         return True
     ctx.tools._ctx._task_acceptance_reviewed = True
+    if action == "stop":
+        # A stop binds no subject, so an earlier panel's cannot reopen review on the next
+        # delivery pass; only the author's next decision (merge_agent_acceptance_stance)
+        # or owner input does.
+        ctx.tools._ctx._task_acceptance_reviewed_subject = ""
     ctx.tools._ctx._task_acceptance_pending = ""
     _loop()._mark_root_acceptance_checkpoint(
         ctx.tools._ctx, ctx.llm_trace, status=author["reviewer_signal"].lower(), pass_index=ctx.passes_done,

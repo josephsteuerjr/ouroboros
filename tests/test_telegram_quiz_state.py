@@ -332,3 +332,52 @@ def test_concurrent_edits_are_serialized_so_an_expiry_never_lands_over_an_answer
     assert [bool(edit[3]) for edit in sent] == [True, False]  # expiry first, then the answer
     assert sent[-1][2].endswith("\nAnswered: 2. postgres")
     assert card.record()["state"] == "answered"
+
+
+@pytest.mark.parametrize("path", ["callback", "reply"])
+def test_a_telegram_answer_waits_for_an_in_flight_lifecycle_edit_and_lands_last(card, monkeypatch, path):
+    """Finding A1: the owner's own Telegram answer settled the card OUTSIDE the card
+    lock, so an expiry edit already past its state read (``follow_lifecycle`` holds
+    the lock while its edit is on the wire) landed after the answered edit and put
+    the buttons back while the stored state said ``answered``. The answer takes the
+    same lock: the toast never waits, the expiry lands first, the answered edit last."""
+    card.send(wait_for_answer=True)
+    plugin, api = card.plugin, card.api
+    gate = asyncio.Event()
+    sent = []  # every edit in the order Telegram would receive it
+
+    async def slow_edit(self, chat_id, message_id, text, keyboard, parse_mode="HTML"):
+        if keyboard:  # the expiry edit (buttons restored) is the slow one
+            await gate.wait()
+        sent.append((chat_id, message_id, text, keyboard))
+        return True
+
+    monkeypatch.setattr(Client, "edit_message_text_with_inline_keyboard", slow_edit)
+    client = Client("token")
+
+    async def post(_api, _path, body):
+        return 200, {"ok": True, "state": "answered", "answered_index": 1}
+
+    async def answer():
+        if path == "callback":
+            await plugin.telegram_quiz.answer_from_callback(
+                api, client, f"qz:{card.token}:1", cb_id="cb", update_id=7, lang="en", post=post)
+        else:
+            await plugin.telegram_quiz.answer_from_reply(
+                api, client, card.record(), "2. postgres", chat_id=42, update_id=7, lang="en", post=post)
+
+    async def scenario():
+        expiry = asyncio.ensure_future(plugin._make_quiz_state(api)(_fact(state="expired_terminal")))
+        await asyncio.sleep(0)
+        assert card.record()["state"] == "expired_terminal" and sent == []  # stored; its edit is in flight
+        answered = asyncio.ensure_future(answer())
+        await asyncio.sleep(0)
+        assert client.toasts or client.sent  # the outcome is told at once, never behind the lock
+        gate.set()
+        await asyncio.gather(expiry, answered)
+
+    asyncio.run(scenario())
+    assert [bool(edit[3]) for edit in sent] == [True, False]  # expiry first, then the answer
+    assert sent[-1][2].endswith("\nAnswered: 2. postgres")
+    assert card.record()["state"] == "answered"
+    assert card.api.logs == []

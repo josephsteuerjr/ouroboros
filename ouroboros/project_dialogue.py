@@ -20,6 +20,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from ouroboros.acceptance_preparation import incident_cause_clauses
 from ouroboros.platform_layer import acquire_exclusive_file_lock, release_exclusive_file_lock
+from ouroboros.review_records import recorded_author_stop
 from ouroboros.task_finalization import TERMINAL_ORIGIN_HOST_SALVAGE
 from ouroboros.utils import append_jsonl, iter_jsonl_objects, jsonl_append_lock_path, replace_atomic, strip_markdown, utc_now_iso
 
@@ -1307,9 +1308,10 @@ def _completion_verdict(result: Dict[str, Any], event: Dict[str, Any]) -> str:
     if raw_reason == REASON_OWNER_REQUESTED_FINALIZATION:
         clause = ""  # an owner-requested stop is a success and carries its own marker
     elif (status and (status != ACCEPTANCE_ACCEPTED or cause in TASK_CAUSE_PHRASES)
-            and (phase in {"done", "warn"} or (cause == "author_stop" and phase == "error"))):
+            and (phase in {"done", "warn"} or (recorded_author_stop(decision) and phase == "error"))):
         # An explicit author stop is the fact that ended the task (its objective is
-        # blocked, so the card is red); the typed sentence speaks over the delivery step.
+        # blocked, so the card is red); the decision's typed reason — its TRUE cause,
+        # not always ``author_stop`` — speaks over the delivery step.
         clause = TASK_CAUSE_PHRASES.get(cause, cause)
     elif phase == "cancelled" and isinstance(origin, dict) and origin:
         # The recorded cause and the relation the record PROVES (#1061).
@@ -1341,8 +1343,8 @@ def _author_stop_rationale(decision: Dict[str, Any]) -> str:
     """The agent's own reason for an explicit stop, beside the typed sentence (TZ-2 C4).
 
     Only the AUTHOR's recorded rationale reaches the row: the reviewer rationale
-    stays in the card. The twin of ``authorStopRationale``."""
-    author = decision.get("author_disposition") if decision.get("reason") == "author_stop" else None
+    stays in the card; a finish carries none. The twin of ``authorStopRationale``."""
+    author = decision.get("author_disposition") if recorded_author_stop(decision) else None
     return " ".join(strip_markdown(str(author.get("rationale") or "")).split()) if isinstance(author, dict) else ""
 
 

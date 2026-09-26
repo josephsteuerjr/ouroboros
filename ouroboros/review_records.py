@@ -111,6 +111,24 @@ def validate_author_disposition(
     return normalized
 
 
+def recorded_author_stop(decision: Any) -> bool:
+    """Whether a task acceptance decision records the author's explicit stop (TZ-2 C4).
+
+    The typed ``author_stop`` reason, or the structured stop the producer records
+    under its TRUE terminal cause when the review rounds ran out: ``author_action``
+    and the disposition's ``action`` are both ``stop``. A finish is never a stop.
+    The twin of ``log_events.explicitAuthorStop``.
+    """
+    from ouroboros.outcomes import REASON_REVIEW_CYCLES_EXHAUSTED
+
+    if not isinstance(decision, dict):
+        return False
+    author = decision.get("author_disposition")
+    return decision.get("reason") == "author_stop" or (
+        decision.get("reason") == REASON_REVIEW_CYCLES_EXHAUSTED and decision.get("author_action") == "stop"
+        and isinstance(author, dict) and author.get("action") == "stop")
+
+
 def build_author_disposition_from_mapping(
     value: Any, *, subject_hash: str, reviewer_signal: str = "", enforcement: str = "",
 ) -> Dict[str, Any]:

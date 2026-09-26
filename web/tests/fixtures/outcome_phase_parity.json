@@ -623,6 +623,20 @@
       "acceptance_clause": "Ouroboros stopped with unfinished work; no review approval was granted · Not ready: the export endpoint still fails on empty input."
     },
     {
+      "name": "an author stop recorded after the review rounds ran out keeps its true terminal cause and still carries the agent's own reason",
+      "record": {"status": "completed", "reason_code": "final_message", "outcome_axes": {"execution": {"status": "ok"}, "objective": {"status": "fail", "source": "task_acceptance_review", "reason": "review_cycles_exhausted", "outcome_tier": "blocked_with_evidence"}, "review": {"status": "skipped", "acceptance_decision": {"status": "finalized_unaccepted", "reason": "review_cycles_exhausted", "author_action": "stop", "enforcement": "advisory", "review_capacity": {"reason": "review_cycles_exhausted"}, "rationale": "reviewer prose that never reaches the row", "author_disposition": {"disposition": "", "action": "stop", "rationale": "Not ready: the export endpoint still fails on empty input.", "subject_hash": "s1", "reviewer_signal": "", "enforcement": "advisory", "recorded_at": "2026-09-25T00:00:00+00:00", "source": "author"}}}}},
+      "phase": "error",
+      "headline": "Failed",
+      "acceptance_clause": "The task used up its review rounds before the answer was signed off · Not ready: the export endpoint still fails on empty input."
+    },
+    {
+      "name": "a finish beside the exhausted review rounds is no stop: the author's finish rationale never reaches the row",
+      "record": {"status": "completed", "reason_code": "final_message", "outcome_axes": {"execution": {"status": "ok"}, "review": {"status": "degraded", "acceptance_decision": {"status": "finalized_unaccepted", "reason": "review_cycles_exhausted", "author_action": "finish", "enforcement": "advisory", "author_disposition": {"disposition": "partial", "action": "finish", "rationale": "Shipping as is.", "subject_hash": "s1", "reviewer_signal": "", "enforcement": "advisory", "recorded_at": "2026-09-25T00:00:00+00:00", "source": "author"}}}}},
+      "phase": "warn",
+      "headline": "Done with warnings",
+      "acceptance_clause": "The task used up its review rounds before the answer was signed off."
+    },
+    {
       "name": "a blocking plan review whose reviewers were too few holds the work, and the card says so",
       "record": {"status": "completed", "reason_code": "final_message", "outcome_axes": {"execution": {"status": "ok"}, "objective": {"status": "fail", "source": "plan_review_quorum_unreachable", "reason": "plan_review_quorum_unreachable", "outcome_tier": "blocked_with_evidence"}, "review": {"status": "skipped"}}},
       "phase": "error",
