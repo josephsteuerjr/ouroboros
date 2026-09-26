@@ -38,7 +38,9 @@ CHAPTER_BYTE_BUDGETS: dict[str, int] = {
     # 165900 -> 166450 (TZ-1 PR-2 custody, measured 166432): module-map rows for the two new
     # owners (task_custody.py, gateway/task_archive.py) and the data-layout row for the
     # settlement's staging/trash; the artifact-route sentence was replaced, not appended to.
-    "docs/architecture/01-high-level-architecture.md": 166450,
+    # 166450 -> 166700 (steer sprint 2026-09-26, measured 166595 on the merged tree: delegate_message,
+    # truthful waiting A-E, low-water reclaim; see the sprint ledger).
+    "docs/architecture/01-high-level-architecture.md": 166700,
     # 15517 -> 16200 (#1195): the session-custodied startup historical audit is a
     # new node of the startup flow (readiness no longer waits for the historical
     # seal diagnostic); the chapter had no older description of that pass to replace.
@@ -208,7 +210,9 @@ CHAPTER_BYTE_BUDGETS: dict[str, int] = {
     # first, unrecorded files, the input closure, exact unread lines), the shared custody lock,
     # the queue interlock the move needs and the identity-ranked view; the forward_to_worker
     # clause gains the queued receipt and the terminal unread-mail custody.
-    "docs/architecture/06-agent-core.md": 317750,
+    # 317750 -> 323400 (steer sprint 2026-09-26, measured 323255 on the merged tree: delegate_message,
+    # truthful waiting A-E, low-water reclaim; see the sprint ledger).
+    "docs/architecture/06-agent-core.md": 323400,
     # 36991 -> 37300: the facade paragraph names the three loop constants runtime_limits.py
     # gained (events batch bound, budget-projection retry interval); no older text to displace.
     # 37300 -> 38400 (PR #1207): the Z.ai (`zai::`) direct provider gets its own route
@@ -298,7 +302,9 @@ CHAPTER_BYTE_BUDGETS: dict[str, int] = {
     # 23400 -> 23500: the long-work continuity merge landed the chapter at 23471 on the
     # official line; re-based here, no text of this chapter was touched.
     "docs/development/03-module-size-and-complexity.md": 23500,
-    "docs/development/04-core-governance-artifacts.md": 16431,
+    # 16431 -> 17100 (steer sprint 2026-09-26, measured 16930 on the merged tree: delegate_message,
+    # truthful waiting A-E, low-water reclaim; see the sprint ledger).
+    "docs/development/04-core-governance-artifacts.md": 17100,
     "docs/development/05-review-and-commit-protocol.md": 12956,
     # 94197 -> 94520: the usage-ledger lock rule gains its reader contract (a display read
     # on the supervisor loop or a gateway thread rides the last validated snapshot; money
@@ -323,7 +329,9 @@ CHAPTER_BYTE_BUDGETS: dict[str, int] = {
     # each side fit alone (TZ-2 96666, TZ-1 96682); TZ-2's reflection-custody and stop-freshness
     # clauses and TZ-1's off-loop ingress-lock clause rewrite different bullets in place, so
     # the union displaces nothing.
-    "docs/development/06-rules-by-change-class.md": 96800,
+    # 96800 -> 97500 (steer sprint 2026-09-26, measured 97380 on the merged tree: delegate_message,
+    # truthful waiting A-E, low-water reclaim; see the sprint ledger).
+    "docs/development/06-rules-by-change-class.md": 97500,
     "docs/development/07-managed-update-rule.md": 4166,
     "docs/development/08-mutation-attribution-rule.md": 2899,
     "docs/development/09-process-custody-rule.md": 10028,
