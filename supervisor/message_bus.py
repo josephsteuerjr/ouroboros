@@ -957,8 +957,12 @@ class LocalChatBridge:
         state: str = "open",
         task_id: str = "",
         wait_for_answer: bool = False,
+        host_facts: str = "",
     ) -> Tuple[bool, str]:
-        """Send an owner quiz card to the UI and host event subscribers."""
+        """Send an owner quiz card to the UI and host event subscribers.
+
+        ``host_facts`` (the host's sentence under the question) rides the frame, the
+        event and the chat row when non-empty; ``project_name`` rides the EVENT only."""
         if is_a2a_chat_id(chat_id):
             return True, "ok"
         qid = str(quiz_id or "").strip()
@@ -988,7 +992,18 @@ class LocalChatBridge:
             "chat_id": int(chat_id or 0),
             "task_id": str(task_id or ""),
         }
+        if host_facts:
+            msg["host_facts"] = str(host_facts)  # the envelope literal keeps constant keys (contract scan)
         stamp_project_thread(DATA_DIR, msg)
+        project = None
+        if msg.get("project_thread"):
+            try:
+                from ouroboros.projects_registry import list_reserved_projects
+
+                project = next((row for row in list_reserved_projects(DATA_DIR)
+                                if row.get("chat_id") == int(chat_id)), None)
+            except Exception:
+                log.debug("Quiz project lookup failed", exc_info=True)
         if self._broadcast_fn:
             self._broadcast_fn(msg)
         quiz_transport = dict(self._chat_transports.get(int(chat_id or 0), {}) or {})
@@ -1004,6 +1019,8 @@ class LocalChatBridge:
             "assumption": payload["assumption"],
             "state": str(state or "open"),
             "ts": ts,
+            **({"host_facts": str(host_facts)} if host_facts else {}),
+            **({"project_name": str(project["name"])} if project and project.get("name") else {}),
         })
         try:
             owner_id = int(load_state().get("owner_id") or 0)
@@ -1019,6 +1036,7 @@ class LocalChatBridge:
                 "stake": payload["stake"],
                 "assumption": payload["assumption"],
                 "state": str(state or "open"),
+                **({"host_facts": str(host_facts)} if host_facts else {}),
             },
         )
         _advance_project_visible_revision(chat_id)
@@ -1026,10 +1044,7 @@ class LocalChatBridge:
             try:
                 from ouroboros.owner_quiz import quiz_states
                 from ouroboros.project_dialogue import project_question_pointer
-                from ouroboros.projects_registry import list_reserved_projects
 
-                project = next((row for row in list_reserved_projects(DATA_DIR)
-                                if row.get("chat_id") == int(chat_id)), None)
                 pointer = project_question_pointer(msg, quiz_states(DATA_DIR, task_id).get(qid), project)
                 if pointer:
                     frame = {
@@ -1045,7 +1060,7 @@ class LocalChatBridge:
                     # The complete pointer row (ChatOutbound mirrors): present only when known.
                     for key in ("question", "options", "option_details", "stake", "assumption", "recommended_index",
                                 "answered_index", "comment", "wait_for_answer", "wait_ended_at",
-                                "owner_wait_resume_reason"):
+                                "owner_wait_resume_reason", "host_facts"):
                         if key in pointer:
                             frame[key] = pointer[key]
                     self._broadcast_fn(frame)
@@ -1285,6 +1300,7 @@ def log_chat(
     message_meta: Optional[Dict[str, Any]] = None,
     drive_root=None,
     require_write: bool = False,
+    ensure_record_boundary: bool = False,
 ) -> Optional[dict]:
     root = drive_root if drive_root is not None else DATA_DIR
     if root:
@@ -1369,7 +1385,10 @@ def log_chat(
             record["quiz"] = dict(quiz)
         if size_bytes is not None:
             record["size_bytes"] = int(size_bytes)
-        written = append_jsonl(root / "logs" / "chat.jsonl", record, require_lock=require_write)
+        written = append_jsonl(
+            root / "logs" / "chat.jsonl", record,
+            require_lock=require_write, ensure_record_boundary=ensure_record_boundary,
+        )
         if require_write:
             if not written:
                 raise RuntimeError("canonical message acceptance could not be persisted")
@@ -1384,7 +1403,9 @@ def send_with_budget(chat_id: int, text: str, log_text: Optional[str] = None,
                      progress_meta: Optional[Dict[str, Any]] = None,
                      ts: Optional[str] = None,
                      role: str = "", system_type: str = "",
-                     narration: Optional[bool] = None) -> None:
+                     narration: Optional[bool] = None,
+                     require_write: bool = False,
+                     ensure_record_boundary: bool = False) -> None:
     """Send one owner-visible message through the shared host seam.
 
     ``narration`` is the note's VOICE, the same typed fact the worker stamps on
@@ -1439,6 +1460,8 @@ def send_with_budget(chat_id: int, text: str, log_text: Optional[str] = None,
             task_id=task_id,
             record_type=system_type,
             message_meta=progress_meta,
+            require_write=require_write,
+            ensure_record_boundary=ensure_record_boundary,
         )
 
     if _text.strip() in ("", "\u200b"):

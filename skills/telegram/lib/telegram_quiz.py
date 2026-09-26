@@ -13,6 +13,17 @@ short callback token and the sent message to that identity: Telegram caps
 remembers its settled lifecycle state, so the host's ``chat.quiz_state`` facts
 edit it forward only. Nothing here parses the owner's words; a reply is
 delivered verbatim as their own answer.
+
+The card carries the whole authored text: the project it belongs to, the host's
+facts about the asking task, the question, the stake, and every option with its
+detail. A card longer than one Telegram message is never cut: the explanation
+goes out first as ordered plain messages through the client's existing chunker,
+and a compact message with the project line, the numbered option labels, the
+hint and the keyboard follows last. Only that last message is remembered, so a
+tap, a reply to it and the answered-edit keep working exactly as for a short
+card; a reply to one of the earlier explanation parts is an ordinary owner
+message, deliberately without per-part bookkeeping. An open question (no
+options) is the same card without a keyboard; its hint asks for a reply.
 """
 
 from __future__ import annotations
@@ -23,6 +34,7 @@ import json
 import weakref
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
+from .telegram_api import _TELEGRAM_TEXT_LIMIT, _u16len
 from .telegram_state import _read_json_file, _state_file
 
 _QUIZ_STATE_FILE = "quiz_state.json"
@@ -30,6 +42,9 @@ _MAX_REMEMBERED = 50
 _CALLBACK_PREFIX = "qz:"
 _BUTTON_LABEL_MAX = 40
 _ANSWER_ECHO_MAX = 200
+# The answered edit appends "Answered: <echo>" to the remembered single message; a card is sent
+# as ONE message only when that edit still fits Telegram's limit (echo + label + prefix + newline).
+_ANSWERED_EDIT_RESERVE = _ANSWER_ECHO_MAX + 32
 
 HostPost = Callable[[Any, str, Dict[str, Any]], Awaitable[Tuple[int, Dict[str, Any]]]]
 
@@ -49,6 +64,11 @@ _TEXTS = {
         "resumed": "The task continued; an answer is still accepted.",
         "expired_terminal": "The task finished; a late answer is accepted as your message.",
         "superseded": "Replaced by a newer question.",
+        "project": "Project",
+        "question": "Question",
+        "stake": "At stake",
+        "meanwhile": "Continuing meanwhile",
+        "waiting": "Waiting for your answer; Stop and the task deadline still apply.",
     },
     "ru": {
         "hint": "Нажмите вариант или ответьте на это сообщение своим текстом.",
@@ -65,6 +85,11 @@ _TEXTS = {
         "resumed": "Задача продолжила работу; ответ всё ещё принимается.",
         "expired_terminal": "Задача завершилась; поздний ответ придёт как ваше сообщение.",
         "superseded": "Вопрос заменён более новым.",
+        "project": "Проект",
+        "question": "Вопрос",
+        "stake": "Что на кону",
+        "meanwhile": "Пока продолжаю так",
+        "waiting": "Жду вашего ответа; Stop и срок задачи по-прежнему действуют.",
     },
 }
 
@@ -101,6 +126,28 @@ def mint_token(task_id: str, quiz_id: str) -> str:
     return hashlib.sha256(f"{task_id}:{quiz_id}".encode("utf-8")).hexdigest()[:12]
 
 
+def card_options(raw_options: Any, *, limit: int) -> Tuple[List[str], List[str], Optional[int]]:
+    """Labels, details and the recommended index of the event's options."""
+    labels: List[str] = []
+    details: List[str] = []
+    recommended: Optional[int] = None
+    for option in raw_options if isinstance(raw_options, list) else []:
+        label = str(option.get("label") or "").strip() if isinstance(option, dict) else ""
+        if not label or len(labels) >= limit:
+            continue
+        if option.get("recommended") is True and recommended is None:
+            recommended = len(labels)
+        labels.append(label)
+        details.append(str(option.get("detail") or "").strip())
+    return labels, details, recommended
+
+
+def button_labels(labels: List[str], recommended_index: Optional[int]) -> List[str]:
+    """Button captions: the recommended option carries a leading star."""
+    return [f"★ {label}" if index == recommended_index else label
+            for index, label in enumerate(labels)]
+
+
 def quiz_keyboard(token: str, labels: List[str]) -> List[List[dict]]:
     """One button row per option; ``callback_data`` = ``qz:<token>:<index>``."""
     return [
@@ -110,17 +157,74 @@ def quiz_keyboard(token: str, labels: List[str]) -> List[List[dict]]:
     ]
 
 
+def _project_line(project_name: str, lang: str) -> List[str]:
+    name = str(project_name or "").strip()
+    return [f"{_texts(lang)['project']}: {name}"] if name else []
+
+
+def _option_line(index: int, label: str, *, detail: str = "", recommended: bool = False) -> str:
+    line = f"{index}. {'★ ' if recommended else ''}{label}"
+    return f"{line} — {detail}" if detail else line
+
+
 def render_quiz_text(question: str, labels: List[str], stake: str, assumption: str,
-                     *, wait_for_answer: bool = False) -> str:
-    lines = [f"Question: {question}"]
+                     *, wait_for_answer: bool = False, project_name: str = "",
+                     option_details: Optional[List[str]] = None,
+                     recommended_index: Optional[int] = None,
+                     host_facts: str = "", lang: str = "en") -> str:
+    """The whole card body, never shortened: every authored field is kept."""
+    texts = _texts(lang)
+    details = list(option_details or [])
+    lines = _project_line(project_name, lang)
+    if host_facts:
+        lines.append(host_facts)
+    lines.append(f"{texts['question']}: {question}")
     if stake:
-        lines.append(f"At stake: {stake}")
-    lines.extend(f"{index}. {label}" for index, label in enumerate(labels, 1))
+        lines.append(f"{texts['stake']}: {stake}")
+    lines.extend(
+        _option_line(index, label,
+                     detail=str(details[index - 1] or "") if index - 1 < len(details) else "",
+                     recommended=recommended_index == index - 1)
+        for index, label in enumerate(labels, 1)
+    )
     if wait_for_answer:
-        lines.append("Waiting for your answer; Stop and the task deadline still apply.")
+        lines.append(texts["waiting"])
     elif assumption:
-        lines.append(f"Continuing meanwhile: {assumption}")
+        lines.append(f"{texts['meanwhile']}: {assumption}")
     return "\n".join(lines)
+
+
+def render_compact_text(labels: List[str], *, project_name: str = "",
+                        recommended_index: Optional[int] = None, lang: str = "en") -> str:
+    """The keyboard message of an overflowing card: project and numbered labels."""
+    lines = _project_line(project_name, lang)
+    lines.extend(_option_line(index, label, recommended=recommended_index == index - 1)
+                 for index, label in enumerate(labels, 1))
+    return "\n".join(lines)
+
+
+async def send_quiz_card(client, chat_id: int, *, body: str, compact: str, hint_text: str,
+                         keyboard: List[List[dict]]) -> Tuple[int, bool]:
+    """Send the card; return the keyboard message id and whether it overflowed.
+
+    A card that fits Telegram's per-message limit (UTF-16 units) WITH room for
+    its later answered edit is one message with the keyboard. A longer one is
+    sent as ordered plain parts through the client's chunker, then the compact
+    keyboard message; nothing authored is truncated.
+    """
+    async def send(text: str) -> int:
+        # An open question (no options) carries no keyboard: a plain message
+        # the owner replies to, remembered exactly like a keyboard message.
+        if keyboard:
+            return int(await client.send_message_with_inline_keyboard(
+                chat_id, text, keyboard, parse_mode="") or 0)
+        return int(await client.send_message(chat_id, text, parse_mode="") or 0)
+
+    full = f"{body}\n{hint_text}"
+    if _u16len(full) + _ANSWERED_EDIT_RESERVE <= _TELEGRAM_TEXT_LIMIT:
+        return await send(full), False
+    await client.send_message(chat_id, body, parse_mode="")
+    return await send(f"{compact}\n{hint_text}"), True
 
 
 def _load(api) -> Dict[str, Any]:
