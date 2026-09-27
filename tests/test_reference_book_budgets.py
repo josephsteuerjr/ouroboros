@@ -47,7 +47,9 @@ CHAPTER_BYTE_BUDGETS: dict[str, int] = {
     # 166450 -> 167000 (merge of the moved target into the plan-review branch, measured 166885): both
     # sides' replaced paragraphs land together; no text was appended by the merge itself.
     # 167000 -> 167300 (merge of the moved target into the plan-review branch, measured 167032): both sides' paragraphs land together.
-    "docs/architecture/01-high-level-architecture.md": 167300,
+    # 167300 -> 167600 (Windows tray replacement on refreshed base, measured 167526):
+    # launcher_tray and launcher_bridge gain distinct owner rows; the base's other owners remain.
+    "docs/architecture/01-high-level-architecture.md": 167600,
     # 15517 -> 16200 (#1195): the session-custodied startup historical audit is a
     # new node of the startup flow (readiness no longer waits for the historical
     # seal diagnostic); the chapter had no older description of that pass to replace.
@@ -276,8 +278,9 @@ CHAPTER_BYTE_BUDGETS: dict[str, int] = {
     # 12405 -> 14400 (issue #1142): the ordinary-close paragraph gains the mechanism the chapter had
     # no text for — graceful stop signals the server PID only, the server half (stop event at the
     # signal, bounded uvicorn drain) is self-sufficient against an old group-SIGTERM launcher.
-    # The Windows tray adds a distinct non-exit X-close before the shared Exit path.
-    "docs/architecture/09-shutdown-and-process-cleanup.md": 14700,
+    # The Windows tray adds a distinct non-exit X-close before the shared Exit path;
+    # refreshed-base chapter measures 14765 bytes, hence 14900 rather than the old 14700.
+    "docs/architecture/09-shutdown-and-process-cleanup.md": 14900,
     # 17655 -> 20400: the supervisor-reliability sprint adds eight invariants the chapter lacked
     # (typed permanent engine refusal, interrupted parent, stalled-loop facts, source-ack
     # pre-check, host-owed round, reviewer tool bound, off-thread custody, fence transport) —
