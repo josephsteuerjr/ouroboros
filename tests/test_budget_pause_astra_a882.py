@@ -302,7 +302,9 @@ def test_a_parallel_batch_raising_usage_accounting_error_waits_for_already_start
         # The re-raise happened only AFTER the started call B ran to completion.
         assert b_done.is_set(), "handle_tool_calls re-raised while call B was still running"
         assert raised_at >= marks["b_finished_at"]
-        assert raised_at - started_at >= 0.4
+        # Both marks are monotonic-clock ticks (~15.6 ms apart on Windows): allow one.
+        resolution = time.get_clock_info("monotonic").resolution
+        assert raised_at - started_at >= 0.4 - resolution, raised_at - started_at
     finally:
         b_done.wait(timeout=2.0)  # never leak the worker thread past the test
 
