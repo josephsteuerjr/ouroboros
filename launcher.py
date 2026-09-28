@@ -34,7 +34,7 @@ from ouroboros.config import (
     DATA_DIR,
     LAUNCHER_STOP_GRACE_SEC,
     PANIC_EXIT_CODE,
-    PORT_FILE,
+    PID_FILE, PORT_FILE,
     REPO_DIR,
     RESTART_EXIT_CODE,
     SETTINGS_PATH,
@@ -63,6 +63,7 @@ from ouroboros.launcher_onboarding import (
     prepare_first_run_settings as _prepare_first_run_settings,
     present_first_run_onboarding as _present_first_run_onboarding,
 )
+from ouroboros.launcher_tray import WindowsTray, activate_existing_tray, request_tray_cleanup, stop_tray_before_exit
 from ouroboros.launcher_server_reaper import (
     reap_same_install_strays as _reap_same_install_strays_impl,
 )
@@ -783,14 +784,14 @@ def agent_lifecycle_loop(port: int = AGENT_SERVER_PORT) -> None:
 
         if exit_code == PANIC_EXIT_CODE:
             log.info("Panic stop (exit code %d) — shutting down completely.", PANIC_EXIT_CODE)
-            _shutdown_event.set()
+            _shutdown_event.set(); request_tray_cleanup()
             # The agent (server child) already exited; tear down any orphans and
             # force-exit the whole process. _webview_window.destroy() from this
             # supervisor thread cannot end the main-thread Cocoa webview loop on
             # macOS (it leaves a black frozen window), so exit with parity to the
             # window-close path: kill orphans, release the pid lock, os._exit(0).
             _kill_orphaned_children(port, reason="panic_stop")
-            release_pid_lock()
+            stop_tray_before_exit(release_pid_lock, wait=0)
             os._exit(0)
 
         time.sleep(2)
@@ -1187,7 +1188,7 @@ def main(argv=()):
         import webview
 
     if not acquire_pid_lock():
-        log.error("Another instance already running.")
+        if IS_WINDOWS and not _headless and activate_existing_tray(PID_FILE): return
         if _headless:
             # The lock loss usually races the FIRST launcher's bootstrap
             # (repeated Open clicks): the port file may be absent (unlinked
@@ -1570,11 +1571,11 @@ def main(argv=()):
         _shutdown_event.set()
         stop_agent()
         _kill_orphaned_children(port)
-        release_pid_lock()
+        stop_tray_before_exit(release_pid_lock)
         os._exit(0)
 
-    window.events.closing += _on_closing
     _webview_window = window  # Persist cookies and website data (ouroboros.theme); rebuild/limits: ARCHITECTURE §3.
+    window.events.closing += WindowsTray(lambda: _webview_window, _on_closing, PID_FILE, _shutdown_event).attach(window) if IS_WINDOWS else _on_closing
 
     webview.start(debug=False, private_mode=False)
 
