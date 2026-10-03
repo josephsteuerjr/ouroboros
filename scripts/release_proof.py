@@ -101,7 +101,8 @@ REQUIRED_SMOKE_CHECKS = {
     "linux-deb-amd64": PACKAGE_SMOKE_CHECKS,
     "linux-rpm-x86_64": PACKAGE_SMOKE_CHECKS,
     "linux-rpm-red80-x86_64": PACKAGE_SMOKE_CHECKS,
-    "windows-x64": COMMON_SMOKE_CHECKS,
+    "windows-x64": COMMON_SMOKE_CHECKS
+    | frozenset({"authenticode_signer", "timestamp", "signed_payload_archive_match"}),
     "android-arm64": frozenset({
         "embedded_repo_bundle", "android_source_manifest", "usb_installer_help",
     }),

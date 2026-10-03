@@ -189,6 +189,11 @@ if ($TooLong) {
 
 Write-Host ""
 Write-Host "=== Creating archive ==="
+if ($env:OUROBOROS_WINDOWS_DEFER_ARCHIVE -eq "1") {
+    # The separate protected signing job verifies the executable before packaging.
+    Write-Host "Archive deferred until the isolated signing job completes."
+    return
+}
 Compress-Archive -Path "dist\Ouroboros" -DestinationPath "dist\$ArchiveName" -Force
 
 Write-Host ""
