@@ -143,96 +143,54 @@ Prerelease artifacts may intentionally be unsigned and must report that state; s
 ### Windows Authenticode release signing (SSL.com eSigner)
 
 The tag-only `build` matrix binds no signing Environment and receives no
-eSigner secrets. Its Windows shard defers ZIP creation and uploads an **unsigned intermediate**
-for a separate `windows-sign` job on a fresh Windows runner. That job alone
-binds `windows-release-signing`, downloads the intermediate, and runs
-`scripts/sign_windows_release.ps1`, which downloads SSL.com's Windows CodeSignTool
-**1.3.2** from its versioned GitHub release asset, checks SHA-256
-`4afc32e8b7f79bbe1de7e4e7049aaad4e0f754357613b9bbec0e3052f06fd36b`
-before executing it. The pinned ZIP's BAT expands `%*` without safe quoting,
-so the wrapper invokes its bundled `java.exe -jar` directly; it signs
-`Ouroboros.exe` into a temporary folder, checks
-Authenticode status, the configured SHA-1 signer certificate thumbprint and
-`signtool verify /pa /tw /v` with zero warnings, then copies it into the
-payload and archives it. A second fresh, secret-free `windows-proof` runner
-installs the test dependencies, unpacks the transferred signed ZIP, verifies
-the extracted executable again, and checks its SHA-256 against the digest
-written by the signer. That runner executes the packaged smoke, creates the
-ZIP-bound signature/timestamp/archive-match receipt, SBOM and attestations,
-then uploads the final release asset. A missing input, download/digest mismatch,
-signature/timestamp failure or archive mismatch fails this chain; publication
-requires `windows-proof` success. The release download selects only
-`ouroboros-*` artifacts, never unsigned or pre-proof intermediates. The vendor
-command takes credentials on argv; the build, protected signing and executable
-smoke/proof jobs must remain on three distinct ephemeral runners. Vendor output
-is private and discarded, not printed or uploaded. Do not use the upstream Action's
-moving branch or its command-logging implementation for these secrets.
+eSigner secrets: its Windows shard defers ZIP creation
+(`OUROBOROS_WINDOWS_DEFER_ARCHIVE=1`) and uploads an unsigned intermediate.
+A separate `windows-sign` job on a fresh runner binds the
+`windows-release-signing` Environment, downloads it and runs
+`scripts/sign_windows_release.ps1`: SSL.com's CodeSignTool 1.3.2 from its
+versioned GitHub release asset, SHA-256
+`4afc32e8b7f79bbe1de7e4e7049aaad4e0f754357613b9bbec0e3052f06fd36b`, invoked
+through its bundled `java.exe -jar` (the vendor BAT expands `%*` unquoted);
+it signs `Ouroboros.exe`, checks Authenticode status, the configured SHA-1
+signer thumbprint and `signtool verify /pa /tw /v` with zero warnings via
+`verify_windows_signature.ps1`, then archives the payload with a per-file
+digest audit (hidden files included). A secret-free `windows-proof` runner
+re-verifies the extracted executable against the signer-written digest, runs
+the packaged smoke, records `authenticode_signer`, `timestamp` and
+`signed_payload_archive_match` in the proof, and attests the SBOM. Any missing
+input, digest mismatch, signature, timestamp or archive failure stops this
+chain, publication requires `windows-proof`, and the release downloads only
+`ouroboros-*` artifacts. Build, signing and proof stay on three distinct
+ephemeral runners; vendor output is discarded, never printed or uploaded; the
+upstream Action's moving branch and command-logging stay out.
 
-Owner setup, by role (as of 2026-10-04 `razzant` is the repository owner and
-the only admin; the certificate holder `kazzand` and the `ouroboros-agent` bot
-both have write access — which is why the credentials live behind a reviewed
-Environment and not in repository secrets that any push could reach):
-
-1. **Repository owner** creates the Environment `windows-release-signing`
-   (Settings → Environments): *Deployment branches and tags* → *Selected*, add
-   the tag rule `v*`; *Required reviewers* → the certificate holder, so each
-   release tag costs that person one approval click before the certificate is
-   used. Environment creation needs admin rights; nothing in this repository
-   creates it.
-2. **Certificate holder** stores the four **environment-scoped** secrets
-   `ESIGNER_USERNAME`, `ESIGNER_PASSWORD`, `ESIGNER_CREDENTIAL_ID`,
-   `ESIGNER_TOTP_SECRET`: `gh secret set <NAME> --env windows-release-signing
-   --repo razzant/ouroboros` prompts for the value without echoing it.
-   GitHub's REST reference requires collaborator access for environment
-   secrets, so the holder enters them without handing the values to anyone;
-   if GitHub refuses, the owner enters them while the holder types. Values,
-   from the SSL.com account: username and password are the SSL.com login;
-   the credential ID is in the order's *SIGNING CREDENTIALS* section; the TOTP
-   secret is the `secret code` shown next to the order's *eSigner.com QR Code*.
-3. **Certificate holder** sets `ESIGNER_CERT_SHA1`, a **nonsecret
-   repository-level Actions variable** (`gh variable set ESIGNER_CERT_SHA1
-   --repo razzant/ouroboros --body <thumbprint>`): the 40-hex SHA-1 thumbprint
-   of the signing certificate, computed from the certificate downloaded from
-   the order page with `openssl x509 -in <cert> -noout -fingerprint -sha1`
-   (add `-inform DER` for a binary `.cer`), colons removed. The separate
-   secret-free proof job must read it without joining the protected signing
-   Environment.
-
-Do not put the four credentials in repository secrets. Never paste values
-into an issue, chat, workflow or log. The TOTP seed is equivalent to a signing
-credential: if a prior QR/seed was exposed, regenerate it at SSL.com and verify
-the old one stopped working before enabling unattended CI; removing an
-authenticator entry is not a revocation. Granting the Environment admits a
-real signing operation and consumes vendor quota; review the exact tag and
-diff before approval.
-
-Cost and quota: every `v*` tag spends exactly one eSigner signing
-(`Ouroboros.exe` only). SSL.com's IV/OV eSigner Tier 1 allows 20 signings per
-month (unused ones carry over on an active subscription); at a cadence of
-several patch tags a week that tier runs out, and an exhausted quota fails
-`windows-sign` and with it the whole seven-asset release — the chain never
-falls back to an unsigned ZIP. CodeSignTool is pinned to 1.3.2, the newest
-version SSL.com publishes as a versioned GitHub release asset, by the digest
-computed from that download on 2026-10-04. SSL.com's download page also offers
-1.3.3, but only behind an unversioned "current version" link whose bytes
-change with every vendor bump, so it cannot be digest-pinned; moving the pin
-means recomputing the digest from a fresh versioned download, nothing else.
+Owner setup, by role: the **repository owner** (the only admin) creates the
+Environment `windows-release-signing` with a `v*` tag rule and the certificate
+holder as required reviewer, so each release tag costs one approval before the
+certificate is used. The **certificate holder** stores the four
+**environment-scoped** secrets `ESIGNER_USERNAME`, `ESIGNER_PASSWORD`,
+`ESIGNER_CREDENTIAL_ID` (the order's *SIGNING CREDENTIALS* section) and
+`ESIGNER_TOTP_SECRET` (the `secret code` beside the order's *eSigner.com QR
+Code*) with `gh secret set <NAME> --env windows-release-signing`, and sets the
+**nonsecret repository-level Actions variable** `ESIGNER_CERT_SHA1`, the
+certificate's 40-hex SHA-1 thumbprint, which the secret-free proof job reads
+without joining the Environment. Repository secrets are the wrong place: the
+`ouroboros-agent` bot pushes too. Never paste values into an issue, chat,
+workflow or log; a once-exposed TOTP seed is regenerated at SSL.com, since
+removing an authenticator entry is not a revocation. Every `v*` tag spends one
+eSigner signing; IV/OV Tier 1 allows 20 per month, and an exhausted quota
+fails `windows-sign` and with it the whole seven-asset release, never an
+unsigned ZIP.
 
 Owner decision (2026-09-28): the first live run publishes the GitHub Release
-right after a green tag run; the colleague verifies the already published
-Windows ZIP afterwards, and there is no second pre-publication Environment.
-This static contract and macOS tests do **not** prove that the IV Personal ID
-credential signs successfully, that the remote timestamp is accepted on the
-Windows runner, or that a downloaded end-user app shows the expected
-publisher (an OV/IV signature names the publisher, while SmartScreen
-reputation still accrues over time). The colleague should download the
-resulting Windows ZIP from the release or the Actions run, check
-`Get-AuthenticodeSignature` and `signtool verify /pa /tw /v` on the extracted
-`Ouroboros.exe`, compare signer thumbprint and ZIP hash with the workflow
-proof, then launch the app on Windows and report the exact run/tag/SHA and
-outcome. Until that happens, report live Windows signing as **unverified**; do
-not claim a signed artifact merely because the workflow parses or local tests
-pass.
+right after a green tag run, with no second pre-publication Environment; the
+colleague then downloads the Windows ZIP, checks `Get-AuthenticodeSignature`
+and `signtool verify /pa /tw /v` on `Ouroboros.exe`, compares signer
+thumbprint and ZIP hash with the proof, launches the app and reports run, tag,
+SHA and outcome. Until then live Windows signing is **unverified**: this
+static contract proves neither that the IV credential signs, nor that the
+timestamp is accepted on the runner, nor the publisher a downloaded app shows
+(an OV/IV signature names it while SmartScreen reputation still accrues).
 
 ### Release proof capsule
 

@@ -1,0 +1,2 @@
+3464
+The Build & CI chapter gains the Windows Authenticode release-signing contract: three-runner chain, Environment-scoped eSigner secrets and the nonsecret thumbprint variable by role, quota per tag, the owner's publication decision and the unverified boundary (PR #1495).
