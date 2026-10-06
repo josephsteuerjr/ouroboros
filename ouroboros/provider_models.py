@@ -698,6 +698,13 @@ _VISION_MODEL_PREFIXES: tuple[str, ...] = (
     # normalized id also names a real OpenRouter vendor namespace — the
     # OpenRouter /models overlay may refine exact ids either way.
     "deepseek/deepseek-v4-flash-vision",
+    # Z.ai GLM: glm-5.3-flash accepts image input; plain glm-5.3
+    # rejects image blocks with HTTP 400 ("allowed values: ['text']"). Probed
+    # live 2026-10-06 on the Coding Plan endpoint (api.z.ai/api/coding/paas/v4):
+    # glm-5.3-flash answered a solid-color PNG ("Dark red", finish=stop) while
+    # glm-5.3 returned that 400 — see the mutable external-fact inventory in
+    # docs/DEVELOPMENT.md §2. The overlay may still refine either id.
+    "zai/glm-5.3-flash",
 )
 
 # Runtime overlay: model_id → bool, fed from OpenRouter /models

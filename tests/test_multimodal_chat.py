@@ -29,6 +29,12 @@ class TestSupportsVision:
         assert supports_vision("deepseek/deepseek-chat") is False
         assert supports_vision("") is False
         assert supports_vision("some-model (local)") is False
+        # Z.ai: only the -flash variant accepts image input; plain glm-5.3
+        # rejects image blocks (HTTP 400, allowed: ['text']). Probed live
+        # 2026-10-06 on the Coding Plan endpoint; see DEVELOPMENT.md §2.
+        assert supports_vision("zai::glm-5.3-flash") is True
+        assert supports_vision("zai/glm-5.3-flash") is True
+        assert supports_vision("zai::glm-5.3") is False
 
     def test_overlay_wins(self):
         from ouroboros import provider_models

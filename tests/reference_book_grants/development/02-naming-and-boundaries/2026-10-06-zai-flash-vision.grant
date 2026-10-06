@@ -1,0 +1,4 @@
+260
+The mutable external-fact inventory's _VISION_MODEL_PREFIXES row names the zai/glm-5.3-flash
+vision fact (2026-10-06 live probe: Coding Plan endpoint answered a solid-color PNG while plain
+glm-5.3 returned HTTP 400 text-only), so the shipped-prefix authority stays dated.
