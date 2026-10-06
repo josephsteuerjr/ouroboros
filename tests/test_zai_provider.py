@@ -83,6 +83,9 @@ class TestRegistry:
         assert DIRECT_PROVIDER_DEFAULTS["zai"] is ZAI_DIRECT_DEFAULTS
         assert ZAI_DIRECT_DEFAULTS["main"] == "zai::glm-5.3"
         assert ZAI_DIRECT_DEFAULTS["light"] == "zai::glm-5.3-flash"
+        # The vision slot defaults to the image-capable -flash variant (probed
+        # live 2026-10-06, Coding Plan endpoint; plain glm-5.3 is text-only).
+        assert ZAI_DIRECT_DEFAULTS["vision"] == "zai::glm-5.3-flash"
         assert DIRECT_PROVIDER_REVIEW_ROLES["zai"] == ("main", "main", "main")
         assert DIRECT_PROVIDER_SCOPE_DEFAULTS["zai"] == "zai::glm-5.3"
 
