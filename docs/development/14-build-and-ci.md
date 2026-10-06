@@ -166,22 +166,21 @@ upstream Action's moving branch and command-logging stay out.
 
 Owner setup, by role: the **repository owner** (the only admin) creates the
 Environment `windows-release-signing` with a `v*` tag rule and no required
-reviewer (the certificate holder's decision of 2026-10-07: a release tag signs
-without a manual approval, and the Environment's job is to confine the secrets
-to tag deployments). The **certificate holder** stores the four
-**environment-scoped** secrets `ESIGNER_USERNAME`, `ESIGNER_PASSWORD`,
-`ESIGNER_CREDENTIAL_ID` (the order's *SIGNING CREDENTIALS* section) and
-`ESIGNER_TOTP_SECRET` (the `secret code` beside the order's *eSigner.com QR
-Code*) with `gh secret set <NAME> --env windows-release-signing`, and sets the
-**nonsecret repository-level Actions variable** `ESIGNER_CERT_SHA1`, the
-certificate's 40-hex SHA-1 thumbprint, which the secret-free proof job reads
-without joining the Environment. Repository secrets are the wrong place: a
-branch push could read them, a tag-only Environment cannot. Never paste values into an issue, chat,
-workflow or log; a once-exposed TOTP seed is regenerated at SSL.com, since
-removing an authenticator entry is not a revocation. Every `v*` tag spends one
-eSigner signing; IV/OV Tier 1 allows 20 per month, and an exhausted quota
-fails `windows-sign` and with it the whole seven-asset release, never an
-unsigned ZIP.
+reviewer (owner decision 2026-10-07: tags sign without manual approval; the
+Environment confines the secrets to tag deployments). The **certificate
+holder** stores the four **environment-scoped** secrets `ESIGNER_USERNAME`,
+`ESIGNER_PASSWORD`, `ESIGNER_CREDENTIAL_ID` (the order's *SIGNING CREDENTIALS*
+section) and `ESIGNER_TOTP_SECRET` (the `secret code` beside the order's
+*eSigner.com QR Code*) with `gh secret set <NAME> --env
+windows-release-signing`, and sets `ESIGNER_CERT_SHA1`, a **nonsecret
+repository-level Actions variable** holding the certificate's 40-hex SHA-1
+thumbprint, which the secret-free proof job reads without joining the
+Environment.
+Repository secrets would be readable from any branch push. Never paste values
+into an issue, chat, workflow or log; an exposed TOTP seed is regenerated at
+SSL.com. Every `v*` tag spends one eSigner signing (Tier 1 annual: 240 a year,
+pooled); an exhausted pool fails `windows-sign` and with it the whole
+seven-asset release, never an unsigned ZIP.
 
 Owner decision (2026-09-28): the first live run publishes the GitHub Release
 right after a green tag run, with no second pre-publication Environment; the
