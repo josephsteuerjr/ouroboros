@@ -371,6 +371,9 @@ def test_quiet_start_needs_an_automatic_launch_background_on_and_a_live_indicato
             threading.Timer(0.02, self.ready.set).start()
             return True
 
+    # The short wait above belongs to the no-icon case only: here the icon comes up a moment
+    # after start(), and a loaded CI runner must not turn that moment into the no-icon path.
+    monkeypatch.setattr(lb, "INDICATOR_WAIT_SEC", 5.0)
     background, window = make(indicator=SlowIcon)
     assert background.start_hidden("automatic")
     background.run()

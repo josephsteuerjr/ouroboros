@@ -36,6 +36,7 @@ from tests._review_session_route_shared import (
     _run_session_directly,
     _terminal_detail,
 )
+from tests._usage_store_testing import ledger_rows
 
 # ---------------------------------------------------------------------------
 # Delivery mechanics
@@ -446,9 +447,7 @@ def test_restart_reconciliation_settles_review_spend_to_the_recorded_root(
     )
     assert [o["action"] for o in outcomes] == ["settle_attempted"]
 
-    ledger = [json.loads(line) for line in
-              (tmp_path / "state" / "usage_attempts.jsonl").read_text().splitlines()
-              if line.strip()]
+    ledger = ledger_rows(tmp_path)
     sessions = [r for r in ledger if r.get("kind") == "subscription_session"]
     assert sessions, "reconciliation must write the subscription-session row"
     assert sessions[-1]["task_id"] == "t-agent"

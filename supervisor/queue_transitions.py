@@ -894,7 +894,7 @@ def task_subtree_is_live(task_id: str, *, ignore_intents: bool = False) -> bool:
         return False
 
 
-def _live_retry_target_locked(q: Any, task_id: str) -> Tuple[str, str]:
+def _live_retry_target_locked(q: Any, task_id: str, *, results) -> Tuple[str, str]:
     """Resolve an old root id to its one validated live retry leaf.
 
     A live row is not lineage authority by itself: ingress fields can be stale
@@ -922,12 +922,12 @@ def _live_retry_target_locked(q: Any, task_id: str) -> Tuple[str, str]:
         if str(row.get("id") or "")
     }
 
-    from ouroboros.task_results import load_task_result, resolve_task_lineage
+    from ouroboros.task_results import resolve_task_lineage
 
-    requested_result = load_task_result(q.DRIVE_ROOT, requested, strict=True)
+    requested_result = results.load(requested)
     requested_shape = (
         requested_result
-        if isinstance(requested_result, dict)
+        if requested_result
         else live_by_id.get(requested, {})
     )
     requested_lineage = resolve_task_lineage(
@@ -955,7 +955,7 @@ def _live_retry_target_locked(q: Any, task_id: str) -> Tuple[str, str]:
         max_edges = 0
     logical_root = requested
     while True:
-        current = load_task_result(q.DRIVE_ROOT, current_id, strict=True) or {}
+        current = results.load(current_id) or {}
         if current_id == requested:
             logical_root = str(current.get("root_task_id") or requested)
         superseded_by = str(current.get("superseded_by") or "").strip()
@@ -980,7 +980,7 @@ def _live_retry_target_locked(q: Any, task_id: str) -> Tuple[str, str]:
             raise RuntimeError(
                 f"timeout retry lineage from {requested} contains a cycle"
             )
-        successor = load_task_result(q.DRIVE_ROOT, successor_id, strict=True) or {}
+        successor = results.load(successor_id) or {}
         if (
             str(successor.get("supersedes_task_id") or "") != current_id
             or str(successor.get("original_task_id") or "") != current_id
@@ -1053,7 +1053,7 @@ def _live_retry_target_locked(q: Any, task_id: str) -> Tuple[str, str]:
         from ouroboros.task_status import SETTLED_STATUSES
 
         leaf_status = str(
-            (load_task_result(q.DRIVE_ROOT, current_id, strict=True) or {}).get("status")
+            (results.load(current_id) or {}).get("status")
             or ""
         )
         if leaf_status in SETTLED_STATUSES:
@@ -1061,7 +1061,7 @@ def _live_retry_target_locked(q: Any, task_id: str) -> Tuple[str, str]:
     return requested, ""
 
 
-def task_has_live_ownership(task_id: str, *, ignore_review_operation: str = '') -> bool:
+def task_has_live_ownership(task_id: str, *, ignore_review_operation: str = '', ownership=None) -> bool:
     """Whether executable or paused custody remains for this task: a RUNNING row,
     busy worker, direct turn, still-billing synthesis or saved late remainder.
 
@@ -1082,21 +1082,36 @@ def task_has_live_ownership(task_id: str, *, ignore_review_operation: str = '') 
     task_id = str(task_id or "").strip()
     if not task_id:
         return False
-    from ouroboros.post_task_checkpoint import late_phase_state
+    from supervisor.task_ownership import TaskOwnershipRead, prepare_retry_chain
     from ouroboros.review_operation import task_has_live_review_operation, paused_acceptance_preparations
+    from ouroboros.owner_pause import fence_closed, FENCE_REQUESTED, FENCE_PAUSED, FENCE_RELEASED
+
+    ownership = ownership or TaskOwnershipRead(q.DRIVE_ROOT)
+    accessed = set()
+    def read(tid):
+        accessed.add(tid)
+        return ownership.load(tid)
 
     try:
-        if task_has_live_review_operation(q.DRIVE_ROOT, task_id, exclude_owner_id=ignore_review_operation):
+        current = read(task_id)
+        if task_has_live_review_operation(q.DRIVE_ROOT, task_id, exclude_owner_id=ignore_review_operation,
+                                          result_loader=read):
             return True
-        from ouroboros.owner_pause import fence_closed, read_fence
-        fence = read_fence(q.DRIVE_ROOT, task_id)
-        if fence_closed(fence) and paused_acceptance_preparations(q.DRIVE_ROOT, task_id, fence['fence_id']):
-            return True  # Addressable owed work, not a claim that its controller is alive.
-    except (OSError, ValueError, TypeError):
-        return True  # unreadable ownership must not turn terminal Stop into a no-op
-    if late_phase_state(q.DRIVE_ROOT, task_id) == "paused":
-        return True  # a saved late phase (D10) is retained custody: Stop must reach its remainder
+        fence = current.get("owner_pause") or {}
+        if not isinstance(fence, dict) or (fence and fence.get("state") not in
+                                           {FENCE_REQUESTED, FENCE_PAUSED, FENCE_RELEASED}):
+            return True
+        if fence_closed(fence) and paused_acceptance_preparations(q.DRIVE_ROOT, task_id, fence['fence_id'],
+                                                                 result_loader=read):
+            return True
+        if (current.get("root_phase_checkpoint") or {}).get("post_task_synthesis") == "paused":
+            return True
+        prepare_retry_chain(q, task_id, read)
+    except (OSError, ValueError, TypeError, RuntimeError):
+        return True  # Unknown durable ownership cannot authorize a mutation.
     with q._queue_lock:
+        if not ownership.unchanged(accessed):
+            return True
         if task_id in q.RUNNING:
             return True
         if any(
@@ -1117,7 +1132,7 @@ def task_has_live_ownership(task_id: str, *, ignore_review_operation: str = '') 
         if post_task_synthesis_in_flight(q.DRIVE_ROOT, task_id):
             return True
         try:
-            retry_target, _retry_settled_status = _live_retry_target_locked(q, task_id)
+            retry_target, _retry_settled_status = _live_retry_target_locked(q, task_id, results=ownership)
         except Exception:
             # An indeterminate chain cannot prove that physical ownership is
             # absent.  Fail open toward liveness so intent minting, which does
@@ -1148,14 +1163,24 @@ def task_settlement_liveness(task_id: str) -> Optional[bool]:
     if not getattr(q, "INITIALIZED", False):
         return None  # empty maps outside the supervisor process prove no absence
     try:
+        from supervisor.task_ownership import settlement_reads
+
+        locked = q._queue_lock._is_owned()
+        reads = settlement_reads(q.DRIVE_ROOT, task_id, locked=locked)
+        if reads is None:
+            return None
+        if not locked:
+            task_has_live_ownership(task_id, ownership=reads)  # Prepare before the mutation lock.
         with q._queue_lock:
-            if task_has_live_ownership(task_id) or any(str(row.get("id") or "") == task_id for row in q.PENDING):
+            if task_has_live_ownership(task_id, ownership=reads) or any(str(row.get("id") or "") == task_id for row in q.PENDING):
                 return True
             with q._reap_queue.mutex:
                 jobs = [*q._reap_queue.queue, *task_reaper._deferred_reap_jobs]
             if any(worker.reaping and worker.busy_task_id == task_id for worker in workers.WORKERS.values()) \
                     or any(isinstance(job, dict) and str(job.get("task_id") or "") == task_id for job in jobs):
                 return None  # a reap of this task is queued or holds its slot: its process may live
+        if not locked:
+            settlement_reads(q.DRIVE_ROOT, task_id, locked=False, prepared=reads)
         return False
     except Exception:
         log.warning("Settlement liveness of %s is unknown", task_id, exc_info=True)

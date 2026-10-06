@@ -203,7 +203,7 @@ def _recent_root_results(ctx: Any, project_id: str = "") -> tuple:
     same, and counting them only until the cap reported zero while folding them
     into the cap's own number.
     """
-    from ouroboros.gateway.task_list_scan import raw_result_facts
+    from ouroboros.task_result_facts import raw_result_facts
     from ouroboros.runtime_limits import get_routing_manifest_result_rows
     from ouroboros.task_results import load_task_result, task_results_dir
 
@@ -391,9 +391,16 @@ def _latest_project_task_result(ctx: Any, project_id: str) -> Optional[Dict[str,
 
 
 def _main_routing_manifest(ctx: Any) -> Dict[str, Any]:
-    """Bounded canonical facts for one Main-chat LLM routing decision."""
+    """Bounded canonical facts for one Main-chat LLM routing decision.
+
+    Its recent dialogue is the last 20 rows with text from every room, each in the
+    one rendering memory gives a chat row (``render_row_text``: a quiz answer is
+    ``chose (N) <label>`` and the owner's comment, never the question framed before
+    them): people's words ride whole, every other row under the disclosed bound."""
+    from ouroboros.dialogue_provenance import render_row_text, row_author
     from ouroboros.gateway._helpers import read_rotated_jsonl_entries
     from ouroboros.projects_registry import list_projects
+    from ouroboros.utils import truncate_within_limit
 
     projects = [{
         "project_id": str(row.get("id") or ""),
@@ -415,13 +422,13 @@ def _main_routing_manifest(ctx: Any) -> Dict[str, Any]:
         max_archives=2, include_gaps=True,
     )
     for row in rows:
-        text = str(row.get("text") or "").strip()
+        text = render_row_text(row).strip() if str(row.get("text") or "").strip() else ""
         if text:
             dialogue_rows.append({
                 "ts": str(row.get("ts") or ""),
                 "direction": str(row.get("direction") or ""),
                 "chat_id": row.get("chat_id", 1),
-                "text": _clip_marked(text, 500),
+                "text": text if row_author(row)["kind"] == "human" else truncate_within_limit(text, 500),
                 "task_id": str(row.get("task_id") or ""),
                 "client_message_id": str(row.get("client_message_id") or ""),
             })

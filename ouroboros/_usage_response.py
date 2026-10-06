@@ -43,6 +43,47 @@ def provider_cost_value(value: Any) -> Optional[float]:
 
 _number = provider_cost_value  # historical local name at this boundary
 
+# Finish reasons that mean a reply reached its output allowance: OpenAI-family ``length``
+# and Anthropic ``max_tokens``. The one vocabulary every finish-reason reader shares.
+OUTPUT_LIMIT_FINISH_REASONS = frozenset({"length", "max_tokens"})
+
+
+def response_finish_reason(usage: Any, msg: Any) -> Tuple[bool, Optional[str]]:
+    """The provider's finish fact for one response → ``(present, value)``.
+
+    Read by PRESENCE of the key, in this order: the usage fact ``response_finish_reason``
+    (written by the OpenAI-compatible, Claudexor, local and GigaChat lanes), then the
+    message's ``finish_reason``, then its ``stop_reason`` (the native Anthropic lane).
+    An explicit null stays ``(True, None)``; a lower field never replaces it.
+    """
+    for source, key in ((usage, "response_finish_reason"), (msg, "finish_reason"), (msg, "stop_reason")):
+        if isinstance(source, dict) and key in source:
+            return True, source[key]
+    return False, None
+
+
+def reported_reasoning_tokens(usage: Any) -> Optional[int]:
+    """Reasoning tokens a provider reported for one reply: top level (the Claudexor
+    mapping) or inside its completion/output token details (OpenAI-family shapes);
+    ``None`` when none was reported, never a guessed zero."""
+    usage = usage if isinstance(usage, dict) else {}
+    for source in (usage, usage.get("completion_tokens_details"), usage.get("output_tokens_details")):
+        value = source.get("reasoning_tokens") if isinstance(source, dict) else None
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            return value
+    return None
+
+
+def output_exhaustion_facts(usage: Any, sent_max_tokens: Any) -> Dict[str, Optional[int]]:
+    """What one output-exhausted reply's own records prove, for the host fact the next
+    round reads: the allowance its physical receipt shows was sent — none when its usage
+    says no output cap was applied (Claudexor's receipt carries a reservation, not a
+    sent cap) — and the reasoning tokens its provider reported. Absent stays None."""
+    usage = usage if isinstance(usage, dict) else {}
+    capped = (usage.get("claudexor") or {}).get("output_cap_applied") is not False
+    sent = sent_max_tokens if capped and isinstance(sent_max_tokens, int) and not isinstance(sent_max_tokens, bool) else 0
+    return {"sent_allowance_tokens": sent if sent > 0 else None, "reasoning_tokens": reported_reasoning_tokens(usage)}
+
 
 def processing_receipt(provider: str, usage: Dict[str, Any], *, requested: str = "",
                        submitted_native: str = "", reason: Optional[str] = None) -> Optional[Dict[str, Any]]:

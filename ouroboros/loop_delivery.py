@@ -14,6 +14,7 @@ import queue
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from ouroboros.config import get_context_mode
+from ouroboros.observability import timed_phase
 from ouroboros.outcomes import ACCEPTANCE_ACCEPTED, ACCEPTANCE_FINALIZED_UNACCEPTED, reviewable_effect_projection
 from ouroboros.task_finalization import set_terminal_host_notice
 from ouroboros.tools.registry import ToolRegistry
@@ -1131,6 +1132,7 @@ def _plan_review_only_awaited(llm_trace: Dict[str, Any]) -> bool:
     return isinstance(plan_gate, dict) and plan_gate.get("review_only_awaited") is True
 
 
+@timed_phase("admission_seal")
 def _seal_admission_before_delivery(tools: ToolRegistry, limit_ctx: Any, llm_trace: Dict[str, Any]) -> bool:
     """Seal root admission once more right before delivery; False arms the owner-revision round.
 
@@ -1376,12 +1378,14 @@ def _no_tool_final_answer(
         provisional_assistant = {"role": "assistant", "content": content} if content else None
         if provisional_assistant is not None:
             messages.append(provisional_assistant)
-        with admission_lock:
-            admission_agent._accepting_owner_messages = False
-            post_controls = _loop()._drain_incoming_messages(
-                messages, incoming_messages, limit_ctx.drive_root, limit_ctx.task_id,
-                limit_ctx.event_queue, owner_msg_seen, owner_ctx=tools._ctx,
-            )
+        with timed_phase("admission_wait") as acquired, admission_lock:
+            acquired()
+            with timed_phase("admission_close"):
+                admission_agent._accepting_owner_messages = False
+                post_controls = _loop()._drain_incoming_messages(
+                    messages, incoming_messages, limit_ctx.drive_root, limit_ctx.task_id,
+                    limit_ctx.event_queue, owner_msg_seen, owner_ctx=tools._ctx,
+                )
         if len(getattr(tools._ctx, "_owner_directives", []) or []) > before_directives:
             with admission_lock:
                 if acceptance_was_terminal:

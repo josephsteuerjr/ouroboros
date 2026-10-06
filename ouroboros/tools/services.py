@@ -861,13 +861,16 @@ def kill_all_services(
     wait: bool = True,
     include_keep_alive: bool = True,
     request_only: bool = False,
+    durable: bool = True,
 ) -> List[Dict[str, Any]]:
     """Stop every tracked service process group for panic/shutdown paths.
 
     ``include_keep_alive=False`` (graceful shutdown/restart) leaves keep_alive
     services running: they are session-scoped in the process custody ledger,
     so the next server generation's reaper still collects them. Panic and
-    emergency cleanup keep the default and kill everything.
+    emergency cleanup keep the default and kill everything. ``durable=False``
+    stops only this process's in-memory services: the exit stop
+    (``owned_shutdown.stop_owned_work``) settles the durable records itself.
     """
 
     global _panic_requested
@@ -898,7 +901,7 @@ def kill_all_services(
             payload["log_finalization"] = _finalize_service_log_for_drive(pathlib.Path(drive_root), record)
         stopped.append(payload)
     try:
-        stopped.extend(executor_kill_all_services(drive_root, wait=wait))
+        stopped.extend(executor_kill_all_services(drive_root, wait=wait, durable=durable))
     except Exception:
         pass
     if wait and drive_root is not None and stopped:

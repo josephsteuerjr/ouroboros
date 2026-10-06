@@ -27,6 +27,7 @@ from ouroboros.reviewer_window import ReviewerWindow
 from ouroboros.tools import parallel_review, review, review_admission
 from ouroboros.tools import scope_review as scope_mod
 from ouroboros.tools.scope_review_contract import SCOPE_REQUIRED_ITEMS
+from tests._usage_store_testing import attempt_rows_in_start_order, ledger_rows
 
 SCOPE_MODEL = "scope/model"
 TRIAD_MODELS = ["triad/a", "triad/b"]
@@ -132,10 +133,7 @@ def _run(root, tmp_path, monkeypatch, llm, *, fence: float, env_fence: float | N
 
 
 def _ledger(root):
-    path = root / ua.LEDGER_REL
-    if not path.exists():
-        return []
-    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    return ledger_rows(root)
 
 
 def test_fence_that_fits_the_whole_wave_dispatches_every_seat(gate, tmp_path, monkeypatch):
@@ -200,7 +198,7 @@ def test_global_budget_that_does_not_fit_refuses_the_wave_before_any_seat_reserv
     llm = LedgerLLM()
     ctx, (review_err, scope_result, block_reason, _adv) = _run(gate, tmp_path, monkeypatch, llm, fence=10.0)
 
-    assert llm.calls == [] and len(_ledger(gate)) == 3  # the other root's attempt only
+    assert llm.calls == [] and len(_ledger(gate)) == 1  # the other root's attempt only (one current row)
     assert review_err and "commit-gate review wave declined before dispatch ($0 spent)" in review_err
     assert "reservation upper bound $5.000000" in review_err
     assert "does not fit the global budget TOTAL_BUDGET $100.000000: accounted=$96.000000 across every task" in review_err
@@ -269,7 +267,7 @@ def test_refusal_names_money_held_by_other_in_flight_attempts(gate, tmp_path, mo
     assert llm.calls == []
     assert "accounted=$3.500000 (of which $1.000000 is reserved by other in-flight attempts)" in review_err
     assert "remaining=$4.500000, shortfall=$0.500000" in review_err
-    assert len(_ledger(gate)) == 5  # the two seeded attempts only (reserved/dispatched/settled rows)
+    assert len(_ledger(gate)) == 2  # the two seeded attempts only (one current row each)
 
 
 def test_scope_reserves_before_the_triad_even_when_it_is_slower(gate, tmp_path, monkeypatch):
@@ -280,7 +278,7 @@ def test_scope_reserves_before_the_triad_even_when_it_is_slower(gate, tmp_path, 
     ctx, (review_err, scope_result, _reason, _adv) = _run(gate, tmp_path, monkeypatch, llm, fence=10.0)
 
     assert review_err is None and scope_result.status == "responded"
-    reserved = [row for row in _ledger(gate) if row["state"] == "reserved"]
+    reserved = attempt_rows_in_start_order(gate)  # every attempt in the order it reserved
     assert [row["category"] for row in reserved][0] == "scope_review_review"
     assert [row["model"] for row in reserved] == [SCOPE_MODEL, *sorted(TRIAD_MODELS)] or \
         [row["model"] for row in reserved] == [SCOPE_MODEL, *reversed(sorted(TRIAD_MODELS))]
@@ -614,7 +612,7 @@ def test_seats_reserve_against_exactly_the_fence_the_wave_was_admitted_with(gate
     assert review_err is None, review_err
     assert scope_result.blocked is False and scope_result.status == "responded"
     assert sorted(llm.calls) == sorted([SCOPE_MODEL, *TRIAD_MODELS])
-    seats = [row for row in _ledger(gate) if row["state"] == "reserved" and row["source"] != "main"]
+    seats = [row for row in _ledger(gate) if row["source"] != "main"]
     assert sorted(row["model"] for row in seats) == sorted([SCOPE_MODEL, *TRIAD_MODELS])
     assert {row["root_limit_usd"] for row in seats} == {50.0}
     assert not [e for e in ctx.pending_events if e.get("type") == "review_wave_budget_insufficient"]
@@ -631,7 +629,7 @@ def test_bound_fence_that_does_not_fit_refuses_even_when_the_environment_is_room
     ctx, (review_err, scope_result, block_reason, _adv) = _run(
         gate, tmp_path, monkeypatch, llm, fence=8.0, env_fence=50.0)
 
-    assert llm.calls == [] and len(_ledger(gate)) == 3  # the seeded row's reserved/dispatched/settled only
+    assert llm.calls == [] and len(_ledger(gate)) == 1  # the seeded attempt only (one current row)
     assert review_err and "per-task budget fence $8.000000" in review_err
     assert "remaining=$4.000000, shortfall=$1.000000" in review_err
     assert block_reason == "review_wave_budget_insufficient"

@@ -37,6 +37,7 @@ from ouroboros.tools.registry import ToolContext
 from ouroboros.memory import Memory
 from ouroboros.context import build_llm_messages
 from ouroboros.loop import run_llm_loop
+from ouroboros.observability import task_timing_scope
 from ouroboros.config import EFFORT_SCALE, resolve_effort  # noqa: F401 -- the agent module keeps its historical import surface for the dispatch leaf
 from ouroboros.agent_startup_checks import (
     persist_early_origin_stub as _persist_early_origin_stub_impl,  # noqa: F401 -- the agent module keeps its historical import surface for the dispatch leaf
@@ -109,6 +110,7 @@ def _task_exception_terminal(env: Any, task: Dict[str, Any], exc: Exception, dri
     usage.update(execution_status="infra_failed", reason_code="task_exception",
                  terminal_origin=TERMINAL_ORIGIN_HOST_NOTICE)
     text = f"⚠️ Error during processing: {type(exc).__name__}: {exc}"
+    log.error("Task %s failed with an unexpected exception", task.get("id"), exc_info=exc)
     append_jsonl(drive_logs / "events.jsonl", {
         "ts": utc_now_iso(), "type": "task_error", "task_id": task.get("id"),
         "error": repr(exc), "traceback": truncate_for_log(traceback.format_exc(), 2000),
@@ -255,6 +257,8 @@ class OuroborosAgent:
         threads. A missing/None chat_id stays main-routed downstream.
         """
         payload: Dict[str, Any] = {"type": event_type, "ts": utc_now_iso(), **fields}
+        if event_type == "task_started":
+            self._activity_emitted_at = payload["activity_emitted_at"] = payload["ts"]
         if self._current_chat_id is not None and "chat_id" not in payload:
             payload["chat_id"] = self._current_chat_id
         emit_log_event(
@@ -521,7 +525,8 @@ class OuroborosAgent:
         dispatch = resolve_dispatch_axes(task)
         _record_executor_resolution(drive_logs, task, dispatch)
         sanitized_task = sanitize_task_for_event(task, drive_logs)
-        append_jsonl(drive_logs / "events.jsonl", {"ts": utc_now_iso(), "type": "task_received", "task": sanitized_task})
+        append_jsonl(drive_logs / "events.jsonl", {"ts": utc_now_iso(), "type": "task_received", "task": sanitized_task,
+                     "activity_emitted_at": getattr(self, "_activity_emitted_at", None)})
         self._persist_running_record(task)
         # Durable record first, live mirror second: the supervisor's RUNNING copy
         # (and therefore the queue snapshot) learns the same resolution the record
@@ -726,12 +731,15 @@ class OuroborosAgent:
         self._emit_typing_start()
         canonical_drive = pathlib.Path(task.get("budget_drive_root") or self.env.budget_drive_root or self.env.drive_root)
         review_env = self.env if canonical_drive.resolve(strict=False) == self.env.drive_root.resolve(strict=False) else replace(self.env, drive_root=canonical_drive)
+        from ouroboros.config import get_context_mode
+        from ouroboros.tool_policy import initial_tool_schemas  # the schemas count in the memory view's floor
         messages, cap_info = build_llm_messages(
             env=self.env,
             memory=self.memory,
             task=task,
             review_context_builder=lambda: build_review_context(review_env),
             ctx=ctx,
+            tool_schemas=initial_tool_schemas(self.tools, context_mode=get_context_mode()),
         )
         # The second of the three places a reduction must reach (the durable record
         # above is the first, `[SUBTASK_OUTCOME]` the third). It is appended HERE,
@@ -826,6 +834,7 @@ class OuroborosAgent:
 
         return emit_task_progress
 
+    @task_timing_scope()
     def handle_task(self, task: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Run one task under the root/subtree monetary attribution scope."""
         # A reused worker agent still carries the PREVIOUS task's chat binding;
@@ -985,6 +994,7 @@ class OuroborosAgent:
                     raise
                 except Exception as e:
                     tb = traceback.format_exc()
+                    log.error("Deep self-review failed for task %s", task.get("id"), exc_info=e)
                     append_jsonl(drive_logs / "events.jsonl", {
                         "ts": utc_now_iso(), "type": "task_error",
                         "task_id": task.get("id"), "error": repr(e),

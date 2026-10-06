@@ -239,7 +239,9 @@ def emit(drive_root: Any, kind: str, payload: Dict[str, Any]) -> bool:
     """
     try:
         event = {"ts": utc_now_iso(), "type": kind, **payload}
-        written = bool(append_jsonl(event_log_path(drive_root), event))
+        from ouroboros.delegate_custody_current import publication
+        with publication(drive_root, event) as landed:
+            written = landed[0] = bool(append_jsonl(event_log_path(drive_root), event))
     except Exception:
         log.warning("delegate custody row could not be written (%s)", kind, exc_info=True)
         return False
@@ -293,6 +295,14 @@ def custody_log_unreadable(drive_root: Any) -> bool:
     enumeration reports as "never rotated" — hides custody exactly like an
     unreadable live file.
     """
+    from ouroboros.delegate_custody_current import active
+    if active(drive_root):
+        from ouroboros.obligations import members, ObligationsUnavailable
+        try:
+            members(drive_root, "custody_open")
+            return False
+        except ObligationsUnavailable:
+            return True
     from ouroboros.utils import JsonlChainUnreadable, jsonl_archive_segments
 
     path = event_log_path(drive_root)
@@ -577,6 +587,9 @@ def replay(drive_root: Any,
     consistent traversal (the atomic payload busy claim, gate fix 5a). Without
     ``rows`` the fold runs over the memo's rows and is cached per memo
     generation; the returned objects are always this caller's own copies."""
+    from ouroboros.delegate_custody_current import active, state
+    if rows is None and active(drive_root):
+        return state(drive_root)
     if rows is not None:
         return _fold_rows(rows)
     from ouroboros.delegate_custody_memo import clone_custody_state, folded_state

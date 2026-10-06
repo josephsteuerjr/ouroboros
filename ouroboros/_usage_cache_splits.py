@@ -1,7 +1,7 @@
 """Process-local record of each task's last observed prompt-cache split.
 
-Extracted from ``ouroboros.usage_accounting`` (at its module size ceiling) as a
-seam beside ``_usage_rows_memo`` and re-exported from there. Nothing here is
+Extracted from ``ouroboros.usage_accounting`` (at its module size ceiling) and
+re-exported from there. Nothing here is
 durable and nothing is locked: a lost, evicted or stale entry only makes the
 money reservation price the whole prompt as a fresh cache write again, which is
 the conservative direction, so a torn read can never under-reserve.

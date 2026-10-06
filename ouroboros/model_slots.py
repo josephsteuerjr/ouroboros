@@ -351,6 +351,29 @@ def get_vision_model() -> str:
     return str(runtime_setting("OUROBOROS_MODEL_VISION", "") or "").strip() or _main_model()
 
 
+_SLOT_LOCAL_FLAGS = {"main": "USE_LOCAL_MAIN", "light": "USE_LOCAL_LIGHT", "fallback": "USE_LOCAL_FALLBACK"}
+
+
+def local_lane_label(model: object, use_local: bool) -> str:
+    """``model`` labelled ``" (local)"`` when it runs on our local lane (``provider_for_model`` reads the label)."""
+    text = str(model or "").strip()
+    return f"{text} (local)" if text and use_local and not text.endswith(" (local)") else text
+
+
+def slot_lane_label(role: str, model: object) -> str:
+    """A configured slot's model as it routes: labelled local when that slot runs on our local lane.
+
+    The local flag is a separate setting, so a bare id alone does not say which lane
+    carries it. An empty vision or light slot inherits Main and Main's flag; a vision
+    slot set to a local model is stored with its label already.
+    """
+    inherits = {"vision": "OUROBOROS_MODEL_VISION", "light": "OUROBOROS_MODEL_LIGHT"}.get(role, "")
+    if inherits and not str(runtime_setting(inherits, "") or "").strip():
+        role = "main"
+    flag = str(runtime_setting(_SLOT_LOCAL_FLAGS.get(role, ""), "") or "") if role in _SLOT_LOCAL_FLAGS else ""
+    return local_lane_label(model, flag.strip().lower() in {"1", "true", "yes", "on"})
+
+
 def get_image_input_mode() -> str:
     raw = str(runtime_setting("OUROBOROS_IMAGE_INPUT_MODE", SETTINGS_DEFAULTS["OUROBOROS_IMAGE_INPUT_MODE"]) or "").strip().lower()
     return raw if raw in {"auto", "caption", "inline", "off"} else "auto"

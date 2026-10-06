@@ -6,6 +6,7 @@ import logging
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from ouroboros import delegate_custody as custody
+from ouroboros.observability import timed_phase
 
 log = logging.getLogger(__name__)
 
@@ -55,12 +56,16 @@ def custody_audit_snapshot(drive_root: Any) -> Dict[str, Any]:
     audit in the batch — the boot backfill must not rescan the unbounded event
     log four times per stored row.
     """
+    from ouroboros.delegate_custody_current import active, snapshot
+    if active(drive_root):
+        return snapshot(drive_root)
     return {
         "state": custody.replay(drive_root),
         "pending": custody.pending_invocations(drive_root),
     }
 
 
+@timed_phase("custody_audit", within="release_task_runs")
 def _audit_task_custody(drive_root: Any, mine: str, result: Dict[str, Any], *,
                         snapshot: Optional[Mapping[str, Any]] = None,
                         emit_evidence: bool = True) -> None:
@@ -365,9 +370,11 @@ def refresh_terminal_reconciliation(
         existing = load_task_result(drive_root, mine) or {}
         if str(existing.get("status") or "") not in _TRULY_TERMINAL_STATUSES:
             return False
-        live = custody.task_execution_evidence(drive_root, mine)
-        evidence_stale = _stored_evidence_stale(existing, live)
-        if not existing.get("delegated_runs_unreconciled") and not evidence_stale:
+        from ouroboros.delegate_custody_current import active
+        addressed = active(drive_root)
+        live = {} if addressed else custody.task_execution_evidence(drive_root, mine)
+        evidence_stale = False if addressed else _stored_evidence_stale(existing, live)
+        if not addressed and not existing.get("delegated_runs_unreconciled") and not evidence_stale:
             return False
     except Exception:
         log.debug("Sweep refresh skipped: task result unreadable for %s", mine, exc_info=True)
@@ -376,14 +383,26 @@ def refresh_terminal_reconciliation(
         "task_id": mine, "trigger": str(trigger or "sweep_refresh"),
         "outcomes": [], "unreconciled": [], "audit_status": "ok",
     }
+    if addressed and snapshot is None:
+        snapshot = custody_audit_snapshot(drive_root)
     _audit_task_custody(drive_root, mine, result, snapshot=snapshot, emit_evidence=False)
+    if addressed:
+        # Completed receipts already on the result are history, not missing current facts.
+        prior = (existing.get("delegate_terminal_reconciliation") or {}).get("terminal_runs") or []
+        receipts = {row["run_id"]: row for row in prior}
+        receipts.update({row["run_id"]: row for row in result.get("terminal_runs", [])})
+        result["terminal_runs"] = sorted(receipts.values(), key=lambda row: row["run_id"])
     if _stored_disclosure_matches(existing, result) and not evidence_stale:
+        if addressed:
+            _ack_current_receipts(drive_root, mine, snapshot)
         return False
     refreshed = False
     # Disclosure class: the recorder itself re-checks the no-churn gate and the
     # monotonic guard; evidence is emitted only after it confirms a landed row.
     if record_terminal_reconciliation(drive_root, mine, result):
         _emit_audit_evidence(drive_root, result)
+        if addressed:
+            _ack_current_receipts(drive_root, mine, snapshot)
         refreshed = True
     # Evidence-mirror class: substrate counters/cost rewritten from live
     # custody through the same producers the terminal write used.
@@ -409,14 +428,8 @@ def backfill_terminal_reconciliations(drive_root: Any) -> List[str]:
     and each row is fail-soft. Returns the task ids actually refreshed.
     """
     try:
-        from ouroboros.task_results import _TRULY_TERMINAL_STATUSES, list_task_results
-
-        stale = [
-            str(row.get("task_id") or "")
-            for row in list_task_results(drive_root)
-            if row.get("delegated_runs_unreconciled")
-            and str(row.get("status") or "") in _TRULY_TERMINAL_STATUSES
-        ]
+        from ouroboros.obligations import members
+        stale = list(members(drive_root, "delegated_runs"))
     except Exception:
         log.debug("Boot custody-disclosure backfill scan failed", exc_info=True)
         return []
@@ -738,3 +751,33 @@ __all__ = [
     "refresh_terminal_reconciliation",
     "terminal_reconcile_task",
 ]
+
+
+def _ack_current_receipts(root, tid, snapshot):
+    from ouroboros import obligations as o
+    from ouroboros.delegate_custody_current import _decode
+    from ouroboros.task_results import task_result_path, require_writable_task_result_schema
+    from ouroboros.utils import update_json_locked
+    # Serialize with membership-before-result publication in the same lock order.
+    # Otherwise a new debt can be removed while its result still shows the old row.
+    state = (snapshot or {}).get("state", {})
+
+    def acknowledge(row):
+        if not row:
+            return
+        require_writable_task_result_schema(row)
+        with o.locked(root):
+            debts = o._read(root, "delegated_runs", missing_ok=True)
+            facts = debts.get(tid)
+            if facts is None:
+                return
+            held = {rid: raw for rid, raw in facts.get("closed_runs", {}).items()
+                    if rid not in state or vars(_decode(raw)) != vars(state[rid])}
+            if not held and not row.get("delegated_runs_unreconciled"):
+                debts.pop(tid, None)
+            else:
+                debts[tid] = {**facts, "closed_runs": held}
+            o._write(root, "delegated_runs", debts)
+        # None: acknowledge the receipt without rewriting the task result.
+
+    update_json_locked(task_result_path(root, tid, create=False), acknowledge, strict_existing_dict=True)

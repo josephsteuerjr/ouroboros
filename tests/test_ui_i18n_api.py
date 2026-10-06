@@ -17,6 +17,11 @@ def _own_settings_file(tmp_path, monkeypatch):
     import ouroboros.config as cfg
 
     monkeypatch.setattr(cfg, "SETTINGS_PATH", tmp_path / "settings.json")
+    from ouroboros.gateway import ui_i18n
+
+    # A server lifespan earlier in this worker registers the generator hook process-wide;
+    # each test starts from an empty hook list so a language choice queues no catalog.
+    monkeypatch.setattr(ui_i18n, "_LANGUAGE_HOOKS", [])
 
 
 def _client(tmp_path):

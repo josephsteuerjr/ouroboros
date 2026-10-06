@@ -243,7 +243,7 @@ def is_retryable_transport_death(exc: BaseException) -> bool:
     return False
 
 
-def release_pre_dispatch_attempt(reservation: Any, exc: BaseException) -> bool:
+def release_pre_dispatch_attempt(reservation: Any, exc: BaseException, *, expected_revision: int | None = None) -> bool:
     """Release a marked attempt only after a typed pre-dispatch transport fact."""
     if not is_pre_dispatch_transport_failure(exc):
         return False
@@ -254,6 +254,7 @@ def release_pre_dispatch_attempt(reservation: Any, exc: BaseException) -> bool:
             reservation,
             "released",
             _allow_dispatched_release=True,
+            _expected_revision=expected_revision,
             reason=f"before_dispatch_failed:{type(exc).__name__}",
         )
     except Exception:

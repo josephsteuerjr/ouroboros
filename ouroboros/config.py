@@ -114,7 +114,7 @@ from ouroboros.runtime_limits import (
     DELEGATE_WAIT_CEILING_SEC,  # noqa: F401
     DELEGATE_WAIT_WINDOW_MAX_SEC, OPERATION_WINDOW_FALLBACK_SEC,  # noqa: F401
     MAX_ACTIVE_SUBAGENTS_HARD_CAP, MAX_SUBAGENT_DEPTH_HARD_CAP,  # noqa: F401
-    WAKE_DEFAULT_SEC, USAGE_LEDGER_FOLD_MIN_AGE_SEC,  # noqa: F401
+    WAKE_DEFAULT_SEC,  # noqa: F401
     _bounded_positive_int_setting,  # noqa: F401
     _clamped_number_setting,  # noqa: F401
     get_acceptance_reserve_pct,  # noqa: F401
@@ -196,15 +196,6 @@ from ouroboros.settings_integrity import (  # noqa: E402, F401 — public config
 RESTART_EXIT_CODE = 42
 PANIC_EXIT_CODE = 99
 AGENT_SERVER_PORT = 8765
-# --- Usage-ledger compaction policy -----------------------------------------
-# docs/USAGE_COMPACTION.md. Constants, not env knobs. Compact the
-# monetary ledger once its byte size reaches ~0.2s-per-cold-replay scale, well
-# under the measured 20MB degradation point (USAGE_LEDGER_WARN_BYTES in
-# context_budget.py), which stays as the broken-compaction regression tripwire.
-USAGE_LEDGER_COMPACT_BYTES = 8_000_000
-# After an unprofitable/aborted pass, retry only once the file has grown this
-# much (or was replaced) — bounds the cost of a structurally unfoldable ledger.
-USAGE_LEDGER_COMPACT_RETRY_GROWTH_BYTES = 1_000_000
 
 
 def _guard_live_settings_write() -> None:

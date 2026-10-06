@@ -1,4 +1,10 @@
-"""Owned pre-send contention preserves stack, controls, claims and async custody."""
+"""Owned pre-send contention preserves stack, controls, claims and async custody.
+
+The money acquisition primitive is the usage store's write hold
+(``usage_accounting._locked`` = ``usage_store.hold``): on the enforced tier
+SQLite's own write lock, retried by the existing sliced waits. The store keeps
+one current row per attempt, so an attempt's history reads as its final state.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -20,7 +26,7 @@ from ouroboros import usage_ledger as ledger
 from ouroboros.llm_attempt import PhysicalDispatchInterrupted
 from ouroboros.model_wait import task_model_wait_scope
 from ouroboros.review_dispatch import ReviewPaidStamp, bind_api_review_paid_stamp
-from tests.test_usage_writer_view import request, root as root
+from tests._usage_store_testing import ledger_rows, request, root as root
 
 pytestmark = pytest.mark.serial
 
@@ -30,7 +36,7 @@ def held_lock(root, timeout=5):
     acquired, release = threading.Event(), threading.Event()
 
     def hold():
-        with ledger._locked(root):
+        with ua._locked(root):
             acquired.set()
             assert release.wait(timeout)
 
@@ -77,8 +83,28 @@ def short_acquisitions(monkeypatch):
 
 
 def rows(root):
-    path = root / ua.LEDGER_REL
-    return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+    return ledger_rows(root)
+
+
+@contextlib.contextmanager
+def held_name_lock(root, timeout=5):
+    """The name-protocol helper itself (the store's ``name`` tier lock)."""
+    acquired, release = threading.Event(), threading.Event()
+
+    def hold():
+        with ledger._locked(root):
+            acquired.set()
+            assert release.wait(timeout)
+
+    thread = threading.Thread(target=hold)
+    thread.start()
+    assert acquired.wait(2)
+    try:
+        yield release
+    finally:
+        release.set()
+        thread.join(3)
+        assert not thread.is_alive()
 
 
 @pytest.mark.parametrize("stage", ["reserve", "dispatch"])
@@ -108,7 +134,7 @@ def test_same_chain_preparation_stamp_claim_and_one_send(root, short_acquisition
                                            before_dispatch=before) is response
         assert ua._PHYSICAL_LIMIT.get().used == 1
     assert len(calls) == len(prepared) == len(stamps) == 1
-    assert [row["state"] for row in rows(root)] == ["reserved", "dispatched", "settled"]
+    assert [row["state"] for row in rows(root)] == ["settled"]
     assert len({row["attempt_id"] for row in rows(root)}) == 1
     waits = [item["data"] for item in list(events.queue)
              if item.get("data", {}).get("checkpoint_kind") == "usage_lock_wait"]
@@ -201,7 +227,7 @@ def test_cap_reduction_after_reservation_refuses_send_and_returns_claim(root, mo
         assert error.value.limit_scope == "global"
         assert error.value.physical_attempt_capture.state == "released"
         assert ua._PHYSICAL_LIMIT.get().used == 0
-    assert [row["state"] for row in rows(root)] == ["reserved", "released"]
+    assert [row["state"] for row in rows(root)] == ["released"]
     assert ua.usage_projection(root)["accounted_usd"] == 0
 
 
@@ -223,6 +249,10 @@ def test_negative_acquisition_facts_are_never_cooperatively_retried(root, monkey
         calls.append(1)
         outcome.update(reason=reason)
 
+    # The name tier (no kernel file locks) acquires the name-protocol lock for
+    # every store access; its typed refusals reach the caller unchanged.
+    monkeypatch.setattr(platform, "kernel_file_locks_enforced", lambda path: False)
+    ua.usage_projection(root)  # the store exists, on the name tier
     monkeypatch.setattr(platform, "acquire_exclusive_file_lock", refused)
     with owner(root), pytest.raises(ledger.UsageLockUnavailable) as error:
         ua.execute_physical_attempt(request(root), lambda: pytest.fail("sent"))
@@ -231,7 +261,7 @@ def test_negative_acquisition_facts_are_never_cooperatively_retried(root, monkey
 
 
 def test_real_platform_contention_and_kernel_refusal_are_distinct(root, monkeypatch):
-    with held_lock(root), pytest.raises(ledger.UsageLockUnavailable) as error:
+    with held_name_lock(root), pytest.raises(ledger.UsageLockUnavailable) as error:
         with ledger._locked(root, timeout_sec=.02):
             pytest.fail("held lock acquired")
     assert error.value.reason == "contention"
@@ -263,7 +293,7 @@ def test_after_response_two_accounting_failures_return_exact_response_once(root,
         assert ua.last_physical_attempt_capture().state == "dispatched"
     assert sent == [1]
     assert ua.usage_projection(root)["unresolved_upper_bound_usd"] == 1
-    assert [row["state"] for row in rows(root)] == ["reserved", "dispatched"]
+    assert [row["state"] for row in rows(root)] == ["dispatched"]
 
 
 def _observe_async_accounting_wait(root, monkeypatch):
@@ -322,8 +352,8 @@ def _observe_async_accounting_wait(root, monkeypatch):
             facts["watchdog_fired"] = watchdog_fired.is_set()
         assert sent == [1]
         attempt_rows = rows(root)
-        assert [row["state"] for row in attempt_rows] == ["reserved", "dispatched", "settled"]
-        assert [row["attempt_id"] for row in attempt_rows] == [capture.attempt_id] * 3
+        assert [row["state"] for row in attempt_rows] == ["settled"]
+        assert [row["attempt_id"] for row in attempt_rows] == [capture.attempt_id]
 
     asyncio.run(run())
     return facts
@@ -403,7 +433,7 @@ def test_async_cancellation_joins_reservation_committed_at_the_boundary(root, mo
             finish.set()
             with pytest.raises(asyncio.CancelledError):
                 await operation
-        assert [row["state"] for row in rows(root)] == ["reserved", "released"]
+        assert [row["state"] for row in rows(root)] == ["released"]
     asyncio.run(run())
 
 
@@ -464,7 +494,7 @@ def test_real_loop_round_two_wait_keeps_tool_and_live_leaf(root, short_acquisiti
     assert text == "finished"
     assert sends == [1, 2] and len(tools) == 1
     assert usage.get("reason_code") != "task_exception"
-    assert [row["state"] for row in rows(root)] == ["reserved", "dispatched", "settled"] * 2
+    assert [row["state"] for row in rows(root)] == ["settled"] * 2
 
 
 def test_async_unowned_maintenance_wait_is_bounded(root, short_acquisitions, monkeypatch):
@@ -547,7 +577,7 @@ def test_last_poll_name_release_race_recontends_and_sends_once(root, monkeypatch
         ua.execute_physical_attempt(request(root), lambda: sends.append(1) or {"usage": {}})
         assert ua._PHYSICAL_LIMIT.get().used == 1
     assert sends == [1]
-    assert [row["state"] for row in rows(root)] == ["reserved", "dispatched", "settled"]
+    assert [row["state"] for row in rows(root)] == ["settled"]
 
 
 def _churn_lock(root, start, stop, ready):
@@ -556,7 +586,7 @@ def _churn_lock(root, start, stop, ready):
     for _ in range(30):
         if stop.is_set():
             break
-        with ledger._locked(root):
+        with ua._locked(root):
             time.sleep(.012)
         time.sleep(.003)
 
@@ -614,6 +644,7 @@ def test_owned_process_churn_keeps_single_send_and_controls(root, cancel, monkey
     def control():
         controls.append(time.monotonic())
         return "cancelled" if cancel and len(controls) >= 3 else None
+    ua.usage_projection(root)  # one store before the churning processes open it
     try:
         for child in children:
             child.start()
@@ -638,7 +669,7 @@ def test_owned_process_churn_keeps_single_send_and_controls(root, cancel, monkey
         assert len(controls) >= 3
         assert max((b - a for a, b in zip(controls, controls[1:])), default=0) < 2
         if not cancel:
-            assert [row["state"] for row in rows(root)] == ["reserved", "dispatched", "settled"]
+            assert [row["state"] for row in rows(root)] == ["settled"]
     finally:
         stop.set()
         start.set()

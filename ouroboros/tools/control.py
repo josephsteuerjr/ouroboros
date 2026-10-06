@@ -15,6 +15,7 @@ from pathlib import Path  # noqa: F401
 from typing import Any, Callable, Dict, List, Optional  # noqa: F401
 
 from ouroboros.config import (
+    EFFORT_SCALE,
     apply_settings_to_env,  # noqa: F401
     get_max_subagent_depth,  # noqa: F401
     load_settings,  # noqa: F401
@@ -137,8 +138,9 @@ _PROMOTE_CHAT_DESCRIPTION = (
 _SCHEDULE_SUBAGENT_DESCRIPTION = (
     "Schedule a live subagent (a child of Ouroboros). Returns task_id for later retrieval. "
     "DEFAULT is READ-ONLY: the child inspects local repo/data/history plus web/browser and "
-    "returns findings (it cannot write local state, commit, enable tools, or run "
-    "shell/review/runtime/skills). Set write_surface to spawn a MUTATIVE (acting) child that "
+    "returns findings (apart from knowledge notes, memory marks and chronicle drafts in its own name, it cannot "
+    "write local state, commit, enable tools, or run shell/review/runtime/skills). Set write_surface to spawn a "
+    "MUTATIVE (acting) child that "
     "writes on the selected surface. You remain the sole committer of the live Ouroboros body. "
     "workspace_root selects the starting folder; omission inherits it. self_worktree copies "
     "that Git source's current eligible files, including uncommitted work: return its patch "
@@ -158,7 +160,9 @@ _SCHEDULE_SUBAGENT_DESCRIPTION = (
     "inherit it), and you verify their combined files with integrate_subagent_patch. Use genesis only when EACH child "
     "should own its OWN standalone durable repo (e.g. best-of-N separate builds). "
     "Harness-delegated work uses a private snapshot; integrate_delegated_patch handles that separate patch. "
-    "Mutative children cannot commit, enable tools or write cognitive memory. Cyber-effective "
+    "Mutative children cannot commit or enable tools; children may write knowledge notes and memory "
+    "marks in their own name and publish chronicle pages and parts only as drafts, which the integrating mind "
+    "accepts or rejects (chronicle_write kind=decision); identity and scratchpad stay with the parent. Cyber-effective "
     "children inherit selected review, skill and runtime tools; explicit task restrictions remain. Nested delegation "
     "is allowed within configured depth/cap limits — use delegation_intent / may_mutate / "
     "may_fan_out to tell a child to recurse further, so a 'maximum subagents / grandchildren' "
@@ -178,7 +182,6 @@ _SCHEDULE_SUBAGENT_DESCRIPTION = (
 
 
 def get_tools() -> List[ToolEntry]:
-    from ouroboros.config import EFFORT_SCALE
     return [
         ToolEntry("finish_task", {"name": "finish_task",
             "description": "Select the complete answer and request completion of your current task. "
@@ -222,6 +225,7 @@ def get_tools() -> List[ToolEntry]:
                     "project_id": {"type": "string", "description": "Optional EXISTING project scope (filesystem-clean id).", "default": ""},
                     "workspace_root": {"type": "string", "description": "Optional absolute working-folder path (validated at admission as an ordinary folder or Git worktree root outside the Ouroboros repo/data). Git-specific operations require a Git worktree; ordinary file and process work is supported directly in a validated folder. When omitted for a project-scoped task, the project's registered working_dir is used by default. Leave empty to work in Ouroboros's own repository (the Main default).", "default": ""},
                     "workspace": {"type": "string", "description": "Pass 'none' to opt OUT of the project room's default working folder (a folder-less task in a folder-ful project). Leave empty otherwise.", "default": ""},
+                    "context_requires_self_body_docs": {"type": "boolean", "description": "Set true when this task works on Ouroboros's own code, including a copy in another folder. In Max, this task receives the full development handbook. This applies to this task only; Low/Nano and helpers keep their usual book maps.", "default": False},
                     "source": {"type": "string", "description": "Attach or clone the project's working folder in ONE move: a git URL (https://... or git@host:path — cloned server-side into the projects root; private repos fail typed auth_required) or an existing folder path (validated attach). The folder is registered on the project (provenance + trusted_at) and becomes this task's active workspace. Use for 'help me debug this GitHub repo / this folder' asks.", "default": ""},
                     "predecessor_task_id": {"type": "string", "description": "Required explicit selector: pass an empty string for fresh work, or the id of a settled result (any settled status; any project, the host list is a hint; a helper's result is continued with its root named) to continue it. A live root or a pending promote is refused."},
                 },

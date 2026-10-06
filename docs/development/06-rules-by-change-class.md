@@ -693,24 +693,24 @@ and what enforces each.
   custody classifiers read the explicit `__cause__` chain, never `__context__`, and an
   ambiguous timeout stays unresolved (`tests/test_transport_custody.py`).
 - Administrative abandonment never turns a reservation bound into an actual price:
-  use the existing unknown-price settlement and retain correction-eligible attempt
-  chains across compaction. One real late receipt or positive never-started proof may
-  correct that attempt; ordinary terminal rows stay immutable, and full/incremental
-  validation must agree. Reconcile through existing custody maintenance only after
+  use the existing unknown-price settlement; the attempt's one current row keeps its
+  correction eligibility. One real late receipt or positive never-started proof may
+  correct that attempt; ordinary terminal rows stay immutable, and the store's writes
+  and its journal import apply one transition table. Reconcile through existing custody maintenance only after
   physical ownership ends, preserve review owners, and read exact recorded model
-  operations without creating new work. Retry existing cost projections independently
-  of another ledger transition, including after compaction, using one indexed
-  maintenance-drive view rather than filtering it for each owner. A different
+  operations without creating new work. Retry existing cost projections of dirty
+  owners independently of another transition, imported aggregates included, using one
+  indexed maintenance-drive view rather than filtering it for each owner. A different
   recorded budget root keeps its own accounting path; never fabricate completion
   (ARCHITECTURE §6 "Budget tracking"; storage rules and tests:
-  `docs/USAGE_COMPACTION.md`, `tests/test_usage_abandoned_ledger.py`).
-- Hold the usage-ledger cross-process lock only for budget check, validated append and
-  fsync — never over network I/O; a caller that owns a finalization reserve passes it
+  `docs/USAGE_STORE.md`, `tests/test_usage_abandoned_ledger.py`).
+- Hold a usage-store write transaction only for the budget check and the row write —
+  never over network I/O; a caller that owns a finalization reserve passes it
   explicitly so admission and the transport bound cannot disagree. A display read on
-  the supervisor loop or a gateway thread never waits on it: it passes `allow_stale`
-  and rides the last validated snapshot. A reader that admits, reserves, settles or
-  refuses spend never does; a pre-check lets a snapshot admit and decides its refusal
-  on the exact read (ARCHITECTURE §10 invariant 28).
+  the supervisor loop or a gateway thread passes `allow_stale`: it waits only the
+  short display wait, then reports the fact unavailable, never zero. A reader that
+  admits, reserves, settles or refuses spend waits its money budget
+  (ARCHITECTURE §10 invariant 28).
 - Keep root ceilings explicitly unreserved under the shared pool; persist the applied
   global limit and its source/revision on the physical attempt through every
   transition (a missing revision is unknown, never the settings-file hash). Pacing
@@ -798,7 +798,8 @@ and what enforces each.
   precedence in the shared context_budget classifiers, without requiring the input
   alone to exceed the window); quota/auth/billing, hard bad-request and
   request-too-large are non-retryable as-is (exact category, recovery hint); a typed
-  408/429/5xx or a proven pre-dispatch failure may retry; a dispatched request with no
+  408/429/5xx or a proven pre-dispatch failure may retry; an empty reply that ended on the
+  output limit is output exhaustion, never resent as is; a dispatched request with no
   terminal outcome is never resent as is; only an eligible unknown permits a NEW generation. Who may
   repeat after a typed transport death, how often, on whose row, what ends the round:
   ARCHITECTURE §6 "Context fitting, retry, and compaction"
@@ -939,7 +940,7 @@ and what enforces each.
 
 #### Loop / State-Machine Changes
 
-- Changes to `loop.py` or other task state-machine logic include adversarial tests —
+- Changes to `loop.py` or other task state-machine logic include failure-path tests —
   malformed output, false-completion prevention, replay/log durability, failure modes —
   not just the happy path. Audit/checkpoint rounds never silently reuse the normal
   final-answer path unless that invariant is explicitly tested and documented.
@@ -1130,7 +1131,7 @@ and what enforces each.
   plus reason code, a truncation rail code preserved); turning a custody fact into a
   review, objective or execution verdict is the defect this rule prevents.
 
-Enforcement: the adversarial tests the first bullet mandates, plus
+Enforcement: the failure-path tests the first bullet mandates, plus
 `tests/test_child_result_disposition.py`, `tests/test_acceptance_fence.py`,
 `tests/test_v674_acceptance_dialogue.py`, and `tests/test_review_cycles.py`
 (cap migration).

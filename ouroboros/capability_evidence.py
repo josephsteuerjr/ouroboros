@@ -315,10 +315,11 @@ def _load(drive_root: Any) -> Dict[str, Any]:
         data.setdefault("effort_floors", {})
         data.setdefault("rejected_params", {})
         data.setdefault("token_density", {})
+        data.setdefault("image_input", {})  # route-scoped catalog statements (vision_routing)
         return data
     return {
         "probes": {}, "owner_acks": {}, "effort_ceilings": {},
-        "effort_floors": {}, "rejected_params": {}, "token_density": {},
+        "effort_floors": {}, "rejected_params": {}, "token_density": {}, "image_input": {},
     }
 
 
@@ -563,6 +564,16 @@ _TOKEN_DENSITY_DRIFT_TOLERANCE = 0.05
 _TOKEN_DENSITY_MIN_CHARS = 20_000
 _TOKEN_DENSITY_SANE_RANGE = (0.5, 4.0)
 
+# The witness basis the MAIN fit resolver calibrates on: the fit estimator's own
+# count of the payload (images at the billing proxy, a top-level ``system``
+# counted as a leading system message). Renamed from "bounded_proxy" when the
+# ``system`` count joined the basis: the no-drift suppression below keeps an old
+# witness alive for its freshness window, so old rows are ignored instead of
+# mixed (a cold 1.0 until the first settled call). Money's raw estimate keeps
+# "raw"; this is the witness ``basis`` string, never the physical context's
+# ``measurement_basis`` literals.
+MAIN_DENSITY_BASIS = "bounded_proxy_v2"
+
 # Review cold floor from the measured code-heavy pack; Main never consumes it.
 COLD_START_TOKEN_DENSITY = 1.65
 MEASURED_DENSITY_SAFETY_FACTOR = 1.05
@@ -611,9 +622,9 @@ def record_token_density(
 ) -> None:
     """Persist one timestamped raw witness, best-effort and write-throttled.
 
-    ``basis`` names how ``prompt_chars`` measured image blocks — "raw"
-    (base64 bytes, pre-fix rows) vs "bounded_proxy" (the provider-billing
-    proxy the fit estimator measures on). The row carries it so the two
+    ``basis`` names how ``prompt_chars`` was measured — "raw" (base64 bytes,
+    pre-fix rows), the retired "bounded_proxy" or ``MAIN_DENSITY_BASIS`` (the
+    fit estimator's own count, system included). The row carries it so two
     bases can never be silently mixed again by a later "unification".
     """
     fp = str(fingerprint or "").strip()
@@ -622,8 +633,8 @@ def record_token_density(
     if not fp or density <= 0:
         return
     # ``basis`` is part of the witness identity end-to-end: the main resolver
-    # accepts only bounded_proxy rows, so a fresh RAW row at the same numeric
-    # density must not throttle the FIRST bounded witness as "no drift" —
+    # accepts only MAIN_DENSITY_BASIS rows, so a fresh row of another basis at
+    # the same numeric density must not throttle the FIRST witness as "no drift" —
     # that left the resolver cold for the whole freshness window on an
     # upgraded store (final-lane finding, probe-reproduced).
     memo_key = f"{fp}\0{route}\0{basis}"
@@ -735,7 +746,7 @@ def _fresh_density_pairs(
     # the caller filters on it). No resolver reduces over other models' rows:
     # another tokenizer's density is no evidence about this route.
     # ``basis`` filters to rows measured on one named basis. The MAIN fit
-    # resolver passes "bounded_proxy" — its multiplier must match the fit
+    # resolver passes MAIN_DENSITY_BASIS — its multiplier must match the fit
     # estimator's own measure: a pre-basis row (no stamp) or a legacy ``raw``
     # row was measured against raw base64 chars and can sit at 0.05-0.65 on
     # image routes, so letting it stay authoritative for its 14-day TTL after
@@ -760,7 +771,7 @@ def resolve_main_token_density(drive_root: Any, route_fp: str, model_id: str) ->
         store = _load(drive_root).get("token_density", {}) or {}
         route = str(route_fp or "").strip()
         route_pairs = [
-            item for item in _fresh_density_pairs(store, basis="bounded_proxy")
+            item for item in _fresh_density_pairs(store, basis=MAIN_DENSITY_BASIS)
             if route and str(item[0].get("route_fp") or "") == route
         ]
         if route_pairs:
@@ -769,7 +780,7 @@ def resolve_main_token_density(drive_root: Any, route_fp: str, model_id: str) ->
                 key=lambda item: (*_density_recency_key(item[1][0]), item[0]),
             )[1][1], "fresh_route_usage"
         model_pairs = _fresh_density_pairs(
-            store, _normalized_density_model(model_id), basis="bounded_proxy",
+            store, _normalized_density_model(model_id), basis=MAIN_DENSITY_BASIS,
         )
         if model_pairs:
             return max(
@@ -1052,7 +1063,7 @@ def _claudexor_metadata_evidence(model: str, base_url: str, headers: Any,
 
 
 def _openai_compatible_metadata_window(
-    model: str, base_url: str, allow_fetch: bool, api_key: Optional[str] = None
+    model: str, base_url: str, allow_fetch: bool, api_key: Optional[str] = None, *, provider: str = "",
 ) -> int:
     """CW6 (v6.34.0): an OpenAI-compatible server (vLLM, Ollama, LM Studio, TGI, ...)
     commonly publishes the per-model window in GET {base_url}/models — under
@@ -1076,6 +1087,9 @@ def _openai_compatible_metadata_window(
         resp.raise_for_status()
         payload = resp.json()
         items = payload.get("data") if isinstance(payload, dict) else payload
+        if provider == "openai-compatible":  # MiniMax /models carries no modality field
+            from ouroboros.vision_routing import record_catalog_image_input
+            record_catalog_image_input(provider, base_url, items, source="the OpenAI-compatible gateway's /models")
         # The saved model is normally provider-prefixed (e.g. ``openai-compatible::llama-3``)
         # while /models lists the BARE id — match either spelling.
         wanted = {str(model), str(model).split("::", 1)[-1]}
@@ -1113,7 +1127,7 @@ def _provider_metadata_window(
                 api_key = str((runtime_settings() or {}).get("MINIMAX_API_KEY") or "")
             except Exception:
                 api_key = ""
-        return _openai_compatible_metadata_window(model, base_url, allow_fetch, api_key=api_key)
+        return _openai_compatible_metadata_window(model, base_url, allow_fetch, api_key=api_key, provider=p)
     # GigaChat's /models (aget_models) lists model ids but does NOT publish a per-model
     # context window, so a gigachat route stays unprobeable (owner-ack path) — no probe.
     return 0
@@ -1382,14 +1396,14 @@ def observe_token_density(request: Any, usage: Optional[Dict[str, Any]], *, driv
         if cached and abs(real - 2 * cached) <= 1:
             return
         # The witness MUST calibrate the basis the fit estimator measures on
-        # (bounded image proxy) — the raw-base64 basis fed a self-consistent
-        # ~27% under-prediction: measure_main_fit multiplied a BOUNDED
-        # estimate by a RAW-basis density. `prompt_tokens_estimate` stays raw
-        # on purpose — `_reservation_cost` reads it and budget reservation
-        # wants the conservative over-count (owner decision 3=A); do NOT
-        # unify the two consumers onto one basis.
+        # (MAIN_DENSITY_BASIS: bounded image proxy, system counted) — the
+        # raw-base64 basis fed a self-consistent ~27% under-prediction:
+        # measure_main_fit multiplied a BOUNDED estimate by a RAW-basis density.
+        # `prompt_tokens_estimate` stays raw on purpose — `_reservation_cost`
+        # reads it and budget reservation wants the conservative over-count
+        # (owner decision 3=A); do NOT unify the two consumers onto one basis.
         estimate = int(request.prompt_tokens_bounded_estimate or 0)
-        basis = "bounded_proxy"
+        basis = MAIN_DENSITY_BASIS
         if estimate <= 0:
             estimate = int(request.prompt_tokens_estimate or 0)
             basis = "raw"

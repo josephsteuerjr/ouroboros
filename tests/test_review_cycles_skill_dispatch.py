@@ -11,6 +11,7 @@ import pathlib
 import types
 
 import pytest
+from tests._usage_store_testing import ledger_rows
 
 
 KEY = "OUROBOROS_REVIEW_MAX_CYCLES"
@@ -505,7 +506,7 @@ def test_bound_api_paid_stamp_waits_for_durable_sync_and_async_dispatch(tmp_path
         writes.append("paid")
 
     def _ledger_state(root):
-        rows = [json.loads(line) for line in (root / ua.LEDGER_REL).read_text().splitlines()]
+        rows = ledger_rows(root)
         return rows[-1]["state"]
 
     stamp = ReviewPaidStamp(_write_paid)

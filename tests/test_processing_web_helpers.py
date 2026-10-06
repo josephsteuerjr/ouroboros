@@ -2,7 +2,6 @@
 
 import copy
 import hashlib
-import json
 import sys
 from types import SimpleNamespace
 
@@ -11,6 +10,7 @@ import pytest
 from ouroboros import llm, pricing, usage_accounting as ua
 from ouroboros.llm_attempt import _canonical_candidate_bytes
 from tests.test_usage_accounting import data_root as _usage_data_root
+from tests._usage_store_testing import ledger_rows
 
 data_root = _usage_data_root
 
@@ -34,7 +34,7 @@ class Response:
 
 
 def ledger(root):
-    return [json.loads(line) for line in (root / ua.LEDGER_REL).read_text().splitlines()]
+    return ledger_rows(root)
 
 
 @pytest.fixture
@@ -92,7 +92,8 @@ def test_anthropic_search_refusal_reprices_same_native_body_as_standard(helpers,
     rows = ledger(root)
     finals = list({row["attempt_id"]: row for row in rows}.values())
     assert [row["state"] for row in finals] == ["released", "settled"]
-    assert [row["reservation_upper_bound_usd"] for row in rows if row["state"] == "reserved"] == [0.01, 0.04]
+    # each attempt's current row keeps the reservation bound it was admitted with
+    assert [row["reservation_upper_bound_usd"] for row in finals] == [0.01, 0.04]
     assert [mode for mode, _hash in priced] == ["fast", "standard"]
     for candidate, row in zip(state.sent, finals):
         assert row["candidate_raw_sha256"] == hashlib.sha256(_canonical_candidate_bytes(candidate)).hexdigest()

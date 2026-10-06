@@ -21,10 +21,18 @@ _NEWLY_RETIRED_SHIPPED_HEAVY_DEFAULTS = (
     "gigachat::GigaChat-2-Max",
     "minimax::MiniMax-M3",
 )
-_LOCAL_HEAVY_VALUES_THAT_MUST_SURVIVE_GLOBAL_RETIREMENT = (
-    "google/gemini-3.1-flash-lite",
+# The ids a deleted "retired model" table used to rewrite in place (to gpt-5.5,
+# gpt-5.5-pro or gemini-3.5-flash), claiming a retirement the provider catalogs never
+# showed. A saved id now stays as written unless it equals one of OUR former shipped
+# defaults for that slot -- the kept migrations pinned below by name.
+_FORMERLY_REMAPPED_IDS = (
+    "openai/gpt-5.4",
     "openai::gpt-5.4",
     "openai/gpt-5.4-pro",
+    "openai::gpt-5.4-pro",
+    "google/gemini-3.1-flash-lite",
+    "google/gemini-3.1-pro-preview",
+    "google/gemini-3-flash-preview",
 )
 
 
@@ -292,7 +300,7 @@ def test_every_newly_retired_product_heavy_is_cleared_before_actor_migration(shi
     "saved_heavy",
     (
         *_NEWLY_RETIRED_SHIPPED_HEAVY_DEFAULTS,
-        *_LOCAL_HEAVY_VALUES_THAT_MUST_SURVIVE_GLOBAL_RETIREMENT,
+        *_FORMERLY_REMAPPED_IDS,
     ),
 )
 def test_local_override_preserves_exact_heavy_value_as_explicit_local_actor(saved_heavy):
@@ -308,28 +316,6 @@ def test_local_override_preserves_exact_heavy_value_as_explicit_local_actor(save
     assert [(row.subagent_id, row.route.target_id) for row in resolution.config.items] == [
         ("legacy-heavy", f"{saved_heavy} (local)"),
     ]
-
-
-def test_apply_runtime_provider_defaults_refreshes_retired_gpt54_defaults():
-    old_main = "openai/gpt-" + "5.4"
-    old_pro = "openai/gpt-" + "5.4-pro"
-    old_mini = "openai/gpt-" + "5.4-mini"
-    normalized, changed, changed_keys = apply_runtime_provider_defaults({
-        "OPENROUTER_API_KEY": "sk-or",
-        "OUROBOROS_REVIEW_MODELS": f"{old_main},{old_mini}",
-        "OUROBOROS_SCOPE_REVIEW_MODEL": old_pro,
-        "OUROBOROS_SCOPE_REVIEW_MODELS": f"{old_pro},{old_mini}",
-    })
-
-    assert changed
-    assert "OUROBOROS_REVIEW_MODELS" in changed_keys
-    assert "OUROBOROS_SCOPE_REVIEW_MODELS" in changed_keys
-    # gpt-5.4 and gpt-5.4-pro are genuinely retired -> 5.5 / 5.5-pro. But gpt-5.4-mini
-    # is a LIVE model (the 5.5 family has no mini lane), so it must pass through
-    # unchanged rather than be rewritten to a non-existent gpt-5.5-mini.
-    assert normalized["OUROBOROS_REVIEW_MODELS"] == "openai/gpt-5.5,openai/gpt-5.4-mini"
-    assert normalized["OUROBOROS_SCOPE_REVIEW_MODEL"] == "openai/gpt-5.5-pro"
-    assert normalized["OUROBOROS_SCOPE_REVIEW_MODELS"] == "openai/gpt-5.5-pro,openai/gpt-5.4-mini"
 
 
 def test_apply_runtime_provider_defaults_migrates_legacy_scope_model_for_openai_only():

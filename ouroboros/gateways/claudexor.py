@@ -31,6 +31,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 from ouroboros.effort_evidence import validated_effort_resolution
+from ouroboros.observability import timed_phase
 
 from ouroboros.config import (
     CLAUDEXOR_MIN_VERSION,
@@ -104,6 +105,7 @@ class ClaudexorUnavailable(RuntimeError):
     # What the engine REPORTED about a failed run ("" = nothing reported); set only by
     # ``run_failure_error``. An opaque fact: carried and shown, never branched on.
     reported_cause = ""
+    retry_after = ""  # The received HTTP Retry-After header, never a local backoff.
 
     def __init__(self, code: str, message: str, *, status_code: int = 0,
                  required_actions: tuple[str, ...] = (), observation_timeout: bool = False,
@@ -442,6 +444,7 @@ class ClaudexorGateway:
 
     # -- transport -------------------------------------------------------------
 
+    @timed_phase("custody_daemon_request", within="release_task_runs")
     def _request(self, method: str, path: str, *, json_body: Any = None,
                  headers: Optional[Dict[str, str]] = None,
                  timeout_sec: Optional[float] = None,
@@ -533,10 +536,12 @@ class ClaudexorGateway:
         # it is a timer at all. At engine 3.14.0 the daemon serializes no `resetsAt` into a
         # pool ControlProblem context (the dated producer is the run-detail RunFailure, and
         # `cooldown_until` lives in a quota snapshot), so this seam yields the plain class.
-        return (_window_exhausted_refusal(code, message, context.get("resetsAt"),
+        error = (_window_exhausted_refusal(code, message, context.get("resetsAt"),
                                           status_code=response.status_code)
                 or ClaudexorUnavailable(code, message, status_code=response.status_code,
                                         required_actions=required_actions))
+        error.retry_after = response.headers.get("Retry-After", "")
+        return error
 
     # -- operations ------------------------------------------------------------
 
@@ -947,6 +952,7 @@ class ClaudexorGateway:
         """``GET /v2/runs/:id/events`` resumed after ``after_seq``: an open SSE stream (``gateways.claudexor_run_events`` reads it)."""
         return self._client.stream("GET", f"/v2/runs/{run_id}/events", headers={"Last-Event-ID": str(int(after_seq))}, timeout=httpx.Timeout(timeout_sec, connect=min(_CONNECT_TIMEOUT_SEC, timeout_sec)))
 
+    @timed_phase("custody_daemon_request", within="release_task_runs")
     def get_run_artifact(self, run_id: str, path: str) -> bytes:
         """GET /v2/runs/:id/artifacts/<path> — the FULL artifact body, raw bytes.
 
@@ -973,6 +979,7 @@ class ClaudexorGateway:
             raise self._problem(response)
         return response.content
 
+    @timed_phase("custody_daemon_request", within="release_task_runs")
     def stream_run_artifact(self, run_id: str, path: str, sink: Any,
                             *, expected: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Stream exact run bytes into a caller-owned temporary file.

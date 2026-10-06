@@ -159,7 +159,7 @@ def test_every_data_layout_entry_resolves(layout):
 
 def test_data_layout_probes_key_durable_files(layout):
     doc = layout[0]
-    for token in ("settings.json", "queue_snapshot.json", "usage_attempts.jsonl",
+    for token in ("settings.json", "queue_snapshot.json", "usage.sqlite",
                   "terminal_deliveries.json", "chat.jsonl"):
         assert f"`{token}`" in doc, f"layout inventory lost the `{token}` entry"
 

@@ -30,6 +30,7 @@ from ouroboros.contracts.task_contract import (
     normalize_allowed_resources,
 )
 from ouroboros.headless import prepare_task_drive, task_state_dir
+from ouroboros.owner_words import governing_words_for_schedule
 from ouroboros.subagent_history import snapshot_handle
 from ouroboros.subagent_runtime import (
     SubagentSelectionError,
@@ -525,6 +526,8 @@ def _build_child_subagent_contract(spec: Dict[str, Any]) -> Dict[str, Any]:
     """Build a delegated child's task contract from a single spec mapping (extracted
     from _schedule_task to keep it under the method size gate; one dict param to stay
     within the parameter-count discipline; pure construction)."""
+    from ouroboros.main_context_authority import project_helper_predecessor_authority
+
     parent_contract = spec.get("parent_contract")
     input_source_fields = {}
     if isinstance(parent_contract, dict) and "input_sources" in parent_contract:
@@ -535,21 +538,12 @@ def _build_child_subagent_contract(spec: Dict[str, Any]) -> Dict[str, Any]:
             and input_source_fields.get("input_sources") != "declared"):
         raise ValueError("input_sources=shared cannot widen an inherited declared selection")
     if input_source_fields.get("input_sources") == "declared":
-        # Omit whole prior-case narrative carriers; keep the predecessor source
-        # that grants lineage reads. Input selection must not alter that access.
-        predecessor = (parent_contract or {}).get("predecessor_authority")
+        # Prior-case notes are not declared inputs; the predecessor is projected
+        # after the parent spread below, preserving its lineage read source.
         parent_contract = {
             key: value for key, value in (parent_contract or {}).items()
-            if key not in {"notes", "review_notes", "predecessor_authority"}
+            if key not in {"notes", "review_notes"}
         }
-        if isinstance(predecessor, dict) and predecessor:
-            reference_keys = {"source", "task_id", "authority_sha256", "authority_chars", "digest_semantics"}
-            reference = {key: value for key, value in predecessor.items() if key in reference_keys}
-            omitted = predecessor.get("omitted_fields")
-            reference["omitted_fields"] = sorted(set(
-                [str(key) for key in predecessor if key not in reference_keys | {"omitted_fields"}]
-                + (list(omitted) if isinstance(omitted, list) else [])))
-            parent_contract["predecessor_authority"] = reference
         input_source_fields["context"] = str(spec.get("context") or "")
     objective = spec.get("objective", "")
     expected_output = spec.get("expected_output", "")
@@ -602,6 +596,9 @@ def _build_child_subagent_contract(spec: Dict[str, Any]) -> Dict[str, Any]:
                 # value silently wins back — which is exactly what used to happen to a
                 # requested child deadline whenever the parent carried one of its own.
                 "deadline_at": narrowed_deadline_at,
+                "predecessor_authority": project_helper_predecessor_authority(
+                    parent_contract.get("predecessor_authority"),
+                    declared=input_source_fields.get("input_sources") == "declared"),
                 "delegation_budget": delegation_budget,
                 "resource_policy": spec.get("resource_policy", parent_contract.get("resource_policy", {})),
                 "attachment_manifest": spec.get("attachment_manifest") or [],
@@ -881,6 +878,7 @@ def _schedule_task(ctx: ToolContext, internal: Dict[str, Any] | None = None, /, 
         "parent_cognitive_route": parent_cognitive_route,
         **{key: fields[key] for key in ("directory_strategy", "scope_paths") if key in fields},
     }
+    owner_origin = governing_words_for_schedule(ctx)  # the owner's words that caused this tree, by value
     child_facts = {
         "objective": objective,
         "expected_output": expected_output,
@@ -900,6 +898,7 @@ def _schedule_task(ctx: ToolContext, internal: Dict[str, Any] | None = None, /, 
         "allowed_resources": allowed_resources,
         "required_capabilities": required_caps,
         **intent_fields,
+        **owner_origin,
         "subagent_envelope": envelope,
     }
     evt = {
@@ -912,7 +911,7 @@ def _schedule_task(ctx: ToolContext, internal: Dict[str, Any] | None = None, /, 
         "write_surface": requested_surface,
         "resource_intent": ({"kind": "explicit_none"} if folderless_scratch_dir(ctx) is not None
                             else dict(metadata.get("resource_intent") or {})),
-        "origin_metadata": consciousness_origin_metadata(metadata),  # a consciousness child: label, category, level
+        "origin_metadata": {**consciousness_origin_metadata(metadata), **owner_origin},  # tree origin: consciousness label/level + owner words
         **presence_binding_authority_metadata(metadata, task_contract=getattr(ctx, "task_contract", None)),  # never speaker
     }
     _populate_subagent_event_extras(

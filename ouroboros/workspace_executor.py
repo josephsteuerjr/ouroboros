@@ -493,6 +493,9 @@ def _retire_docker_completion(record_path: pathlib.Path | None) -> bool:
         if proc.returncode != 0:
             return False
         record_path.unlink(missing_ok=True)
+        from ouroboros.owned_shutdown import forget_executor_process
+
+        forget_executor_process(record_path)
         return True
     except Exception:
         return False
@@ -620,10 +623,14 @@ def _register_process(drive_root: pathlib.Path | None, payload: dict[str, Any]) 
         record["host_command_sha256"] = host_command_sha256
     try:
         atomic_write_json(path, record, trailing_newline=True)
-        return path
     except Exception:
         retain_unconfirmed_host_operation("executor_custody_write_failed")
         return None
+    from ouroboros.owned_shutdown import record_executor_process
+
+    if not record_executor_process(path, record):  # the exit reads the ownership set, never a walk
+        retain_unconfirmed_host_operation("executor_custody_write_failed")
+    return path
 
 
 def _register_service_process(drive_root: pathlib.Path | None, record: _ExecutorService) -> pathlib.Path | None:
@@ -658,7 +665,10 @@ def _forget_process(record_path: pathlib.Path | None) -> None:
     try:
         record_path.unlink(missing_ok=True)
     except Exception:
-        pass
+        return  # still on disk, so the ownership set keeps naming it
+    from ouroboros.owned_shutdown import forget_executor_process
+
+    forget_executor_process(record_path)
 
 
 def _load_process_record(path: pathlib.Path) -> dict[str, Any] | None:
@@ -728,33 +738,46 @@ def _valid_process_record(path: pathlib.Path, record: dict[str, Any], *, check_i
     return True
 
 
-def _iter_process_records(drive_root: pathlib.Path | None = None) -> list[tuple[pathlib.Path, dict[str, Any]]]:
-    roots: list[pathlib.Path] = []
-    if drive_root is not None:
-        state_dir = _state_dir(drive_root)
-        if state_dir is not None:
-            roots.append(state_dir)
-        try:
-            state_root = pathlib.Path(drive_root).resolve(strict=False) / "state"
-            # Match named directory symlinks, but never descend through them.
-            roots.extend(pathlib.Path(parent) / _PROCESS_STATE_DIR
-                         for parent, dirs, _files in os.walk(state_root)
-                         if _PROCESS_STATE_DIR in dirs)
-        except Exception:
-            pass
+def _owned_process_records(drive_root: pathlib.Path | None, record_type: str) -> list[tuple[pathlib.Path, dict[str, Any]]]:
+    """Records the ownership set names, plus this process's in-memory foreground records: no tree walk."""
+    from ouroboros.owned_shutdown import executor_record_paths
+
+    paths = executor_record_paths(drive_root, record_type) if drive_root is not None else []
     with _STATE_LOCK:
-        roots.extend(path.parent for path, _kind in _FOREGROUND.copy().values() if path is not None)
-    seen: set[pathlib.Path] = set()
+        paths += [path for path, _kind in _FOREGROUND.copy().values() if path is not None]
     records: list[tuple[pathlib.Path, dict[str, Any]]] = []
-    for root in roots:
-        if root in seen or not root.exists():
-            continue
-        seen.add(root)
-        for path in root.glob("*.json"):
-            record = _load_process_record(path)
-            if record is not None and _valid_process_record(path, record):
-                records.append((path, record))
+    for path in dict.fromkeys(paths):
+        record = _load_process_record(path)
+        if record is not None and record.get("record_type") == record_type and _valid_process_record(path, record):
+            records.append((path, record))
     return records
+
+
+def _stop_record_process(path: pathlib.Path, record: dict[str, Any], *, wait: bool = True) -> bool:
+    """One durable record's typed kill; True once dispatched (Docker: once its backend receipt confirms)."""
+    if record.get("executor_type") != "docker_exec":
+        _kill_host_pid(record.get("host_pid"))
+        return True
+    if record.get("record_type") == "foreground" and record.get("backend_completed") is True:
+        return _retire_docker_completion(path)
+    dispatched = _kill_docker_record(record, wait=wait)
+    if dispatched and record.get("record_type") == "foreground" and record.get("backend_pidfile"):
+        dispatched = _retire_docker_completion(path)
+    return dispatched
+
+
+def _settle_durable_record(path: pathlib.Path, record: dict[str, Any], *, wait: bool) -> dict[str, Any]:
+    dispatched = _stop_record_process(path, record, wait=wait)
+    if dispatched:
+        _forget_process(path)
+    state = "cleanup_pending" if record.get("executor_type") == "docker_exec" and not dispatched else "stopped"
+    if record.get("record_type") == "foreground":
+        return {"record_type": "foreground", "id": record.get("id"), "executor_type": record.get("executor_type"),
+                "cleanup_dispatched": dispatched, "state": state}
+    return {"record_type": "service", "service_id": record.get("service_id"), "name": record.get("name"),
+            "task_id": record.get("task_id"), "state": state,
+            "executor": {"id": record.get("executor_id"), "type": record.get("executor_type")},
+            "cleanup_dispatched": dispatched, "durable_cleanup": True}
 
 
 def _kill_host_pid(host_pid: Any) -> None:
@@ -849,35 +872,8 @@ def kill_all_foreground(drive_root: pathlib.Path | None = None, *, wait: bool = 
                 requested.append({"requested": False, "scope": "backend",
                                   "error": "container process requires executor settlement"})
         return requested
-    killed: list[dict[str, Any]] = []
-    for path, record in _iter_process_records(drive_root):
-        if record.get("record_type") != "foreground":
-            continue
-        cleanup_dispatched = True
-        if record.get("executor_type") == "docker_exec" and record.get("backend_completed") is True:
-            cleanup_dispatched = _retire_docker_completion(path)
-        elif record.get("executor_type") == "docker_exec":
-            cleanup_dispatched = _kill_docker_record(record, wait=wait)
-            if cleanup_dispatched and record.get("backend_pidfile"):
-                cleanup_dispatched = _retire_docker_completion(path)
-        else:
-            _kill_host_pid(record.get("host_pid"))
-        if cleanup_dispatched:
-            _forget_process(path)
-        killed.append(
-            {
-                "record_type": "foreground",
-                "id": record.get("id"),
-                "executor_type": record.get("executor_type"),
-                "cleanup_dispatched": cleanup_dispatched,
-                "state": (
-                    "cleanup_pending"
-                    if record.get("executor_type") == "docker_exec" and not cleanup_dispatched
-                    else "stopped"
-                ),
-            }
-        )
-    return killed
+    return [_settle_durable_record(path, record, wait=wait)
+            for path, record in _owned_process_records(drive_root, "foreground")]
 
 
 def _assert_docker_network_none(container_name: str) -> None:
@@ -1180,7 +1176,9 @@ def kill_all_services(
     *,
     wait: bool = True,
     request_only: bool = False,
+    durable: bool = True,
 ) -> list[dict[str, Any]]:
+    """``durable=False``: in-memory services only (the exit stop settles durable records itself)."""
     global _panic_requested
     if request_only:
         _panic_requested = True
@@ -1192,43 +1190,15 @@ def kill_all_services(
             for record in _SERVICES.copy().values()
         ]
     stopped = [_stop_service_record(record, wait=wait) for record in _services_snapshot()]
-    stopped.extend(_kill_durable_service_records(drive_root, wait=wait))
+    if durable:
+        stopped.extend(_kill_durable_service_records(drive_root, wait=wait))
     return stopped
 
 
 def _kill_durable_service_records(drive_root: pathlib.Path | None, *, wait: bool = True) -> list[dict[str, Any]]:
-    stopped: list[dict[str, Any]] = []
     memory_paths = {record.durable_record_path for record in _services_snapshot() if record.durable_record_path is not None}
-    for path, record in _iter_process_records(drive_root):
-        if record.get("record_type") != "service" or path in memory_paths:
-            continue
-        cleanup_dispatched = True
-        if record.get("executor_type") == "docker_exec":
-            cleanup_dispatched = _kill_docker_record(record, wait=wait)
-        else:
-            _kill_host_pid(record.get("host_pid"))
-        if cleanup_dispatched:
-            _forget_process(path)
-        stopped.append(
-            {
-                "record_type": "service",
-                "service_id": record.get("service_id"),
-                "name": record.get("name"),
-                "task_id": record.get("task_id"),
-                "state": (
-                    "cleanup_pending"
-                    if record.get("executor_type") == "docker_exec" and not cleanup_dispatched
-                    else "stopped"
-                ),
-                "executor": {
-                    "id": record.get("executor_id"),
-                    "type": record.get("executor_type"),
-                },
-                "cleanup_dispatched": cleanup_dispatched,
-                "durable_cleanup": True,
-            }
-        )
-    return stopped
+    return [_settle_durable_record(path, record, wait=wait)
+            for path, record in _owned_process_records(drive_root, "service") if path not in memory_paths]
 
 
 def validate_process_env(value: Any) -> dict[str, str]:

@@ -185,7 +185,7 @@ def test_legacy_money_import_fails_closed_on_an_unreadable_chain(tmp_path, hide)
     never reached that except, and the hidden ``llm_usage`` rows would have
     been silently excluded from the imported monetary baseline."""
     from ouroboros.usage_ledger import UsageAccountingError
-    from ouroboros.usage_legacy_import import _legacy_snapshot
+    from ouroboros.usage_journal import legacy_snapshot as _legacy_snapshot
 
     events_path = tmp_path / "logs" / "events.jsonl"
     append_jsonl(events_path, {"type": "llm_usage", "model": "m1", "cost": 0.5})
@@ -271,7 +271,7 @@ def test_worker_boot_event_found_when_the_new_live_log_outgrew_the_cursor(tmp_pa
 
 
 def test_legacy_snapshot_includes_rotated_llm_usage(tmp_path):
-    from ouroboros.usage_legacy_import import _legacy_snapshot
+    from ouroboros.usage_journal import legacy_snapshot as _legacy_snapshot
 
     events_path = tmp_path / "logs" / "events.jsonl"
     append_jsonl(events_path, {"type": "llm_usage", "model": "m1", "cost": 0.5,

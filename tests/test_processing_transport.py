@@ -11,6 +11,7 @@ import pytest
 from ouroboros import config, model_wait, pricing, usage_accounting as ua
 from ouroboros.llm import LLMClient
 from ouroboros.llm_attempt import apply_processing_preference, processing_contract_headers
+from tests._usage_store_testing import ledger_rows
 
 
 @pytest.fixture
@@ -96,8 +97,8 @@ def test_native_processing_is_in_the_exact_accounted_request(transport, provider
     assert candidate.get("max_completion_tokens", candidate.get("max_tokens")) == 123
     if provider == "anthropic":
         assert ("fast-mode-2026-02-01" in sent[0]["headers"].get("anthropic-beta", "")) == (preference == "fast")
-    rows = [json.loads(line) for line in (root / ua.LEDGER_REL).read_text().splitlines()]
-    assert [row["state"] for row in rows] == ["reserved", "dispatched", "settled"]
+    rows = ledger_rows(root)
+    assert [row["state"] for row in rows] == ["settled"]
     assert all(row["processing_preference"] == preference for row in rows)
     assert all(row["submitted_processing_mode"] == expected for row in rows)
     assert usage["processing"]["requested"] == preference
@@ -222,7 +223,7 @@ def test_typed_no_start_reprices_standard_without_changing_custom_tools(transpor
     assert catalogs[0] and catalogs[0] == catalogs[1]
     assert [mode for mode, _digest in reservations] == ["flex", "default"]
     assert reservations[0][1] != reservations[1][1]
-    rows = [json.loads(line) for line in (root / ua.LEDGER_REL).read_text().splitlines()]
+    rows = ledger_rows(root)
     finals = list({row["attempt_id"]: row for row in rows}.values())
     assert [row["state"] for row in finals] == ["released", "settled"]
     assert [row["reservation_upper_bound_usd"] for row in finals] == [0.01, 0.04]
@@ -250,7 +251,7 @@ def test_unknown_or_unqualified_failure_never_falls_back(transport, error_kind):
     with pytest.raises(TimeoutError):
         client._create_chat_completion_with_retries(create, payload, target)
     assert len(calls) == 1
-    rows = [json.loads(line) for line in (root / ua.LEDGER_REL).read_text().splitlines()]
+    rows = ledger_rows(root)
     assert rows[-1]["state"] == "unresolved"
 
 
@@ -273,7 +274,7 @@ def test_anthropic_fast_rate_refusal_releases_then_sends_standard(transport, mon
     assert [entry["payload"]["speed"] for entry in sent] == ["fast", "standard"]
     assert "fast-mode-2026-02-01" in sent[0]["headers"].get("anthropic-beta", "")
     assert "fast-mode-2026-02-01" not in sent[1]["headers"].get("anthropic-beta", "")
-    rows = [json.loads(line) for line in (root / ua.LEDGER_REL).read_text().splitlines()]
+    rows = ledger_rows(root)
     assert [row["state"] for row in {r["attempt_id"]: r for r in rows}.values()] == ["released", "settled"]
 
 
@@ -296,7 +297,7 @@ def test_standard_retry_is_refused_when_its_own_reservation_exceeds_budget(trans
         with pytest.raises(ua.BudgetExceeded):
             client._create_chat_completion_with_retries(create, payload, target)
     assert len(calls) == 1
-    rows = [json.loads(line) for line in (root / ua.LEDGER_REL).read_text().splitlines()]
+    rows = ledger_rows(root)
     assert rows[-1]["state"] == "released"
 
 
@@ -329,7 +330,7 @@ def test_direct_web_helper_carries_its_own_role_preference(transport, monkeypatc
         llm.anthropic_web_search_server_tool(api_key="test", model="model", query="query")
     assert len(sent) == 1
     assert sent[0]["speed" if provider == "anthropic" else "service_tier"] == expected
-    rows = [json.loads(line) for line in (root / ua.LEDGER_REL).read_text().splitlines()]
+    rows = ledger_rows(root)
     assert rows[-1]["submitted_processing_mode"] == expected
 
 

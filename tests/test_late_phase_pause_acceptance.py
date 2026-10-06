@@ -120,7 +120,7 @@ def test_pause_defers_an_unsent_automatic_late_review_until_resume(late, tmp_pat
 
 
 _PREPARER = '''
-import json, sys, time
+import json, sys, threading, time
 from pathlib import Path
 from types import SimpleNamespace
 from ouroboros import acceptance_late, review_operation
@@ -129,12 +129,24 @@ from ouroboros.llm import LLMClient
 root, task_id, output = Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3])
 acceptance_late._historical_writer_live = lambda *_a, **_kw: True
 review_operation._CONTROL_RECHECK_SEC = 3600.0
+# Retaining the pointer does not mean the worker has finished its first control
+# read. Publish readiness only after that read, before the parent installs a rail.
+ready = threading.Event()
+control = review_operation.ReviewOperation.control
+def checked_control(self):
+    result = control(self)
+    if not ready.is_set():
+        assert result is None, result
+        ready.set()
+    return result
+review_operation.ReviewOperation.control = checked_control
 LLMClient.chat = lambda *_a, **_kw: (_ for _ in ()).throw(AssertionError("unexpected paid send"))
 ctx = SimpleNamespace(task_id=task_id, task_attempt=1, drive_root=root, budget_drive_root=root,
     task_metadata={"root_task_id": task_id, "budget_drive_root": str(root)}, event_queue=None, pending_events=[])
 row = load_task_result(root, task_id, strict=True)
 result = acceptance_late.run_historical_acceptance(ctx, task_id=task_id,
     debt_id=row["acceptance_debt"]["debt_id"], automatic=True)
+assert ready.wait(10), 'preparation worker did not reach its control wait'
 temporary = output.with_suffix('.tmp')
 temporary.write_text(json.dumps(result), encoding="utf-8")
 temporary.replace(output)

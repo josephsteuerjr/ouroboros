@@ -767,6 +767,7 @@ def prepared_wrapup_candidate(
         context_fit_plan=getattr(owner_ctx, "context_fit_plan", None),
         overrides=waiter.overrides if waiter else None)
 
+    # Named residual: reads the task's refused-image memory, never recovers a first refusal (vision_routing).
     send_messages = _prepare_main_messages(
         messages, model=ctx.active_model, llm=ctx.llm,
         accumulated_usage=ctx.accumulated_usage,
@@ -778,9 +779,18 @@ def prepared_wrapup_candidate(
         model_role=role,
         model_account_override=account,
     )
+    from ouroboros.loop_forced_finalization import _forced_physical_context
+    from ouroboros.usage_accounting import bind_physical_attempt_context
+
+    # ONE Main measurement of the final input sizes the priced copy here and the admitted send
+    # (``loop_forced_finalization._call_forced_model_once`` reads it back): same bound context, same allowance.
+    physical = _forced_physical_context(ctx, send_messages)
+    if owner_ctx is not None:
+        owner_ctx._forced_physical_context = physical
     # The forced send seals Main's clock line; its priced copy carries one too.
     with MainSendClock(main_clock_policy(getattr(owner_ctx, "task_metadata", {}),
-                                         task_type=str(getattr(ctx, "task_type", "") or ""))).bound():
+                                         task_type=str(getattr(ctx, "task_type", "") or ""))).bound(), \
+            bind_physical_attempt_context(physical):
         request = prospective_wrapup_attempt_request(
             llm=ctx.llm, messages=send_messages, model=ctx.active_model,
             reasoning_effort=ctx.active_effort, tools=ctx.tool_schemas,
@@ -1122,7 +1132,7 @@ def _acceptance_rails_line_inner(
                 projection = usage_projection(
                     scope.drive_root, global_limit_usd=scope.global_limit_usd,
                 )
-                root = (projection.get("by_root") or {}).get(scope.root_task_id) or {}
+                root = usage_projection(scope.drive_root, root_task_id=scope.root_task_id)
                 remaining = projection.get("remaining_known_usd")
                 money_bits.append(_headroom_phrase(remaining, rails.get("cost_ceiling_usd"), root.get("accounted_usd")))
         except Exception:

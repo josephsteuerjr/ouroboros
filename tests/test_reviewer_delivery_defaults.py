@@ -264,6 +264,8 @@ def test_startup_notice_matches_loaded_runtime_bounds_and_raw_presence(
                         "STATE_LOCK_PATH": tmp_path / "locks/state.lock"}.items():
         monkeypatch.setattr(ss, name, value)
     monkeypatch.setattr(bus, "DATA_DIR", tmp_path)
+    from ouroboros.startup_migrations import prepare_startup_state
+    prepare_startup_state(tmp_path)
     monkeypatch.setattr(bus, "get_bridge", lambda: None)
     ss.save_state({"owner_chat_id": 7, "owner_id": 1, "reviewer_default_delivery_notified": "already"})
 
@@ -299,6 +301,9 @@ def notice_world(monkeypatch, tmp_path):
     import supervisor.state as sstate
     from ouroboros import upgrade_notices
 
+    monkeypatch.setattr(bus, "DATA_DIR", tmp_path)
+    from ouroboros.startup_migrations import prepare_startup_state
+    prepare_startup_state(tmp_path)
     state = {"owner_chat_id": 7}
     sent = []
 
@@ -361,6 +366,8 @@ def test_notice_bookkeeping_preserves_recovered_control_uncertainty(monkeypatch,
                        "STATE_LOCK_PATH": tmp_path / "locks/state.lock"}.items():
         monkeypatch.setattr(ss, name, path)
     monkeypatch.setattr(bus, "DATA_DIR", tmp_path)
+    from ouroboros.startup_migrations import prepare_startup_state
+    prepare_startup_state(tmp_path)
     monkeypatch.setattr(bus, "get_bridge", lambda: SimpleNamespace(send_message=lambda *a, **kw: None))
     monkeypatch.setattr(notices, "_raw_settings_document", lambda: {})
     ss.save_state({"owner_chat_id": 7, "owner_id": 1, "bg_consciousness_enabled": True})
@@ -387,6 +394,8 @@ def test_notice_recovers_through_real_chat_and_state_writers(monkeypatch, tmp_pa
                        "STATE_LOCK_PATH": tmp_path / "locks/state.lock"}.items():
         monkeypatch.setattr(ss, name, path)
     monkeypatch.setattr(bus, "DATA_DIR", tmp_path)
+    from ouroboros.startup_migrations import prepare_startup_state
+    prepare_startup_state(tmp_path)
     monkeypatch.setattr(notices, "_raw_settings_document", lambda: {"OUROBOROS_MAX_ROUNDS": 150,
                         "OUROBOROS_TASK_ABS_CEILING_SEC": "unlimited"})
     ss.save_state({"owner_chat_id": 7, "owner_id": 1})

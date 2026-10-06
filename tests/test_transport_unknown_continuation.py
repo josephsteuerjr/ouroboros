@@ -287,8 +287,8 @@ def test_managed_continuation_keeps_old_money_and_mints_one_new_attempt(tmp_path
         text, usage, _ = run_llm_loop(**ledger_kwargs(tmp_path, llm, []))
     assert text == "done" and llm.calls == 2 and observations == [1]
     rows = _ledger(tmp_path)
-    assert [row["state"] for row in rows] == ["reserved", "dispatched", "unresolved", "reserved", "dispatched", "settled"]
-    old, new = rows[0]["attempt_id"], rows[3]["attempt_id"]
+    assert [(row["state"], row["revision"]) for row in rows] == [("unresolved", 3), ("settled", 3)]
+    old, new = rows[0]["attempt_id"], rows[1]["attempt_id"]
     assert old != new
     assert usage["transport_recovery"]["previous_attempt"]["physical_attempt_id"] == old
     assert ua.usage_projection(tmp_path)["unresolved_upper_bound_usd"] == 1.0

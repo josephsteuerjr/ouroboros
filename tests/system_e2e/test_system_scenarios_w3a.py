@@ -60,6 +60,7 @@ absorb and the update variations in wave 4. Still deferred: gateway/UI truth
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import subprocess
@@ -850,22 +851,24 @@ S14_ANSWER_V2 = "Final answer: the summary is complete. W3A_DONE"
 _OWNER_SOURCE_RE = re.compile(r'"owner_source_sha256": "([0-9a-f]{64})"')
 
 
-def _control_step(delivery_control: str, full_answer: str | None = None):
-    """A scripted answer to the host's delivery control.
-
-    Acceptance is asynchronous (owner D4=A): the panel settles in custody and its
-    verdicts wake Main with the keep/replace control re-offered, so the scripted
-    agent answers that control instead of a bare final. The exact owner source
-    selector is read from the transcript's last ``[ACCEPTANCE_SUBJECT_OBSERVATION]``
-    (the wave-2 dynamic-argument contract of ``scripted_completion``)."""
+def _completion_step(full_answer: str, *, answer_form: str):
+    """Select complete bytes or an offered answer hash after host feedback."""
     def step(body: dict) -> dict:
-        found = _OWNER_SOURCE_RE.findall(body_text(body))
-        control = {"delivery_control": delivery_control}
-        if full_answer is not None:
-            control["full_answer"] = full_answer
+        text = body_text(body)
+        assert any(row.get("function", {}).get("name") == "finish_task"
+                   for row in body.get("tools", [])), "finish_task was not offered"
+        arguments = {"action": "finish"}
+        if answer_form == "answer":
+            arguments["answer"] = full_answer
+        else:
+            selector = hashlib.sha256(full_answer.encode("utf-8")).hexdigest()
+            assert selector in re.findall(r"(?:retained as |answer_sha256=)([0-9a-f]{64})", text), (
+                "The complete answer must be offered before selecting its hash", selector)
+            arguments["answer_sha256"] = selector
+        found = _OWNER_SOURCE_RE.findall(text)
         if found:
-            control["acceptance_subject"] = {"owner_source_sha256": found[-1]}
-        return {"final": json.dumps(control)}
+            arguments["acceptance_subject"] = {"owner_source_sha256": found[-1]}
+        return {"tool": "finish_task", "arguments": arguments}
     return step
 
 
@@ -884,8 +887,7 @@ def _keep_until_acceptance_settled(full_answer: str, *, wave_ordinal: int, answe
     wake. The host then drains it in another round, reusing the paid verdict.
     That round still belongs to this phase, not the stub's exhausted fallback.
     """
-    keep = (_control_step("keep") if answer_form == "control"
-            else lambda _body: {"final": full_answer})
+    keep = _completion_step(full_answer, answer_form=answer_form)
     waits = {"rounds": 0}
 
     def step(body: dict):
@@ -908,21 +910,19 @@ def _keep_until_acceptance_settled(full_answer: str, *, wave_ordinal: int, answe
 
 @pytest.mark.integration
 @pytest.mark.serial
-@pytest.mark.parametrize("answer_form", ["prose", "control"])
+@pytest.mark.parametrize("answer_form", ["answer", "answer_sha256"])
 def test_s17_acceptance_reject_rework_accept(e2e_clone, tmp_path_factory, answer_form):
     require_lane(LANE_MOCK)
     root = tmp_path_factory.mktemp("s14")
     review_script = ReviewScript({
         "acceptance": [W3A_ACCEPT_REJECT] * 3 + [W3A_ACCEPT_PASS] * 3,
     })
-    # Both answer forms retain V2 through separate quorum/final-slot wakes;
-    # repeated collection must not buy a third panel or exhaust the script.
-    rework = ({"final": S14_ANSWER_V2} if answer_form == "prose"
-              else _control_step("replace", S14_ANSWER_V2))
+    # Both answer forms retain V2 through separate quorum/final-slot wakes; repeated collection must
+    # not buy a third panel or exhaust the script. A new hash is selectable only once the whole response was held.
     stub = _HoldingStubModel(
-        [{"final": S14_ANSWER_V1}, rework,
-         _keep_until_acceptance_settled(S14_ANSWER_V2, wave_ordinal=2,
-                                       answer_form=answer_form)],
+        [{"final": S14_ANSWER_V1}, *([{"final": S14_ANSWER_V2}] if answer_form == "answer_sha256" else []),
+         _completion_step(S14_ANSWER_V2, answer_form=answer_form),
+         _keep_until_acceptance_settled(S14_ANSWER_V2, wave_ordinal=2, answer_form=answer_form)],
         review_script=review_script,
     )
     with stub:
@@ -959,17 +959,17 @@ def test_s17_acceptance_reject_rework_accept(e2e_clone, tmp_path_factory, answer
 
 @pytest.mark.integration
 @pytest.mark.serial
-@pytest.mark.parametrize("answer_form", ["prose", "control"])
+@pytest.mark.parametrize("answer_form", ["answer", "answer_sha256"])
 def test_s17_acceptance_identical_rework_is_free_replay_refusal(
         e2e_clone, tmp_path_factory, answer_form):
     require_lane(LANE_MOCK)
     root = tmp_path_factory.mktemp("s14b")
     review_script = ReviewScript({"acceptance": [W3A_ACCEPT_REJECT] * 3})
-    # Both ordinary prose and explicit keep collect the rejected answer's
-    # verdict; unchanged material must replay at $0 without a new panel.
-    followup = ({"final": S14_ANSWER_V1} if answer_form == "prose" else _control_step("keep"))
-    stub = ScriptedStubModel(
-        [{"final": S14_ANSWER_V1}, followup, {"final": S14_ANSWER_V1}],
+    # Explicitly select the unchanged answer after rejection; both selection
+    # forms must replay its paid verdict at $0 without a new panel.
+    stub = _HoldingStubModel(
+        [{"final": S14_ANSWER_V1},
+         _keep_until_acceptance_settled(S14_ANSWER_V1, wave_ordinal=1, answer_form=answer_form)],
         review_script=review_script,
     )
     with stub:

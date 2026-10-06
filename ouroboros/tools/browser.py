@@ -20,7 +20,6 @@ except ImportError:
     _HAS_STEALTH = False
 
 from ouroboros import browser_policy
-from ouroboros.config import runtime_setting
 from ouroboros.tool_access import active_tool_profile
 from ouroboros.tools.registry import ToolContext, ToolEntry
 from ouroboros.tools.tool_result import _compose_execute_result, _publish_tool_result, ToolResult
@@ -635,34 +634,16 @@ _MARKDOWN_JS = """() => {
 
 
 def _inject_native_screenshot(ctx: ToolContext, b64: str) -> str:
-    """Hand a fresh screenshot to a vision-capable active model natively.
+    """Add a fresh screenshot to the conversation as a native image block.
 
     The screenshot is saved to ``data/uploads/screenshots/<ts>.png`` (the
-    re-view path used by eviction placeholders) and injected as a user-role
-    image block via the existing multipart-preserving merge. The TOOL result
-    stays a plain string — the tool-message contract is unchanged. Non-vision
-    models keep the analyze_screenshot/vlm_query flow.
+    re-view path used by eviction placeholders) and merged into the canonical
+    user turn via the existing multipart-preserving merge, whatever the route:
+    the send-time image policy (``vision_routing``) decides whether this route
+    receives its pixels, a caption or a marker. The TOOL result stays a plain
+    string — the tool-message contract is unchanged.
     """
     try:
-        from ouroboros.provider_models import supports_vision
-
-        # Resolve the model THIS task is actually running on (the loop publishes
-        # ctx.active_model each round, incl. switch_model / per-task overrides);
-        # fall back to the per-task override, then the global env default. Reading
-        # OUROBOROS_MODEL alone misclassified vision when the live model differed.
-        active_model = (
-            str(getattr(ctx, "active_model", "") or "")
-            or str(getattr(ctx, "task_model_override", "") or "")
-            or str(runtime_setting("OUROBOROS_MODEL", "") or "")
-        )
-        from ouroboros.model_slots import task_model_binding
-        from ouroboros.model_wait import current_model_wait
-        waiter = current_model_wait()
-        role, account = task_model_binding({"task_metadata": getattr(ctx, "task_metadata", {})},
-            context_fit_plan=getattr(ctx, "context_fit_plan", None),
-            overrides=waiter.overrides if waiter else None)
-        if supports_vision(active_model, model_role=role, model_account_override=account) is False:
-            return ""
         messages = getattr(ctx, "messages", None)
         if not isinstance(messages, list):
             return ""
@@ -685,7 +666,8 @@ def _inject_native_screenshot(ctx: ToolContext, b64: str) -> str:
                 "_source_path": str(shot_path),
             },
         ])
-        return "The screenshot is attached to your context natively (vision model). "
+        return ("The screenshot is in your context as an image; the image-input mode and this route decide "
+                "whether you receive its pixels, a caption or a marker. ")
     except Exception:
         log.debug("native screenshot injection failed", exc_info=True)
         return ""

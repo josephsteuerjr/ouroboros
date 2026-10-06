@@ -126,17 +126,22 @@ def test_only_the_unfinished_no_tool_branch_arms_the_budget_tail():
         and any(isinstance(t, ast.Name) and t.id == "pending_no_tool_budget" for t in node.targets)
         and isinstance(node.value, ast.Constant) and node.value.value is True
     ]
-    assert len(armings) == 1, "exactly one place may arm the no-tool budget tail"
-    # …and it sits inside `if final_result is None:` — the continuation branch.
-    guards = [
-        node for node in ast.walk(tree)
-        if isinstance(node, ast.If)
-        and isinstance(node.test, ast.Compare)
-        and isinstance(node.test.left, ast.Name) and node.test.left.id == "final_result"
-        and any(isinstance(op, ast.Is) for op in node.test.ops)
-        and any(arming in ast.walk(node) for arming in armings)
-    ]
-    assert guards, "the arming must be guarded by an unfinished (final_result is None) round"
+    # Two rounds continue without a final answer: an unfinished no-tool round
+    # (`if final_result is None:`) and a reply that ended on its output limit before any
+    # visible output (the next ordinary round decides; the same money rail bounds it).
+    assert len(armings) == 2, "only the two continuing rounds may arm the no-tool budget tail"
+
+    def unfinished(test: ast.AST) -> bool:
+        return (isinstance(test, ast.Compare) and isinstance(test.left, ast.Name) and test.left.id == "final_result"
+                and any(isinstance(op, ast.Is) for op in test.ops))
+
+    def exhausted(test: ast.AST) -> bool:
+        return "llm_output_exhausted" in ast.unparse(test)
+
+    for arming in armings:
+        guards = [node for node in ast.walk(tree) if isinstance(node, ast.If) and arming in ast.walk(node)
+                  and (unfinished(node.test) or exhausted(node.test))]
+        assert guards, "an arming must sit in a continuing round: unfinished no-tool, or output exhaustion"
 
 
 @pytest.mark.serial

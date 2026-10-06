@@ -35,6 +35,7 @@ from ouroboros.loop_llm_call import (
     provider_no_call_source,
 )
 from ouroboros.tools.registry import ToolRegistry
+from tests._usage_store_testing import ledger_rows
 
 MESSAGES = [{"role": "user", "content": "hi"}]
 OK_RESPONSE = ({"role": "assistant", "content": "done"}, {"prompt_tokens": 1, "completion_tokens": 1})
@@ -132,9 +133,7 @@ def data_root(tmp_path, monkeypatch):
 
 
 def _ledger(root):
-    path = root / ua.LEDGER_REL
-    rows = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
-    return [row for row in rows if row.get("kind") == "attempt"]
+    return [row for row in ledger_rows(root) if row.get("kind") == "attempt"]
 
 
 class _LedgerLLM:
@@ -185,9 +184,9 @@ def test_two_deaths_then_success_are_three_ledger_lifecycles(data_root, tmp_path
         by_attempt.setdefault(row["attempt_id"], []).append(row["state"])
     assert len(by_attempt) == 3  # never a reused reservation
     assert list(by_attempt.values()) == [
-        ["reserved", "dispatched", "unresolved"],
-        ["reserved", "dispatched", "unresolved"],
-        ["reserved", "dispatched", "settled"],
+        ["unresolved"],
+        ["unresolved"],
+        ["settled"],
     ]
     assert ua.usage_projection(data_root)["unresolved_upper_bound_usd"] == 2.0
     api_errors = _events(tmp_path, "llm_api_error")
@@ -215,7 +214,7 @@ def test_budget_refusal_on_the_second_send_propagates_untouched(data_root, tmp_p
     assert raised.value.limit_scope == "global"
     assert llm.calls == 2
     rows = _ledger(data_root)
-    assert [row["state"] for row in rows] == ["reserved", "dispatched", "unresolved"]
+    assert [row["state"] for row in rows] == ["unresolved"]
     assert len(_events(tmp_path, "llm_api_error")) == 1  # only the death itself was a provider failure
     assert _events(tmp_path, "llm_non_retryable_same_request") == []
     # A budget refusal proves only that a reservation was refused, not that the granted
@@ -422,8 +421,8 @@ def test_requests_chunked_body_disconnect_repeats_on_the_same_rail(data_root, tm
     for row in _ledger(data_root):
         by_attempt.setdefault(row["attempt_id"], []).append(row["state"])
     assert list(by_attempt.values()) == [
-        ["reserved", "dispatched", "unresolved"],
-        ["reserved", "dispatched", "settled"],
+        ["unresolved"],
+        ["settled"],
     ]
     assert ua.usage_projection(data_root)["unresolved_upper_bound_usd"] == 1.0
     api_errors = _events(tmp_path, "llm_api_error")
@@ -999,7 +998,7 @@ def test_proxy_tunnel_failure_keeps_the_base_unknown_terminal(data_root, tmp_pat
 
     assert msg is None
     assert llm.calls == 1
-    assert [row["state"] for row in _ledger(data_root)] == ["reserved", "dispatched", "unresolved"]
+    assert [row["state"] for row in _ledger(data_root)] == ["unresolved"]
     assert ua.usage_projection(data_root)["unresolved_upper_bound_usd"] == 1.0
     assert usage["_last_llm_error_kind"] == "provider_outcome_unknown"
     assert usage["_last_llm_retry_same_request"] is False
@@ -1091,8 +1090,8 @@ def test_rejected_stream_settles_and_walks_the_fallback_chain_without_a_wait_epi
     for row in _ledger(data_root):
         by_attempt.setdefault(row["attempt_id"], []).append(row)
     assert [[row["state"] for row in rows] for rows in by_attempt.values()] == [
-        ["reserved", "dispatched", "settled"],
-        ["reserved", "dispatched", "settled"],
+        ["settled"],
+        ["settled"],
     ]
     rejected = list(by_attempt.values())[0][-1]
     assert rejected["cost_usd"] == 0.02 and rejected["prompt_tokens"] == 40 and rejected["completion_tokens"] == 9
@@ -1164,8 +1163,8 @@ def test_code_less_stream_error_without_usage_keeps_the_upper_bound_and_still_wa
     for row in _ledger(data_root):
         by_attempt.setdefault(row["attempt_id"], []).append(row)
     assert [[row["state"] for row in rows] for rows in by_attempt.values()] == [
-        ["reserved", "dispatched", "unresolved"],
-        ["reserved", "dispatched", "settled"],
+        ["unresolved"],
+        ["settled"],
     ]
     assert ua.usage_projection(data_root)["unresolved_upper_bound_usd"] == 1.0
     api_errors = _events(tmp_path, "llm_api_error")

@@ -141,14 +141,18 @@ def read_rotated_jsonl_entries(
     include_gaps: bool = False,
     iter_objects: Optional[Callable[..., Iterable[Any]]] = None,
     coverage: Optional[dict] = None,
+    list_archives: Optional[Callable[..., list]] = None,
 ) -> list | tuple[list, set[str]]:
     """Bounded, rotation-aware read of one JSONL log (module docstring).
 
     ``iter_objects`` is the parser seam (the gateway wrapper passes its own
-    name so its tests keep governing it). ``coverage``, when given, is filled
-    with ``live_size``, ``live_window`` (bytes of the live file read; both absent
-    when the live file could not be read), ``archives`` (consulted count),
-    ``archives_available`` and ``archives_bounded``.
+    name so its tests keep governing it). ``list_archives`` is the listing seam
+    with ``archive_segments``' signature: a request that reads many tasks lists
+    ``archive/`` once and replays its gap to each (``replay_evidence_for_tasks``).
+    ``coverage``, when given, is filled with ``live_size``, ``live_window``
+    (bytes of the live file read; both absent when the live file could not be
+    read), ``archives`` (consulted count), ``archives_available`` and
+    ``archives_bounded``.
     """
     live = pathlib.Path(live)
     parse = iter_objects or iter_jsonl_objects  # module name resolved at call time (test seam)
@@ -182,7 +186,7 @@ def read_rotated_jsonl_entries(
             break
         window *= 2
     collected = sum(1 for entry in live_entries if counts_toward_quota(entry))
-    archives = archive_segments(pathlib.Path(archive_dir), archive_prefix, gaps if collect else None)
+    archives = (list_archives or archive_segments)(pathlib.Path(archive_dir), archive_prefix, gaps if collect else None)
     chosen: list = []
     for archive_path in archives:
         if collected >= want or len(chosen) >= max_archives:

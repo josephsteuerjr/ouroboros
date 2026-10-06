@@ -13,6 +13,7 @@ import pytest
 import ouroboros.gateway.models as provider_api
 from ouroboros.llm import LLMClient
 from ouroboros.usage_accounting import current_usage_scope
+from tests._usage_store_testing import ledger_rows
 
 
 class _Request:
@@ -418,6 +419,8 @@ def test_discovery_failure_stops_before_generation(monkeypatch, discovery, error
     [
         ("openai/test", {"OPENROUTER_API_KEY": "key"}, "max_tokens"),
         ("openai::gpt-5.6-terra", {"OPENAI_API_KEY": "key"}, "max_completion_tokens"),
+        # Unlisted by any name prefix: the carrier is the direct provider's, not the name's.
+        ("openai::gpt-6-astra", {"OPENAI_API_KEY": "key"}, "max_completion_tokens"),
         ("openai-compatible::test", {
             "OPENAI_COMPATIBLE_API_KEY": "key",
             "OPENAI_COMPATIBLE_BASE_URL": "https://compat.example/v1",
@@ -452,6 +455,32 @@ def test_openai_class_probe_is_one_minimal_attempt(monkeypatch, model, settings,
     )
     assert client._remote_clients == {}
     assert remote.closed is True
+
+
+@pytest.mark.parametrize("model", [
+    "openai::gpt-6-astra",
+    "openai::acme-never-listed-1",
+    "openai::gpt-5.6-terra",
+    "openai::o3-mini",
+    "openai/gpt-6-astra",
+    "openai-compatible::giga-osa-glm53/glm-5.3-flash",
+    "deepseek::deepseek-v4-flash",
+    "minimax::MiniMax-M3",
+])
+def test_provider_test_token_key_is_the_send_path_rule(monkeypatch, model):
+    """Provider Test must send the token-limit carrier the real send path sends for the
+    same route, for listed and unlisted model names alike."""
+    from ouroboros import llm_probe
+
+    client = LLMClient()
+    target = client._resolve_remote_target(model)
+    sent = client._build_remote_kwargs(
+        dict(target), [{"role": "user", "content": "Reply OK"}], "medium", 16, "auto", None, None,
+        skip_capability_fetch=True,
+    )
+    probe = llm_probe._probe_candidate(target)
+    carriers = ("max_tokens", "max_completion_tokens")
+    assert [key for key in carriers if key in probe] == [key for key in carriers if key in sent]
 
 
 def test_anthropic_probe_accepts_empty_completion(monkeypatch):
@@ -636,23 +665,16 @@ def test_provider_test_attempts_are_physically_accounted_without_chat_side_effec
     assert client.probe_provider_readiness("openai/test", settings=settings)["ok"] is True
     assert client.probe_provider_readiness("openai/test", settings=settings)["error"] == "Rate limited"
 
-    rows = [
-        json.loads(line)
-        for line in (tmp_path / "state" / "usage_attempts.jsonl").read_text().splitlines()
-    ]
-    by_attempt = {}
-    for row in rows:
-        if row.get("kind") == "attempt":
-            by_attempt.setdefault(row["attempt_id"], []).append(row)
-    assert len(by_attempt) == 2
-    finals = [attempt_rows[-1] for attempt_rows in by_attempt.values()]
+    # One current row per attempt; revision 3 = reserved, dispatched, terminal.
+    finals = [row for row in ledger_rows(tmp_path) if row.get("kind") == "attempt"]
+    assert len({row["attempt_id"] for row in finals}) == len(finals) == 2
     assert sorted(row["state"] for row in finals) == ["settled", "unresolved"]
-    for attempt_rows in by_attempt.values():
-        assert [row["state"] for row in attempt_rows[:2]] == ["reserved", "dispatched"]
-        assert attempt_rows[-1]["task_id"] == "system:provider_test"
-        assert attempt_rows[-1]["root_task_id"] == "system:provider_test"
-        assert attempt_rows[-1]["category"] == "provider_test"
-        assert attempt_rows[-1]["source"] == "provider_test"
+    for row in finals:
+        assert row["revision"] == 3
+        assert row["task_id"] == "system:provider_test"
+        assert row["root_task_id"] == "system:provider_test"
+        assert row["category"] == "provider_test"
+        assert row["source"] == "provider_test"
     events_path = tmp_path / "logs" / "events.jsonl"
     events = [json.loads(line) for line in events_path.read_text().splitlines()]
     assert not any(row.get("type") in {"llm_round", "llm_usage", "chat", "progress"} for row in events)
@@ -684,14 +706,15 @@ def test_response_log_and_accounting_expose_only_controlled_error(
         status, body = _post({"provider_id": "openrouter"})
     assert status == 200
     assert body == {"ok": False, "error": "Model request failed"}
-    ledger = (tmp_path / "state" / "usage_attempts.jsonl").read_text()
+    stored = ledger_rows(tmp_path)
+    ledger = json.dumps(stored, default=str)
     rendered = json.dumps(body) + caplog.text + ledger
     assert secret not in rendered
     assert encoded not in rendered
     assert "user:" not in rendered
     assert f"api_key={secret}" not in rendered
     assert f"Basic {encoded}" not in rendered
-    final = json.loads(ledger.splitlines()[-1])
+    final = stored[-1]
     assert final["state"] == "unresolved"
     assert "***REDACTED***" in final["reason"]
 

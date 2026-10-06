@@ -3338,6 +3338,14 @@
   "shape:safety_violation": {
    "is_error": true,
    "status": "safety_violation"
+  },
+  "shape:vlm_no_vision_model": {
+   "is_error": true,
+   "status": "vlm_error"
+  },
+  "shape:vlm_query_failed": {
+   "is_error": true,
+   "status": "vlm_error"
   }
  }
 }

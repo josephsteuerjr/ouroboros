@@ -408,11 +408,11 @@ def test_server_boot_never_writes_the_settings_file():
 
 def test_server_boot_leaves_the_settings_bytes_alone(tmp_path, monkeypatch):
     """The behavioural half of the pin above. A REAL lifespan boot over a document
-    whose provider normalization reports a change (a retired model default the
-    normalization replaces — the exact case the retired boot write persisted) leaves
-    the file's bytes and mtime untouched. The syntactic pin is the fast tripwire; this
-    one also catches a boot write that reaches the disk through some helper other
-    than the named saver.
+    whose provider normalization reports a change (a product-authored Heavy default
+    the normalization clears — the kind of change the retired boot write persisted)
+    leaves the file's bytes and mtime untouched. The syntactic pin is the fast
+    tripwire; this one also catches a boot write that reaches the disk through some
+    helper other than the named saver.
 
     The boot managed-update thread is the one lifespan job stubbed for a reason of its
     own rather than for scope: it is a daemon whose work races this assertion anyway,
@@ -420,12 +420,9 @@ def test_server_boot_leaves_the_settings_bytes_alone(tmp_path, monkeypatch):
     whatever ``REPO_DIR`` resolves to in the process that happens to run pytest."""
     import server as srv
     from ouroboros import config as cfg
-    from ouroboros.server_runtime import (
-        _RETIRED_MODEL_DEFAULT_REPLACEMENTS,
-        apply_runtime_provider_defaults,
-    )
+    from ouroboros.server_runtime import apply_runtime_provider_defaults
 
-    document = {"OUROBOROS_MODEL": next(iter(_RETIRED_MODEL_DEFAULT_REPLACEMENTS))}
+    document = {"OUROBOROS_MODEL_HEAVY": "anthropic/claude-opus-" + "4.7"}
     assert apply_runtime_provider_defaults(dict(document))[1] is True, (
         "the fixture must give boot something it could persist")
     settings_path = tmp_path / "settings.json"

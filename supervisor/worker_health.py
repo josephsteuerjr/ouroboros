@@ -326,13 +326,12 @@ def _retire_dead_model_consumers(job: dict, *, captured_timeout: bool = False) -
     except Exception:
         log.warning("Confirmed worker death could not retire tool invocations for %s", job["task_id"], exc_info=True)
     try:
-        from ouroboros.usage_accounting import _memoized_final_rows
+        from ouroboros import usage_store
         from ouroboros.model_wait import retire_model_consumers
 
         root = pathlib.Path(job["task"].get("budget_drive_root") or job["drive_root"])
-        rows, integrity, _memo, _generation = _memoized_final_rows(root)
-        if not integrity:
-            raise ValueError("model consumer death custody unreadable")
+        with usage_store.read(root) as txn:  # this task's rows only (task index)
+            rows = txn.attempts("task_id = ?", (str(job["task_id"]),))
         consumers = {row["local_answer_consumer_id"]: job["attempt"] for row in rows
                      if row.get("task_id") == job["task_id"]
                      and row.get("root_task_id") == (job["task"].get("root_task_id") or job["task_id"])
@@ -628,7 +627,7 @@ def _recover_crashed_task_without_terminal(job: dict, queue: Any) -> None:
             )
         except Exception:
             log.debug("Crash-requeue retry reset failed for %s", task_id, exc_info=True)
-        with _queue_lock:
+        with queue.prepared_root_billing(task), _queue_lock:  # the ledger read happens before the lock
             if not _dead_job_is_current(job):
                 return
             _pool().RUNNING.pop(task_id)

@@ -81,7 +81,7 @@ def test_api_physical_payload_keeps_host_default_and_explicit_precedence(asynchr
     assert "raised" not in observed
     assert observed["sends"][0]["payload"]["temperature"] == expected
     assert "default_temperature" not in observed["sends"][0]["payload"]
-    assert observed["physical_attempts"][0]["states"][-1] == "settled"
+    assert observed["physical_attempts"][0]["state"] == "settled"
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])

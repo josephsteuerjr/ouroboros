@@ -10,7 +10,6 @@ registration only its canonical sharer retires.
 from __future__ import annotations
 
 import json
-import pathlib
 import httpx
 import pytest
 from ouroboros import subagents
@@ -27,6 +26,7 @@ from tests._delegated_transport_shared import (  # noqa: F401  (autouse fixture 
     _owned_gateway_uses_each_test_transport,
     _transport_snapshot,
 )
+from tests._usage_store_testing import ledger_rows
 
 
 def test_custody_survives_the_worker_that_started_the_run(tmp_path, monkeypatch):
@@ -420,13 +420,9 @@ def test_delegated_spend_settles_into_the_canonical_budget_ledger(tmp_path, monk
     assert done["settlement"]["settled"] is True
     assert done["settlement"]["ledger_recorded"] is True
 
-    ledger = pathlib.Path("state") / "usage_attempts.jsonl"
-    assert (canonical / ledger).exists(), \
-        "delegated spend must land in the canonical budget ledger"
-    assert not (child / ledger).exists(), \
-        "never on the child drive that headless pruning deletes"
-    rows = [json.loads(line) for line in (canonical / ledger).read_text().splitlines()
-            if '"subscription_session"' in line]
+    assert ledger_rows(canonical), "delegated spend must land in the canonical budget ledger"
+    assert not ledger_rows(child), "never on the child drive that headless pruning deletes"
+    rows = [row for row in ledger_rows(canonical) if row.get("kind") == "subscription_session"]
     assert rows and rows[-1]["cost_usd"] == 1.25 and rows[-1]["cost_final"] is True
     started = [json.loads(line) for line
                in (canonical / "logs" / "events.jsonl").read_text().splitlines()
@@ -887,9 +883,7 @@ def _settled_session_row(root, reported, run_id="run-counters"):
                           project_id="p", project_owned=False, ledger_root=str(root))
     dc.settle_run(root, _LiveRunStub(), entry,
                   {"summary": summary if reported is _ABSENT else {**summary, "inputTokenUsage": reported}})
-    rows = [json.loads(line) for line
-            in (root / "state" / "usage_attempts.jsonl").read_text().splitlines()
-            if '"subscription_session"' in line]
+    rows = [row for row in ledger_rows(root) if row.get("kind") == "subscription_session"]
     assert rows
     return rows[-1]
 
@@ -921,6 +915,5 @@ def test_a_newly_reported_split_never_rewrites_an_already_settled_session(tmp_pa
     first = _settled_session_row(tmp_path, _ABSENT)
     again = _settled_session_row(tmp_path, _COMPLETE_COUNTERS)
     assert "input_token_usage" not in first and again == first
-    rows = [line for line in (tmp_path / "state" / "usage_attempts.jsonl").read_text().splitlines()
-            if '"subscription_session"' in line]
+    rows = [row for row in ledger_rows(tmp_path) if row.get("kind") == "subscription_session"]
     assert len(rows) == 1, "an optional statistic must not duplicate a settled paid run"

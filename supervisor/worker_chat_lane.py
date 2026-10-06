@@ -26,6 +26,7 @@ import time
 import uuid
 from typing import Any, Callable, Dict, Optional, Tuple, Union
 from supervisor.state import append_jsonl
+from ouroboros.observability import stamp_finalization_enqueue
 from ouroboros.utils import utc_now_iso
 
 
@@ -526,7 +527,7 @@ def _execute_chat_task(admitted: Dict[str, Any]) -> bool:
 
                 end_dispatch_fence(task_id)  # quiescent actor unwound; the durable row owns the dispatch hold
         for e in remaining:
-            _pool().get_event_q().put(turn_queue.stamp(e))
+            _pool().get_event_q().put(stamp_finalization_enqueue(turn_queue.stamp(e)))
         ok = True
     except Exception as e:
         _report_direct_chat_error(admitted, e)

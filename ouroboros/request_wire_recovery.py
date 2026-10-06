@@ -587,6 +587,18 @@ def current_wire_candidate() -> Optional[WireCandidateManifest]:
     return current.candidate if current is not None else None
 
 
+def registered_source_payload(payload: Mapping[str, Any]) -> Optional[Mapping[str, Any]]:
+    """The canonical source a registered wire form was bound from; None for any other payload.
+
+    A re-finalized wire form (a clock refresh, a same-invocation rejoin) is measured on
+    that source so the reply allowance stays a function of the source bytes and the
+    unchanged form keeps its registration (a projected dialect carries extra bytes).
+    """
+    digest = physical_candidate_sha256(payload)
+    return next((item.source_payload for item in reversed(_WIRE_CALL_STATE.get().registered)
+                 if item.candidate.candidate_sha256 == digest), None)
+
+
 def note_wire_send_succeeded(capture: Any) -> None:
     state = _WIRE_CALL_STATE.get()
     if state.current is None or not isinstance(capture, PhysicalAttemptCapture):

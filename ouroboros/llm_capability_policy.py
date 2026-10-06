@@ -99,9 +99,8 @@ class _CapabilityPolicyMixin:
                     resp.status_code,
                 )
                 return
-            from ouroboros.provider_models import update_vision_overlay
-
-            for m in resp.json().get("data", []) or []:
+            rows = resp.json().get("data", []) or []
+            for m in rows:
                 mid = m.get("id") or ""
                 sp = m.get("supported_parameters")
                 if mid and isinstance(sp, list) and sp:
@@ -110,13 +109,13 @@ class _CapabilityPolicyMixin:
                 cl = m.get("context_length")
                 if mid and isinstance(cl, (int, float)) and cl > 0:
                     cls._CONTEXT_LENGTH_CACHE[mid] = int(cl)
-                # Vision overlay for supports_vision(): authoritative
-                # input_modalities from the same /models payload.
-                arch = m.get("architecture")
-                if mid and isinstance(arch, dict):
-                    modalities = arch.get("input_modalities")
-                    if isinstance(modalities, list) and modalities:
-                        update_vision_overlay(mid, "image" in modalities)
+            # Image input is a fact about this exact route: one parser, stored
+            # under the OpenRouter route scope with this response's time, so any
+            # process (a worker, a cold VLM child) reads it without a fetch.
+            from ouroboros.vision_routing import record_catalog_image_input
+
+            record_catalog_image_input("openrouter", "https://openrouter.ai/api/v1", rows,
+                                       source="OpenRouter /models")
             cls._CAPABILITIES_FETCH_OK = True  # reached the provider and parsed it
         except Exception:
             log.debug("Failed to fetch OpenRouter model capabilities", exc_info=True)

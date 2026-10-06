@@ -278,11 +278,10 @@ def controlled_probe_error(exc: BaseException) -> dict[str, Any]:
 def _probe_candidate(target: Mapping[str, Any]) -> dict[str, Any]:
     provider = str(target.get("provider") or "")
     model = str(target.get("resolved_model") or "")
-    token_key = (
-        "max_completion_tokens"
-        if provider == "openai" and model.startswith(("gpt-5", "o1", "o3", "o4"))
-        else "max_tokens"
-    )
+    # The send path's provider-wide rule (``_build_remote_kwargs``): official direct
+    # OpenAI Chat takes the current completion-token carrier for every model; a model
+    # name is not evidence of which carrier a route accepts.
+    token_key = "max_completion_tokens" if provider == "openai" else "max_tokens"
     candidate: dict[str, Any] = {
         "model": model,
         "messages": [{"role": "user", "content": PROVIDER_TEST_PROMPT}],

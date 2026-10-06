@@ -15,6 +15,7 @@ from ouroboros.task_results import STATUS_RUNNING, load_task_result, write_task_
 from tests.test_llm_claudexor import MODEL, result, setup as gateway_fixture
 from tests.test_model_wait import live_wait as wait_fixture
 from tests.test_subscription_main_wait import main_call as main_fixture
+from tests._usage_store_testing import ledger_rows
 
 setup = gateway_fixture
 live_wait = wait_fixture
@@ -375,12 +376,12 @@ def test_outage_wrap_keeps_older_wire_death_custody_without_summary(tmp_path, mo
     # the authority is unknown: the loop refuses before any reservation or send.
     with pytest.raises(model_wait.ModelWaitInterrupted, match="owner_pause_authority_unreadable"):
         run()
-    assert not posted and llm.calls == 0 and not (tmp_path / ua.LEDGER_REL).exists()
+    assert not posted and llm.calls == 0 and not ledger_rows(tmp_path)
     write_task_result(tmp_path, "t-death", STATUS_RUNNING, root_task_id="t-death",
                       _is_direct_chat=interactive)
     _text, usage, trace = run()
     assert posted and llm.calls == 1
-    assert [row["state"] for row in _ledger(tmp_path)] == ["reserved", "dispatched", "unresolved"]
+    assert [row["state"] for row in _ledger(tmp_path)] == ["unresolved"]
     assert loop_llm_call.provider_no_call_source(usage, False)[0] == "provider_outcome_unknown_no_resend"
     if interactive:
         assert trace["forced_finalization"]["control_reason"] == "finalize_requested"

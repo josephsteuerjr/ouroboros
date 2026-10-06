@@ -756,6 +756,34 @@ class ForcedCandidateUnaffordable(PhysicalAttemptPreconditionFailed):
     """
 
 
+def _forced_physical_context(ctx: _RoundLimitContext, messages: List[Dict[str, Any]]) -> Any:
+    """One fresh Main measurement of the final input, bound for a forced lookahead and its send.
+
+    The transport finalizer sizes a rendered Nano's reply from the bound context, so the
+    priced lookahead and the send it admits are measured ONCE and share the allowance
+    (their clock-free identity still matches). None without a Main plan for the acting
+    model: the send then goes out under the caller's ceiling, as before. A local task's
+    lookahead builds a remote candidate (disclosed): the equality promise is remote-only.
+    """
+    tools_ctx = getattr(getattr(ctx, "tools", None), "_ctx", None)
+    plan = getattr(tools_ctx, "context_fit_plan", None)
+    if plan is None or str(ctx.active_model or "") != str(getattr(plan, "model", "") or ""):
+        return None
+    from ouroboros.context_fit import measure_main_fit
+    from ouroboros.loop_model_call import _main_context_profile, _physical_context_for_fit, _remember_main_fit
+    from ouroboros.observability import new_execution_id
+
+    mode = str(getattr(tools_ctx, "active_context_mode", "") or "")
+    mode = mode if mode in {"max", "low", "nano"} else "max"
+    round_id = f"{ctx.accumulated_usage.setdefault('execution_id', new_execution_id())}:round:{ctx.round_idx}"
+    disposition = measure_main_fit(
+        plan, messages, getattr(ctx, "tool_schemas", None), profile=_main_context_profile(plan, mode),
+        rendered_mode=mode, round_id=round_id, reasoning_effort=ctx.active_effort,
+        automatic_pass_used=(str(plan.route_fp or ""), round_id) in _loop()._context_reclaim_materializations(tools_ctx))
+    _remember_main_fit(ctx, disposition)
+    return _physical_context_for_fit(disposition)
+
+
 def _call_forced_model_once(
     ctx: _RoundLimitContext, *, initial_messages: Any = None, admitted_request: Any = None,
     admission: Optional[Dict[str, Any]] = None,
@@ -764,6 +792,13 @@ def _call_forced_model_once(
     from ouroboros.model_wait import current_model_wait
 
     owner_ctx = getattr(getattr(ctx, "tools", None), "_ctx", None)
+    # The admitted send reuses the lookahead's one measurement (``task_pacing.prepared_wrapup_candidate``);
+    # a direct, drift or owner-refresh send measures its own final input afresh.
+    physical = getattr(owner_ctx, "_forced_physical_context", None) if admitted_request is not None else None
+    if owner_ctx is not None:
+        owner_ctx._forced_physical_context = None
+    if physical is None:
+        physical = _forced_physical_context(ctx, initial_messages if initial_messages is not None else ctx.messages)
     waiter = current_model_wait()
     role, account = task_model_binding({"model_role": getattr(ctx, "model_role", ""),
         "task_metadata": getattr(owner_ctx, "task_metadata", {})},
@@ -797,6 +832,7 @@ def _call_forced_model_once(
                 "the fresh forced candidate does not fit the admitted balances at its own price")
         return True
 
+    # Named residual: reads the task's refused-image memory, never recovers a first refusal (vision_routing).
     final_msg, _final_cost = _loop().call_llm_with_retry(
         ctx.llm,
         ctx.messages,
@@ -818,6 +854,7 @@ def _call_forced_model_once(
             getattr(getattr(ctx, "tools", None), "_ctx", None)
         ),
         initial_messages=initial_messages,
+        physical_context=physical,
         candidate_predicate=candidate_predicate if admitted_request is not None else None,
         model_role=role,
         model_account_override=account,

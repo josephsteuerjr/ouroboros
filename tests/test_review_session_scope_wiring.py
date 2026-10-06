@@ -36,6 +36,7 @@ from tests._review_session_route_shared import (
     FakeLLM,
     _terminal_detail,
 )
+from tests._usage_store_testing import ledger_rows
 
 # ---------------------------------------------------------------------------
 # 5.2/5.6/5.7 — surface wiring: scope and triad deliver sessions without packs
@@ -628,9 +629,7 @@ def test_skill_review_all_session_composition_uses_strict_schema_and_no_api_fall
                "docs/CREATING_SKILLS.md" in request["prompt"] for request in starts)
     assert all("Empty arrays and NO_FINDINGS are invalid" in request["prompt"]
                and "manifest_schema" in request["prompt"] for request in starts)
-    ledger = [json.loads(line) for line in
-              (ctx.drive_root / "state" / "usage_attempts.jsonl").read_text().splitlines()
-              if line.strip()]
+    ledger = ledger_rows(ctx.drive_root)
     sessions = [row for row in ledger if row.get("kind") == "subscription_session"]
     assert len(sessions) == 2
     assert {row["review_slot_id"] for row in sessions} == {"skill-slot-a", "skill-slot-b"}

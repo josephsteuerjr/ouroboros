@@ -14,6 +14,9 @@ def pending_invocations(
 
     from ouroboros import delegate_custody as c
 
+    from ouroboros.delegate_custody_current import active, pending
+    if rows is None and active(drive_root):
+        return pending(drive_root)
     found: Dict[str, Dict[str, Any]] = {}
     state: Dict[str, str] = {}
     source = rows if rows is not None else c.custody_rows(drive_root)

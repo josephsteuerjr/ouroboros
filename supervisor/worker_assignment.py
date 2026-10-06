@@ -259,6 +259,8 @@ def _claim_worker_launch(queue, candidate, worker):
                 # (#1315): no physical handoff before both are verified.
                 if not record_project_dispatch_possible(candidate) or not record_dispatch_possible(candidate):
                     return False
+                from ouroboros.obligations import drive_started
+                drive_started(_pool().DRIVE_ROOT, candidate)
                 _mirror_assigned_running_status(candidate)
                 worker.in_q.put(candidate)
                 return True

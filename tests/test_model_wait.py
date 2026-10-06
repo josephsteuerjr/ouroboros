@@ -193,7 +193,8 @@ def test_quota_wait_rejoins_call_without_replaying_tools_and_keeps_ledger(elapse
     answer, usage = client.chat(messages, MODEL, model_role="main")
     assert answer == result()["message"]
     assert transport.uploads[0][0]["messages"] == transport.uploads[1][0]["messages"]
-    assert [row["state"] for row in ledger(root)] == ["reserved", "dispatched", "released", "reserved", "dispatched", "settled"]
+    # One current row per attempt: the typed never-started release, then the answered repeat.
+    assert [(row["state"], row["revision"]) for row in ledger(root)] == [("released", 3), ("settled", 3)]
     assert len(usage["ledger_attempt_ids"]) == 2
     rows = list(events.queue)
     assert rows[0]["state"] == "waiting" and rows[-1]["state"] == "resolved"
@@ -700,7 +701,7 @@ def test_call_can_decline_resource_wait_without_losing_task_binding(live_wait, c
     assert transport.uploads[0][0]["account"] == {"mode": "auto"}
     assert "wait_for_resources" not in json.dumps(transport.uploads[0][0])
     assert model_wait.current_model_wait() is controller and not controller.closed
-    assert [row["state"] for row in ledger(root)] == ["reserved", "dispatched", "released"]
+    assert [(row["state"], row["revision"]) for row in ledger(root)] == [("released", 3)]
 
     answer, usage = call()
     assert answer == result()["message"] and len(transport.accepted_operations) == 3

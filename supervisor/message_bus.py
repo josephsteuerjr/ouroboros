@@ -1342,13 +1342,8 @@ def budget_line(force: bool = False) -> str:
         try:
             if DATA_DIR is None:
                 raise RuntimeError("message bus data root is not initialized")
-            from ouroboros.usage_accounting import (
-                ensure_legacy_imported,
-                usage_projection,
-                usage_writer_snapshot,
-            )
+            from ouroboros.usage_accounting import usage_projection, usage_writer_snapshot
 
-            ensure_legacy_imported(DATA_DIR)
             total = float(TOTAL_BUDGET_LIMIT or 0.0)
             accounting = (  # display of scalars, sent from the supervisor loop too: no per-root map
                 usage_projection(DATA_DIR, global_limit_usd=total, include_roots=False, allow_stale=True)
@@ -1419,6 +1414,8 @@ def log_chat(
             "transport": dict(transport or {}),
             "task_id": str(task_id or ""),
         }
+        if direction == "in":
+            record["message_accepted_at"] = utc_now_iso()
         if direction == "in" and source == "web" and client_message_id and require_write:
             # The canonical append is the proof used by the live echo. Keep it
             # on that SAME row so history can replay the fact after a reload.
@@ -1493,6 +1490,9 @@ def log_chat(
             root / "logs" / "chat.jsonl", record,
             require_lock=require_write, ensure_record_boundary=ensure_record_boundary,
         )
+        if written:
+            from ouroboros.notice_receipts import record as record_notice_receipt
+            record_notice_receipt(root, record)
         if require_write and not written:
             raise RuntimeError("canonical message acceptance could not be persisted")
         return record if written else None

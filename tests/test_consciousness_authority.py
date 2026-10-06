@@ -188,7 +188,7 @@ def test_i3_serialized_request_prefix_matches_an_owner_turn(tmp_path, monkeypatc
         msgs, _ = build_llm_messages(env=env, memory=memory, task=task)
         prefix = [json.dumps(msgs[0]["content"][i], sort_keys=True) for i in (0, 1)]
         assert prefix == owner_prefix, level
-        assert "cache_control" not in msgs[0]["content"][2]
+        assert "cache_control" not in msgs[0]["content"][-1]
         reg = _registry(tmp_path, task["metadata"], task_id="t-owner")
         assert json.dumps(reg.schemas(), sort_keys=True) == owner_tools, level
         assert reg.capability_omissions() == owner_reg.capability_omissions(), level
@@ -530,9 +530,10 @@ def test_subagent_payload_lands_the_origin_on_the_child_metadata():
 
 
 def test_schedule_subagent_event_names_the_origin():
-    """The tool stamps ``origin_metadata`` on the schedule event beside the envelope."""
+    """The tool stamps ``origin_metadata`` on the schedule event beside the envelope:
+    the consciousness origin and the owner's words that caused the tree, by value."""
     source = pathlib.Path("ouroboros/tools/control_scheduling.py").read_text(encoding="utf-8")
-    assert '"origin_metadata": consciousness_origin_metadata(metadata),' in source
+    assert '"origin_metadata": {**consciousness_origin_metadata(metadata), **owner_origin},' in source
     handler = pathlib.Path("supervisor/events_schedule_task.py").read_text(encoding="utf-8")
     assert '"origin_metadata": evt.get("origin_metadata"),' in handler
 

@@ -12,7 +12,7 @@ from ouroboros import review_substrate as review
 from ouroboros import usage_accounting as ua
 from ouroboros.gateway.extensions import _ApiReviewCtx
 from ouroboros.marketplace.install import _MarketplaceReviewCtx
-from tests.test_batch4_compaction_authority import _legacy_attempt, _compact, _strip_carriage
+from tests._usage_store_testing import write_compacted_journal
 from tests.test_billing_group import data_root as data_root
 
 
@@ -47,10 +47,13 @@ def test_actual_host_role_preserves_configured_lifetime_cap(data_root, monkeypat
     monkeypatch.setenv("OUROBOROS_PER_TASK_COST_USD", "2")
     monkeypatch.setattr(review, "runtime_setting", lambda key, default=None: "2" if key == "OUROBOROS_PER_TASK_COST_USD" else default)
     ctx = ctx_type(data_root, data_root.parent / "repo")
-    _legacy_attempt(data_root, "old-first", model="z", cap=2.0, rid=ctx.task_id)
-    _legacy_attempt(data_root, "old-later", model="a", cap=100.0, rid=ctx.task_id)
-    _compact(data_root, monkeypatch)
-    _strip_carriage(data_root)
+    # An old root whose imported compacted block disputes its cap (two literals,
+    # no carriage): open, so the host role's configured cap applies.
+    aggregate = dict(task_id=ctx.task_id, root_task_id=ctx.task_id, parent_task_id="", provider="openai",
+                     category="task", source="old", folded_attempt_count=1, cost_usd="0.5", cost_final=True,
+                     reservation_upper_bound_usd="1.0", pricing_known=True)
+    write_compacted_journal(data_root, [{**aggregate, "attempt_id": "old-first", "model": "z", "root_limit_usd": "2.0"},
+                                        {**aggregate, "attempt_id": "old-later", "model": "a", "root_limit_usd": "100.0"}])
     for skill in ("one", "two"):
         result = _coordinator_reservation(ctx, monkeypatch, skill=skill, amount=.4)
         assert "attempt" in result

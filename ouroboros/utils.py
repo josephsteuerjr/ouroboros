@@ -447,6 +447,7 @@ def update_json_locked(
     stale_sec: float = 90.0,
     strict_existing_dict: bool = False,
     reject_existing_empty_dict: bool = False,
+    after_write: Any = None,
 ) -> Dict[str, Any]:
     """Locked read-modify-write of a durable JSON dict file.
 
@@ -496,6 +497,8 @@ def update_json_locked(
         if updated is None:
             return current
         atomic_write_json(path, updated)
+        if after_write is not None:
+            after_write(updated)  # still under the writer lock; a crash leaves extra debt
         return updated
     finally:
         release_exclusive_file_lock(lock_path, lock_fd)

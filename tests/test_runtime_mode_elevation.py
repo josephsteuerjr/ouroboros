@@ -902,7 +902,7 @@ def test_every_settings_writer_routes_through_the_shared_prologue():
             "the raw document with only its context compatibility pair changed, in serializer "
             "bytes. Routing through the prologue would merge defaults and turn unrelated absence "
             "into authorship.",
-        ("ouroboros/usage_legacy_import.py", "_legacy_snapshot"):
+        ("ouroboros/usage_journal.py", "legacy_snapshot"):
             "reads/hashes the settings file for the usage archive; its writes target the archive.",
         ("ouroboros/tools/core.py", "_data_write"):
             "names SETTINGS_PATH only to REFUSE agent writes to it.",

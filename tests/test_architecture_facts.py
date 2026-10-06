@@ -172,8 +172,8 @@ def test_writer_module_query_names_its_entities():
         r.entity for r in persistence_entities_written_by(REPO, "supervisor/state.py")
     )
     assert "state/state.json" in entities
-    ledger = persistence_entities_written_by(REPO, "ouroboros/usage_ledger.py")
-    assert any("usage_attempts.jsonl" in r.entity for r in ledger)
+    store = persistence_entities_written_by(REPO, "ouroboros/usage_store.py")
+    assert any("usage.sqlite" in r.entity for r in store)
     # A dotted spelling of the same writer answers identically.
     assert persistence_entities_written_by(REPO, "supervisor.state") == \
         persistence_entities_written_by(REPO, "supervisor/state.py")

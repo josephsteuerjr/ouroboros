@@ -61,6 +61,13 @@ Before marking any finding CRITICAL you MUST:
    or instructions a user/reviewer must rely on to use the changed feature correctly.
    Examples that should normally stay advisory: README test counts, descriptive
    "N fixes" summaries, or marketing-style numeric claims.
+8. Name who or what triggers the problem on a supported install — a user flow,
+   a crash or restart, a concurrent writer Ouroboros itself runs, a platform it
+   ships on. A fault that needs someone who already holds the power (the owner
+   or Ouroboros editing, planting or restoring files under its own data root) is
+   **advisory**, and disclosure is a valid fix. A remedy that adds a check,
+   re-read, proof or refusal states what it costs on the path it sits on at
+   today's history size, or what work it refuses.
 
 When in doubt: use "advisory". Reserve "critical" for clear, concrete,
 repo-local, reachable defects.

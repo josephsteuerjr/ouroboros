@@ -13,6 +13,7 @@ import time
 from dataclasses import replace
 from typing import Any, Callable, Dict, List
 
+from ouroboros.observability import timed_phase
 from ouroboros.settings_integrity import copy_task_settings_context
 from ouroboros.cost_projection import cost_projection, resolve_cost_pair
 from ouroboros.task_results import (
@@ -236,11 +237,11 @@ def _run_post_task_processing_async(
                 return failure
 
             # All late model work belongs to this one scoped worker.  This keeps
-            # the root checkpoint non-final until consolidation, reflection,
-            # and promotion have all stopped billing.
+            # the root checkpoint non-final until the fallback memory draft,
+            # consolidation, reflection and promotion have all stopped billing.
             stages: List[tuple[str, Callable[[], Any]]] = [
-                ("chat_consolidation", lambda: _run_chat_consolidation(
-                    env, task_memory, llm_client, task_snapshot, drive_logs)),
+                ("memory_fallback_draft", lambda: _run_memory_fallback_draft(
+                    env, task_snapshot, llm_client, drive_logs, trace_snapshot)),
                 ("scratchpad_consolidation", lambda: _run_scratchpad_consolidation(
                     env, task_memory, llm_client)),
                 ("reflection", (lambda: finish_published_reflection(env, task_snapshot, result["reflection_entry"]))
@@ -399,14 +400,14 @@ def recover_pending_root_post_task_synthesis(
     """
     from types import SimpleNamespace
     from ouroboros.post_task_synthesis import resume_paused_late_phase, revoke_late_phase_grant
-    from ouroboros.task_results import list_task_results
+    from ouroboros.obligations import result_rows
     from ouroboros.terminal_projection import terminal_projection_owed
 
     root = pathlib.Path(drive_root).resolve(strict=False)
     if resume_task_id:
         return int(resume_paused_late_phase(root, repo_dir or root.parent, str(resume_task_id)))
     try:
-        rows = list_task_results(root)
+        rows = list(result_rows(root, "synthesis", exclude=exclude_task_ids))
     except Exception:
         return 0
     recovered = 0
@@ -803,10 +804,10 @@ def emit_task_results(
             post_task_open=not task.get("_skip_post_task_synthesis") and not _root_post_task_already_completed(env, task),
         )
         register_final_answer_owed(task, send_event, env_drive_root=env.drive_root)
-    _store_task_result(
-        env, task, text, usage, llm_trace, review_evidence=review_evidence,
-        loop_outcome=loop_outcome, cost_fields=task_cost_fields, final_delivery=send_event,
-    )
+    with timed_phase("result_store", timing=usage.get("_finalization_timing") or {}):
+        _store_task_result(env, task, text, usage, llm_trace, review_evidence=review_evidence,
+                           loop_outcome=loop_outcome, cost_fields=task_cost_fields,
+                           final_delivery=send_event)
     stored_result = load_task_result(env.drive_root, str(task.get("id") or "")) or {}
     if _root_outbox and task.get("_skip_post_task_synthesis"):
         # Stop before post-task dispatch forbids paid synthesis, not the free
@@ -1464,7 +1465,7 @@ from ouroboros.post_task_synthesis import (  # noqa: E402, F401 -- intentional p
     _compact_review_projection,
     _record_task_facts,
     _post_task_paid_interruption,
-    _run_chat_consolidation,
+    _run_memory_fallback_draft,
     _run_scratchpad_consolidation,
     _run_reflection,
     finish_published_reflection,

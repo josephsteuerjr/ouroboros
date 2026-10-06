@@ -202,22 +202,16 @@ def test_local_readonly_subagent_reads_skill_payload():
 # ---------------------------------------------------------------------------
 
 def test_log_filter_masks_bot_token():
-    import server as server_mod
+    from ouroboros.observability import SecretRedactingLogFilter
 
     record = logging.LogRecord(
         name="httpx", level=logging.INFO, pathname="", lineno=0,
         msg='HTTP Request: POST https://api.telegram.org/bot123456789:AAHsecretsecretsecretsecr/getUpdates "200 OK"',
         args=(), exc_info=None,
     )
-    keep = server_mod._SecretRedactingLogFilter().filter(record)
+    keep = SecretRedactingLogFilter().filter(record)
     assert keep is True  # never drops the line
     assert "AAHsecretsecretsecretsecr" not in record.getMessage()
-
-
-def test_httpx_logger_quieted():
-    import server  # noqa: F401 — importing applies the logging setup
-
-    assert logging.getLogger("httpx").level >= logging.WARNING
 
 
 # ---------------------------------------------------------------------------
@@ -563,10 +557,10 @@ def test_degraded_owner_line_bounds_each_reason():
 
 
 def test_redaction_filter_ssot_is_observability():
-    import server as server_mod
+    from ouroboros import process_logging
     from ouroboros.observability import SecretRedactingLogFilter
 
-    assert server_mod._SecretRedactingLogFilter is SecretRedactingLogFilter
+    assert process_logging.SecretRedactingLogFilter is SecretRedactingLogFilter
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX pgrep/getuid semantics")

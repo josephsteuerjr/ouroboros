@@ -545,7 +545,6 @@ def set_budget_pause(root: Any, task_id: str, row: Dict[str, Any],
         _TRULY_TERMINAL_STATUSES, require_writable_task_result_schema,
         stamp_task_result_schema, task_result_path,
     )
-    from ouroboros.utils import update_json_locked
 
     expected_states = (
         None if expected_state is None
@@ -569,9 +568,14 @@ def set_budget_pause(root: Any, task_id: str, row: Dict[str, Any],
             raise BudgetPauseSuperseded("budget pause grant changed")
         retained_wait = ({"owner_wait": {**expected_owner_wait, "state": "retained"}}
                          if expected_owner_wait is not None else {})
-        return stamp_task_result_schema({**current, **retained_wait, "budget_pause": dict(row)})
+        from ouroboros.pause_notices import notice_fields
+        notice = (notice_fields(current, root, task_id, str(row.get("pause_id") or ""), "budget")
+                  if row.get("state") == STATE_PAUSED and row.get("reason") == "budget"
+                  and (old.get("state") != STATE_PAUSED or old.get("pause_id") != row.get("pause_id")) else {})
+        return stamp_task_result_schema({**current, **retained_wait, **notice, "budget_pause": dict(row)})
 
-    update_json_locked(task_result_path(root, task_id), update, strict_existing_dict=True)
+    from ouroboros.obligations import update_result
+    update_result(task_result_path(root, task_id), update, strict_existing_dict=True)
     return dict(row)
 
 
@@ -727,12 +731,12 @@ def _exact_continuation_row(limit_ctx: Any, ctx: Any, *, pause_id: str, rail: st
              "unanswered_tool_call_ids": pending,
              "unanswered_policy": "not_re_executed_execution_unknown",
              "budget_tail": getattr(limit_ctx, "budget_tail", "tool")}
-    # The rail already stamped its terminal projection on the live usage, and a
-    # hold leaves its own transient row there; neither may travel into the
-    # resumed loop's eventual honest terminal.
+    # The rail already stamped its terminal projection on the live usage, a hold leaves its
+    # own transient row there, and the round's started stamp is a monotonic reading the pause
+    # would stretch into the round's duration; none may travel into the resumed loop.
     usage_for_state = {key: value for key, value in usage.items()
                        if key not in ("execution_status", "reason_code",
-                                      "_best_effort_extracted", "budget_pause_hold")}
+                                      "_best_effort_extracted", "budget_pause_hold", "_llm_round_started")}
     state = {
         **continuation_state(ctx, messages, trace, usage_for_state, limit_ctx.round_idx,
                              list(limit_ctx.tool_schemas or []), seen),

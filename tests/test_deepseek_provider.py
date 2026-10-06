@@ -79,10 +79,13 @@ class TestRegistry:
         assert migrate_model_value("deepseek", "deepseek::deepseek-v4-pro") == "deepseek::deepseek-v4-pro"
         assert normalize_model_identity("deepseek::deepseek-v4-flash") == "deepseek/deepseek-v4-flash"
 
-    def test_vision_narrow_prefix(self):
-        assert supports_vision("deepseek::deepseek-v4-flash-vision-exp") is True
-        assert supports_vision("deepseek::deepseek-v4-flash") is False
-        assert supports_vision("deepseek/deepseek-chat") is False
+    def test_vision_is_route_evidence_not_a_name(self, monkeypatch, tmp_path):
+        # No catalog Ouroboros reads states image input for these routes, so the
+        # names (the experimental vision variant included) are unknown, not a verdict.
+        monkeypatch.setenv("OUROBOROS_DATA_DIR", str(tmp_path))
+        assert supports_vision("deepseek::deepseek-v4-flash-vision-exp") is None
+        assert supports_vision("deepseek::deepseek-v4-flash") is None
+        assert supports_vision("deepseek/deepseek-chat") is None
 
 
 class TestSingleProviderIndependence:
@@ -434,25 +437,20 @@ class TestWireProjection:
         )
         assert same[0].get("reasoning_content") == "ds"
 
-    def test_vision_images_survive_for_vision_variant_only(self, monkeypatch):
+    def test_user_images_reach_the_deepseek_wire_on_any_model(self, monkeypatch):
+        # The transport encodes what the send policy gave it: whether a DeepSeek
+        # model sees is the route's answer, not this builder's guess from a name.
         client = LLMClient()
         image_msg = [{"role": "user", "content": [
             {"type": "text", "text": "what is this"},
             {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
         ]}]
-        vision_target = self._target(monkeypatch, "deepseek::deepseek-v4-flash-vision-exp")
-        kwargs = client._build_remote_kwargs(
-            vision_target, image_msg, "high", 128, "auto", None, None,
-        )
-        blocks = kwargs["messages"][0]["content"]
-        assert any(isinstance(b, dict) and b.get("type") == "image_url" for b in blocks)
-
-        blind_target = self._target(monkeypatch, "deepseek::deepseek-v4-flash")
-        kwargs = client._build_remote_kwargs(
-            blind_target, image_msg, "high", 128, "auto", None, None,
-        )
-        blocks = kwargs["messages"][0]["content"]
-        assert not any(isinstance(b, dict) and b.get("type") == "image_url" for b in blocks)
+        for model in ("deepseek::deepseek-v4-flash-vision-exp", "deepseek::deepseek-v4-flash"):
+            kwargs = client._build_remote_kwargs(
+                self._target(monkeypatch, model), image_msg, "high", 128, "auto", None, None,
+            )
+            blocks = kwargs["messages"][0]["content"]
+            assert any(isinstance(b, dict) and b.get("type") == "image_url" for b in blocks), model
 
     def test_openrouter_lane_neither_leaks_nor_pins_on_deepseek_residue(self, monkeypatch):
         # A mixed transcript (direct-DeepSeek turns replayed on an OpenRouter

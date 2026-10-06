@@ -16,6 +16,7 @@ from supervisor.terminal_delivery import delivery_id_for, register_pending_deliv
 from tests.test_acceptance_history import _fixture, _caller, _source, _request
 from tests.test_review_operation_collection import _send_ctx, fresh_sends as fresh_sends
 from tests.test_review_operation_lifetime import until
+from tests._usage_store_testing import ledger_rows
 
 
 @pytest.fixture
@@ -296,8 +297,7 @@ def test_drain_and_last_slot_callback_settling_one_wave_queue_one_live_notice(la
 
 def _late_effects(f):
     from ouroboros import review_operation
-    ledger = f.root / 'state' / 'usage_attempts.jsonl'
-    return {'live': list(review_operation._LIVE), 'ledger': ledger.read_text() if ledger.exists() else '',
+    return {'live': list(review_operation._LIVE), 'ledger': ledger_rows(f.root),
             'rows': {tid: {k: v for k, v in load_task_result(f.root, tid).items()
                            if k not in ('acceptance_root_cap_amendments', 'updated_at')} for tid in (f.tid, f.accounting)},
             'sources': sorted(p.name for p in f.root.rglob('source_handles/context_checkpoints/*'))}

@@ -731,56 +731,56 @@ Failed remains that task's result even after a different task succeeds.
 
 ### History edges
 
-Within one app session a room reopens at the passage being read after its data
-arrives, even on a slow connection; the place is kept in page memory, so a reload
-opens the room at the present. The passage includes how far a bounded full output,
-Review detail or card timeline around it was scrolled. A failed history read
-keeps that destination and offers Retry; a failed read of the present by ↓
-leaves the view in place with the same Retry. A room kept for an unsent file
-reopens where it was left without another read, even after a partial one. A
-failed full-output read keeps the line's capped preview and offers no Retry of
-its own; collapsing and expanding the line asks again. Scrolling, revealing a
-question, sending a message or choosing the existing ↓ supersedes the saved
-destination; a Send that fails keeps it with the draft and files. Reading on,
-even inside a bounded box, supersedes a ↓ or question still loading. A wheel,
-swipe or key over a bounded box moves that box, not the conversation, until the
-box reaches its edge.
-A scrollbar drag follows new replies only when released at the live edge; a
-wheel, swipe or key reading down follows once its scrolling ends there.
-Expanding a line or receiving its full output leaves it in place; only a newer
-line moves a card timeline to its end.
+A room always opens at its newest message: Main and every Project, however long
+ago its last message was and however much other rooms wrote since. Returning to
+a room in the same app session opens it at its newest message too, Main after a
+closed Project included (owner decisions 2026-07-10 and 2026-10-05). Only an explicit navigation to one place
+lands elsewhere: a question opened from its Main mirror, or the Project work
+pointer. A window merely shown again keeps the reader where they were.
+
+A room's history is its own. A page is counted in the room's messages, never in
+bytes of other rooms' traffic: the newest page holds the room's newest messages,
+and `Load more history` reads the next older messages of the same room, only
+ever older ones (owner decisions 2026-09-14 and 2026-10-05). It shows only while
+older history exists, and one press keeps reading until messages land or the
+room's beginning is reached, so no press is empty. A positive scroll gesture at
+the reading edge loads the same way. Messages arriving while the reader is in
+older history never move where the next press goes on: it reads above what is
+being read, and anything a long absence left unloaded below is read by the
+return to the present. Narration (task progress) keeps loading
+alongside the conversation, but only the conversation keeps the control: once the
+room's beginning is reached it leaves, even if older narration of the oldest
+cards remains unread.
+The floating `Scroll to latest message` is the one return to the present; when
+the present is already loaded it moves there and follows without a read.
+
+A failed history read offers Retry; a failed read of the present by ↓ leaves the
+view in place with the same Retry. A failed full-output read keeps the line's
+capped preview and offers no Retry of its own; collapsing and expanding the line
+asks again. Reading on, even inside a bounded box, supersedes a ↓ or question
+still loading. A wheel, swipe or key over a bounded box moves that box, not the
+conversation, until the box reaches its edge. A scrollbar drag follows new
+replies only when released at the live edge; a wheel, swipe or key reading down
+follows once its scrolling ends there. Expanding a line or receiving its full
+output leaves it in place; only a newer line moves a card timeline to its end.
 New replies remain below in the same live conversation without moving the passage.
 
-The common `Load more history` control retries a failed read, fills a known
-missing continuation toward the present, then reads older portions. A positive
-scroll gesture at an unambiguous reading edge may load a bounded continuation;
-a short portion, resize or media layout alone starts no archive read. Empty
-physical pages are traversable and never mean EOF. The existing floating
-`Scroll to latest message` remains the explicit return to the present; when the
-present is already loaded it moves there and follows without a read, and a gap
-note stays. A clean read of the present supersedes an earlier failed one and its
-note.
-
-When loaded fragments are disconnected or their coverage is uncertain, the
+When loaded fragments are disconnected or their coverage is uncertain (reading
+far back releases the newest pages from memory while replies keep arriving), the
 same readable note stays in Main and Project header chrome: `Some saved history
 is not loaded. Shown messages may have gaps.` A failed read says so distinctly.
-Bytes written after a read found a source empty count as missing until a
-later read delivers them from its start.
-Mixed task cards
-keep one node and use this general note: dates, common
-row IDs and an exhausted cursor cannot establish a separator or full coverage.
-`Beginning of saved history` requires complete delivered physical coverage.
-Retained origins say `Saved project context`; a matching canonical source row
-adopts that node and removes the label. The context itself certifies no archive
-coverage. A missing exact bookmark falls back to its card, then a row on the
-same loaded page, then the previous clamped position. The same persistent note
-explains the approximation until explicit navigation clears it.
-Visible rows and card lines, selection, focus and expanded Reviews keep their
-actual nodes during reconciliation.
-Reopening a nested line reads that line's supplying physical page before using a
-card-wide fallback, and restores expansion and full-output hydration. Its logical
-reading identity and physical source survive replay even when equal or older
-content is rejected; neither source adoption nor reopening rolls back revisions.
+Bytes written after a read found a source empty count as missing until a later
+read delivers them from its start. Mixed task cards keep one node and use this
+general note: dates, common row IDs and an exhausted cursor cannot establish a
+separator or full coverage. `Beginning of saved history` requires the room's
+conversation to be delivered completely. Retained origins say `Saved project
+context`; a matching canonical source row adopts that node and removes the label.
+The context itself certifies no archive coverage. When a window is shown again
+and the reader's exact place is gone, the view falls back to its card, then the
+previous clamped position, and the same persistent note explains the
+approximation until explicit navigation clears it. Visible rows and card lines,
+selection, focus and expanded Reviews keep their actual nodes during
+reconciliation.
 
 ### Project work pointer
 

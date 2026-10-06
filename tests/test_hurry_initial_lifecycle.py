@@ -18,6 +18,7 @@ from ouroboros.gateway.task_hurry import _admit_hurry_locked, api_task_hurry
 from ouroboros.owner_mailbox import KIND_HURRY, _mailbox_path, drain_owner_entries
 from ouroboros.utils import atomic_write_json
 from supervisor import queue, state, task_reaper, worker_health, workers
+from tests._usage_store_testing import ledger_rows
 
 
 @pytest.fixture
@@ -156,7 +157,7 @@ def test_real_admission_hurry_and_pre_running_death_recover(pool, monkeypatch, o
     assert row["owner_hurry"]["attempt_key"] == 1
     assert [entry["kind"] for entry in drain_owner_entries(pool.root, task_id)] == [KIND_HURRY]
     assert not (pool.root / "logs/chat.jsonl").exists()
-    assert not (pool.root / "state/usage_attempts.jsonl").exists()
+    assert not ledger_rows(pool.root)
     if phase == "pending":
         workers.assign_tasks()
     assert pool.slot.in_q.get_nowait()["id"] == task_id

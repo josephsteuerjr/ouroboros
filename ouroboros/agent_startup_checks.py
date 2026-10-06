@@ -456,7 +456,16 @@ def check_version_sync(env: Any) -> Tuple[dict, int]:
 
 
 def check_budget(env: Any) -> Tuple[dict, int]:
-    """Check budget remaining with warning thresholds."""
+    """Check budget remaining with warning thresholds.
+
+    Server-side only: a worker verifying itself at construction need not read
+    the money store once per worker; the server's own check already covers the
+    install, and every reservation re-checks the limits anyway.
+    """
+    from ouroboros.utils import in_worker_process
+
+    if in_worker_process():
+        return {"status": "skipped", "reason": "worker_process"}, 0
     try:
         accounting_root = pathlib.Path(
             getattr(env, "budget_drive_root", None) or env.drive_path("state").parent
@@ -475,9 +484,8 @@ def check_budget(env: Any) -> Tuple[dict, int]:
         if total_budget is None:
             return {"status": "unconfigured"}, 0
         else:
-            from ouroboros.usage_accounting import ensure_legacy_imported, usage_projection
+            from ouroboros.usage_accounting import usage_projection
 
-            ensure_legacy_imported(accounting_root)
             accounting = usage_projection(accounting_root, global_limit_usd=total_budget)
             spent = float(accounting.get("accounted_usd") or 0.0)
             remaining = float(accounting.get("remaining_known_usd") or 0.0)
@@ -707,6 +715,7 @@ def check_stray_server_processes(env: Any) -> Tuple[Dict[str, Any], int]:
 # threshold in bytes, remediation pointer appended to the WARNING.
 def _hot_store_thresholds() -> Tuple[Tuple[str, int, str], ...]:
     from ouroboros.context_budget import (
+        CHRONICLE_JOURNAL_WARN_BYTES,
         EVENTS_LOG_WARN_BYTES,
         PROGRESS_LOG_WARN_BYTES,
         SCHEDULED_TASKS_WARN_BYTES,
@@ -714,7 +723,6 @@ def _hot_store_thresholds() -> Tuple[Tuple[str, int, str], ...]:
         SUPERVISOR_LOG_WARN_BYTES,
         TASK_REFLECTIONS_LOG_WARN_BYTES,
         TOOLS_LOG_WARN_BYTES,
-        USAGE_LEDGER_WARN_BYTES,
     )
 
     rotation_expected = (
@@ -723,20 +731,6 @@ def _hot_store_thresholds() -> Tuple[Tuple[str, int, str], ...]:
         "supervisor rotation tick (rotate_chat_log_if_needed pattern)."
     )
     return (
-        (
-            "state/usage_attempts.jsonl",
-            USAGE_LEDGER_WARN_BYTES,
-            "Warm reservations validate only appended rows under the monetary lock; "
-            "cold/replaced views prepare history outside it (_usage_rows_memo.py). "
-            "Size-triggered compaction (usage_compaction.py, CPL4-C6) should hold the file "
-            "far below this — growth can mean broken compaction, a large "
-            "unfoldable residue, a policy abort, refusal on the name tier "
-            "(no kernel locks), or a file that has not yet outgrown the floor "
-            "its last committed pass stamped into the ledger header (declined "
-            "before the pass, so no event). Check usage_ledger_compaction_refused or "
-            "usage_ledger_compaction_skipped in events.jsonl; the two snapshot-race "
-            "exits before archive/swap only log warnings, without a typed event.",
-        ),
         ("logs/events.jsonl", EVENTS_LOG_WARN_BYTES, rotation_expected),
         ("logs/tools.jsonl", TOOLS_LOG_WARN_BYTES, rotation_expected),
         ("logs/supervisor.jsonl", SUPERVISOR_LOG_WARN_BYTES, rotation_expected),
@@ -762,6 +756,13 @@ def _hot_store_thresholds() -> Tuple[Tuple[str, int, str], ...]:
             "Acceptance packet assembly reads this compact skill-review index; "
             "archive old root-task rows with their review histories.",
         ),
+        (
+            "memory/chronicle/records.jsonl",
+            CHRONICLE_JOURNAL_WARN_BYTES,
+            "Every task context decodes each acting page and part of this journal; it is "
+            "never rotated or cut. Select acting records through the index before loading "
+            "bodies (or fold more of the story) — never delete records.",
+        ),
     )
 
 
@@ -770,7 +771,7 @@ def hot_store_growth_notes(env: Any) -> list:
 
     Reused live by context.py::build_health_invariants (the
     check_stray_server_processes pattern). Deliberately NOT TTL-cached
-    (contrast context._STRAY_PROBE_CACHE): eight os.stat calls plus two shallow
+    (contrast context._STRAY_PROBE_CACHE): nine os.stat calls plus two shallow
     iterdir passes per task turn are orders of magnitude cheaper than the pgrep
     probe that cache exists for, and a stale reading would delay the signal."""
     from supervisor.state import ISOLATED_BENCHMARK_SENTINEL
@@ -807,7 +808,8 @@ def hot_store_growth_notes(env: Any) -> list:
             "WARNING: HOT STORE GROWTH — archive/chat_*.jsonl totals "
             f"{archive_size / 1_000_000:.1f} MB (threshold "
             f"{CHAT_ARCHIVE_SCAN_WARN_BYTES // 1_000_000} MB). Ordinary context reads "
-            "the consolidation-owned suffix; explicit chat_history replay scans this chain. "
+            "only rows after the legacy frontier; explicit chat_history, memory_read(rows=true) "
+            "and page covers replay this chain. "
             "Investigate archive indexing/compaction without shortening the memory horizon."
         )
     # Custody replay walks the whole events chain (live + rotated segments), so

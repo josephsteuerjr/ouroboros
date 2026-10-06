@@ -1,0 +1,2 @@
+95
+The readiness boot fact: supervisor.jsonl keeps each lifecycle job duration and a supervisor_ready row with the process age.

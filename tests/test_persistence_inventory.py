@@ -587,7 +587,32 @@ def scan_data_paths(root: pathlib.Path = REPO) -> frozenset[str]:
 # 300 -> 303: state-initialization witness plus named review source and review_inputs.
 # 303 -> 305: immutable retention names exact text-CAS manifest versions and the
 # existing blob copy destination; both stay under the documented observability store.
-EXPECTED_SCAN_PATHS = 310
+# 308 -> 312 (memory chronicle store): ``memory/chronicle`` with its append-only
+# ``records.jsonl``, the disposable ``index.sqlite3`` and the ``.publication.lock``; one
+# section-6 row each (the directory is answered by the deeper rows).
+# 312 -> 313 (memory legacy import): ``memory/.consolidation.lock``, the legacy
+# writer's flock that the one-time chronicle import also takes, now spelled from the data
+# root; its own section-6 row.
+# 313 -> 312 (memory view): the request no longer reads ``memory/dialogue_summary.md``
+# (the retired flat summary is a chronicle legacy record, imported with the blocks; its row merged
+# into theirs).
+# 312 -> 311 (memory writers): the removed memory pressure upkeep was the only code
+# spelling ``memory/knowledge/overview.md``; the mind still writes the note through the knowledge
+# shelf, whose section-6 row covers it.
+# 311 -> 312 (memory writers): ``memory/chronicle/.fallback.lock``, the fallback memory
+# writer's no-wait lock between two roots' drafts; its own section-6 row (its refusal receipts live in the
+# journal's scan state, the ``records.jsonl`` row).
+# 312 -> 314 (target merge 8d612997c): the two paths the target added on its own
+# 308 -> 310 step land beside the memory change's four.
+# 314 -> 315 (C4 restart/exit): ``state/owned_processes.json``, the installation's ownership set the
+# exit stop reads instead of walking data/state; its own section-2 row.
+# 315 -> 318 (C3 current obligations): state/obligations/*.json, its shared
+# state/obligations.lock, and state/migrations.json; section-2 rows own all three.
+# 318 -> 320 (owned-stop review fix): ``state/owned_processes.pending`` and its lock-free
+# ``*.*.json`` registrations written when the custody lock is held; one section-2 row.
+# 320 -> 321 (obligations rebuild): ``state/obligations/rebuild.owed``, left by a transition whose
+# set write failed so the next start rebuilds the sets; it joins the obligations section-2 row.
+EXPECTED_SCAN_PATHS = 321
 
 # Scanned paths that must always be present — guards the scanner itself
 # against a silent regression that would shrink coverage while keeping counts
@@ -793,6 +818,9 @@ STALE_ROW_EXEMPTIONS = frozenset({
     # "none in this tree ... nothing reads or recreates it". Confirmed by grep —
     # the string `project_source_locks` appears in no .py file.
     "state/project_source_locks",
+    # The retired compactor's archive: "none since the usage store" — kept as
+    # evidence, read only by the explicit history audit (model_send_seal).
+    "archive/usage_ledger/segment_*.jsonl",
 })
 
 

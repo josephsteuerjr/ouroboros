@@ -610,15 +610,16 @@ def _link_historical_controls(operation: ReviewOperation, entry: dict) -> None:
             raise ValueError("the operation control address did not land")
 
 
-def _task_operation_entries(root: Any, task_id: str) -> Iterator[tuple]:
+def _task_operation_entries(root: Any, task_id: str, *, result_loader=None) -> Iterator[tuple]:
     """Resolve the task's existing primary/control addresses without inventing liveness."""
     from ouroboros.task_results import load_task_result
-    row = load_task_result(root, task_id, strict=True) or {}
+    read = result_loader or (lambda tid: load_task_result(root, tid, strict=True) or {})
+    row = read(task_id)
     for owner, entry in (row.get(OPERATIONS_FIELD) or {}).items():
         subject = task_id
         if entry.get("control_only"):
             subject = entry.get("subject_task_id")
-            target = load_task_result(root, subject, strict=True) or {}
+            target = read(subject)
             primary = (target.get(OPERATIONS_FIELD) or {}).get(owner) or {}
             # The immutable intent survives the upgrade; Stop must remain
             # addressable between primary-pointer and control-link writes.
@@ -630,9 +631,9 @@ def _task_operation_entries(root: Any, task_id: str) -> Iterator[tuple]:
 
 
 def task_has_live_review_operation(root: Any, task_id: str, *, exclude_owner_id: str = '',
-                                   sent_only: bool = False) -> bool:
+                                   sent_only: bool = False, result_loader=None) -> bool:
     """Physical review ownership; unsent preparation is excluded by ``sent_only``."""
-    for owner, _subject, entry in _task_operation_entries(root, task_id):
+    for owner, _subject, entry in _task_operation_entries(root, task_id, result_loader=result_loader):
         if owner == exclude_owner_id:
             continue
         if entry.get("state") not in _OPEN_STATES or sent_only and entry.get("state") == OPERATION_PREPARING:
@@ -663,9 +664,9 @@ def retain_preparing_owner_pause(root: Any, task_id: str, fence: dict) -> None:
         _update_operations(root, subject, retain)
 
 
-def paused_acceptance_preparations(root: Any, task_id: str, fence_id: str) -> list:
+def paused_acceptance_preparations(root: Any, task_id: str, fence_id: str, *, result_loader=None) -> list:
     """Durable owed work, separate from whether its controller is physically alive."""
-    return [(owner, subject, entry) for owner, subject, entry in _task_operation_entries(root, task_id)
+    return [(owner, subject, entry) for owner, subject, entry in _task_operation_entries(root, task_id, result_loader=result_loader)
             if (entry.get('preparation_pause') or {}).get('root_task_id') == task_id
             and (entry.get('preparation_pause') or {}).get('fence_id') == fence_id
             and entry.get('state') != 'preparation_refused']

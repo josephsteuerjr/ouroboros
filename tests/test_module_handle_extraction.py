@@ -42,9 +42,8 @@ REPO = pathlib.Path(__file__).resolve().parents[1]
 # transplants its domain; only the D16 L-C2 usage split exists so far. The
 # domain-specific standalone tests travel with their own rows.
 LEAVES: dict[str, tuple[str, str, frozenset[str]]] = {
-    "ouroboros/usage_legacy_import.py": ("ouroboros/usage_accounting.py", "_usage", frozenset({
-        "_legacy_snapshot", "_locked", "_read_records_locked_cached",
-    })),
+    # (The D16 L-C2 usage leaf, usage_legacy_import.py, retired with the usage
+    # store: its import became usage_store.migrate_from_journal.)
     # D08 lane rows. The queue/pool declared sets grew past the reference table
     # where post-cutoff upstream helpers stayed on the facade (the deferred
     # cancel/custody organ); every set below is the tool-derived exact read set.
@@ -345,7 +344,7 @@ LEAVES: dict[str, tuple[str, str, frozenset[str]]] = {
     "ouroboros/loop_forced_finalization.py": ("ouroboros/loop.py", "_loop", frozenset({
         'DeliveryCandidate', '_LoopExitContext', '_append_or_merge_user_message',
         '_call_forced_model_once', '_child_disposition_state', '_claimed_child_dispositions',
-        '_current_delivery_candidate', '_degrade_retained_delivery_candidate', '_delivery_evidence_state',
+        '_context_reclaim_materializations', '_current_delivery_candidate', '_degrade_retained_delivery_candidate', '_delivery_evidence_state',
         '_delivery_replace_required', '_direct_child_results', '_drain_forced_owner_directives',
         '_drain_incoming_messages', '_emit_checkpoint_event', '_finalize_forced_services',
         '_finalize_task_services', '_force_plan_decision', '_force_plan_disclosure',
@@ -366,7 +365,7 @@ LEAVES: dict[str, tuple[str, str, frozenset[str]]] = {
         "_reconcile_transport_wait", "_run_cross_model_fallback_chain",
         "_context_overflow_retries", "_context_reclaim_materializations",
         "_context_reclaim_passes", "_dispatch_round_model", "_emit_checkpoint_event",
-        "_measure_round_main_fit", "_rebind_context_fit_plan", "_run_main_reclaim",
+        "_measure_round_main_fit", "_output_exhausted_notice", "_rebind_context_fit_plan", "_run_main_reclaim",
         "_server_web_allowed_by_task", "_task_deadline_epoch", "call_llm_with_retry",
         "compact_tool_history_llm", "last_physical_attempt_capture", "seal_task_transcript",
     })),

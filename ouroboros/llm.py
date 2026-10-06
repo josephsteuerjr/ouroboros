@@ -207,7 +207,6 @@ class LLMClient(
         caller_execution_deadline: Optional[float] = None,
         wait_for_resources: bool = True,
         processing_preference: str | None = None,
-        context_mode: str | None = None,
     ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """Single LLM call returning (message, usage); no_proxy avoids macOS fork proxy crashes.
 
@@ -236,8 +235,6 @@ class LLMClient(
                     local_kwargs["reasoning_effort"] = reasoning_effort
                 if processing_preference:
                     local_kwargs["processing_preference"] = processing_preference
-                if context_mode:
-                    local_kwargs["context_mode"] = context_mode
                 message, usage = self._chat_local(
                     messages, tools, max_tokens, tool_choice, **local_kwargs,
                 )
@@ -245,9 +242,7 @@ class LLMClient(
                 # Central worker policy: remote calls from worker processes avoid
                 # system proxy lookup without every caller remembering a flag.
                 no_proxy = no_proxy or in_worker_process()
-                target = {**self._resolve_remote_target(model),
-                          "processing_preference": processing_preference,
-                          "context_mode": context_mode}
+                target = {**self._resolve_remote_target(model), "processing_preference": processing_preference}
                 if temperature is None and target.get("provider") != "claudexor":
                     temperature = default_temperature
                 message, usage = self._chat_remote(
@@ -296,7 +291,6 @@ class LLMClient(
         caller_execution_deadline: Optional[float] = None,
         wait_for_resources: bool = True,
         processing_preference: str | None = None,
-        context_mode: str | None = None,
     ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """Async remote chat; no_proxy keeps forked macOS workers off OS proxy APIs.
 
@@ -317,8 +311,6 @@ class LLMClient(
                     local_kwargs["reasoning_effort"] = reasoning_effort
                 if processing_preference:
                     local_kwargs["processing_preference"] = processing_preference
-                if context_mode:
-                    local_kwargs["context_mode"] = context_mode
                 result = self._chat_local(messages, tools, max_tokens, tool_choice, **local_kwargs)
                 return result, last_physical_attempt_capture()
 
@@ -331,9 +323,7 @@ class LLMClient(
                 adopt_physical_attempt_capture(capture)
             result[1]["ledger_attempt_ids"] = list(attempt_ids)
             return result
-        target = {**self._resolve_remote_target(model),
-                  "processing_preference": processing_preference,
-                  "context_mode": context_mode}
+        target = {**self._resolve_remote_target(model), "processing_preference": processing_preference}
         if temperature is None and target.get("provider") != "claudexor":
             temperature = default_temperature
         carried_turn_state = turn_state_for_route(model_turn_state, target.get("provider"))
@@ -646,25 +636,25 @@ class LLMClient(
         model_operation_observer: Any = None,
         model_account_override: str | None = None,
         processing_preference: str | None = None,
+        purpose: str = "vlm",
     ) -> Tuple[str, Dict[str, Any]]:
-        """Run a lightweight vision query; image dicts use url or base64+mime."""
+        """Run a lightweight vision query; image dicts use url or base64+mime.
+
+        ``model`` is named explicitly, so the one image policy sends its pixels
+        (``purpose`` "vlm" for a VLM tool, "caption" for a send-time caption);
+        it never captions here, so a caption cannot recurse into another."""
+        from ouroboros.vision_routing import VisionRoutingContext, prepare_messages_for_send, query_image_url
+
         content: List[Dict[str, Any]] = [{"type": "text", "text": prompt}]
         for img in images:
-            if "url" in img:
-                content.append({
-                    "type": "image_url",
-                    "image_url": {"url": img["url"]},
-                })
-            elif "base64" in img:
-                mime = img.get("mime", "image/png")
-                content.append({
-                    "type": "image_url",
-                    "image_url": {"url": f"data:{mime};base64,{img['base64']}"},
-                })
+            if "url" in img or "base64" in img:  # the URL a refusal of this image is remembered by
+                content.append({"type": "image_url", "image_url": {"url": query_image_url(img)}})
             else:
                 log.warning("vision_query: skipping image with unknown format: %s", list(img.keys()))
 
-        messages = [{"role": "user", "content": content}]
+        messages = prepare_messages_for_send([{"role": "user", "content": content}], routing=VisionRoutingContext(
+            model, self, {}, use_local=use_local, model_role=model_role,
+            model_account_override=model_account_override), purpose=purpose)
         response_msg, usage = self.chat(
             messages=messages,
             model=model,

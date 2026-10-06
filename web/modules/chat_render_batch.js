@@ -16,11 +16,13 @@ export const feedIsEmpty = messages => Array.from(messages.children).every(node 
 /**
  * History chrome only; the chat instance retains navigation and reading state.
  *
- * There is no "Load newer" control. Whether a newer page is cached is a fact
- * about the bounded page cache, not about what the reader can see, so a button
- * driven by it appeared under a fully visible transcript and asked for one click
- * per cached page. Loading missing pages uses a positive gesture at an unambiguous island edge; the
- * floating scroll-to-latest button remains the only return-to-present control.
+ * `Load more history` only ever loads OLDER messages and shows only while there
+ * are older ones, including those a newer read revealed behind the reader's chain
+ * (owner decisions 2026-09-14, 2026-10-05). Whether a newer page is
+ * cached is a fact about the bounded page cache, not about what the reader can
+ * see, so it never drives this button: a released newer page returns through a
+ * positive gesture at an unambiguous island edge, and the floating scroll-to-latest
+ * button remains the only return-to-present control.
  */
 export function createHistoryControls(messagesDiv, statusHost = null) {
     const doc = messagesDiv.ownerDocument;
@@ -66,7 +68,7 @@ export function createHistoryControls(messagesDiv, statusHost = null) {
             const host = statusHost && (error || incomplete || approximate || hydrating) ? statusHost : root;
             if (note.parentNode !== host) host.appendChild(note);
             note.classList.toggle('chat-history-status', host === statusHost);
-            const buttonHidden = !error && !snapshot.canOlder && !snapshot.canNewer && !coverage.horizonGap && !hydrating;
+            const buttonHidden = !error && !snapshot.canOlder && !(coverage.horizonGap && !snapshot.canNewer) && !hydrating;
             const fields = [
                 [button, { textContent: loading ? 'Loading…'
                     : changedView ? 'Refresh history' : error ? 'Retry loading messages' : 'Load more history',
@@ -308,7 +310,7 @@ function timelineItemForAnchor(record, anchor) {
     return record.items.find(item => item.lineKey === anchor.lineKey) || null;
 }
 
-export function createLiveCardTimelineRenderer({ withStableViewport, buildTimelineItemHtml, isReplayActive = () => false, initialAnchor = null, hydrate = () => {} }) {
+export function createLiveCardTimelineRenderer({ withStableViewport, buildTimelineItemHtml, isReplayActive = () => false }) {
     // Remember generated markup, not the enhanced DOM: a timestamp update must
     // not undo markdown controls or replace a body the reader has selected.
     const rendered = new WeakMap();
@@ -355,13 +357,6 @@ export function createLiveCardTimelineRenderer({ withStableViewport, buildTimeli
         return true;
     };
     const nodeFor = (item, record) => {
-        if (timelineItemForAnchor(record, initialAnchor) === item) {
-            if (initialAnchor.lineExpanded) {
-                record.expandedLineKeys.add(item.lineKey);
-                if (item.truncated && item.fullRef && !item.fetchedFull && !item._fetchingFull) hydrate(item, record);
-            } else record.expandedLineKeys.delete(item.lineKey);
-            initialAnchor = null;
-        }
         const doc = record.timelineEl?.ownerDocument || globalThis.document;
         const wrapper = doc.createElement('div');
         wrapper.innerHTML = buildTimelineItemHtml(item, record).trim();

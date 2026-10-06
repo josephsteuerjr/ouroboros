@@ -8,6 +8,7 @@ import pytest
 from starlette.requests import Request
 
 from ouroboros import usage_accounting as ua
+from ouroboros import usage_store
 
 
 def _data_root(tmp_path, monkeypatch):
@@ -21,8 +22,14 @@ def _data_root(tmp_path, monkeypatch):
     monkeypatch.setenv("OUROBOROS_DATA_DIR", str(root))
     monkeypatch.setenv("OUROBOROS_SETTINGS_PATH", str(root / "settings.json"))
     monkeypatch.setenv("TOTAL_BUDGET", "7.5")
-    ua.ensure_legacy_imported(root)
+    usage_store.migrate_from_journal(root)  # the lifecycle import the server runs at start
     return root
+
+
+def _corrupt_store(root):
+    """An unreadable money authority: displays and strict reads refuse it."""
+    usage_store.forget(root)
+    (root / usage_store.STORE_REL).write_bytes(b"not-a-database\n")
 
 
 def _attempt(root, *, reservation_usd, task_id, category="task"):
@@ -261,7 +268,7 @@ def test_cost_breakdown_fails_loudly_when_authoritative_history_is_corrupt(tmp_p
     from ouroboros.gateway.history import make_cost_breakdown_endpoint
 
     root = _data_root(tmp_path, monkeypatch)
-    (root / ua.LEDGER_REL).write_bytes(b"not-json\n{}\n")
+    _corrupt_store(root)
     (root / "logs" / "events.jsonl").write_text(
         json.dumps({"type": "llm_usage", "model": "fake", "cost": 99.0}) + "\n",
         encoding="utf-8",
@@ -324,7 +331,7 @@ def test_api_state_passes_projection_only_when_roots_match_and_computation_succe
     assert captured[-1] == {}
 
     monkeypatch.setattr(state, "DRIVE_ROOT", str(root))
-    (root / ua.LEDGER_REL).write_text("not-json\n{}\n", encoding="utf-8")
+    _corrupt_store(root)
     assert asyncio.run(api_state(_request())).status_code == 200
     assert captured[-1] == {}
 
@@ -334,7 +341,7 @@ def test_api_state_marks_accounting_unavailable_without_legacy_zero(tmp_path, mo
     from supervisor import queue, state, workers
 
     root = _data_root(tmp_path, monkeypatch)
-    (root / ua.LEDGER_REL).write_text("not-json\n{}\n", encoding="utf-8")
+    _corrupt_store(root)
     monkeypatch.setattr(state, "TOTAL_BUDGET_LIMIT", 7.5)
     monkeypatch.setattr(state, "load_state", lambda: {
         "spent_usd": 99.0, "spent_calls": 999, "current_branch": "ouroboros",
@@ -432,7 +439,7 @@ def test_task_detail_cost_breakdown_view_only_for_roots_and_fails_soft(tmp_path,
     # Non-root: subtree math is not ledger-attributable mid-tree — omitted.
     assert _task_cost_breakdown_view(root, {"task_id": "child-1", "root_task_id": "root-1"}) is None
     # Unreadable ledger: absent view, never a confident $0 object.
-    (root / ua.LEDGER_REL).write_text("not-json\n{}\n", encoding="utf-8")
+    _corrupt_store(root)
     view = _task_cost_breakdown_view(root, {"task_id": "root-1", "root_task_id": "root-1"})
     assert view is None or view.get("cost_final") is False
 
@@ -463,7 +470,7 @@ def test_task_detail_cost_breakdown_view_absent_when_nothing_was_accounted(tmp_p
     (legacy_root / "state" / "state.json").write_text(
         json.dumps({"spent_usd": 42.75, "spent_calls": 12}), encoding="utf-8",
     )
-    ua.ensure_legacy_imported(legacy_root)
+    usage_store.migrate_from_journal(legacy_root)
     assert ua.usage_breakdown(legacy_root)["accounted_usd"] > 0.0
     assert _task_cost_breakdown_view(
         legacy_root, {"task_id": "root-1", "root_task_id": "root-1"},

@@ -10,11 +10,11 @@ group; a late charge establishes an overrun it did not prevent.
 
 from __future__ import annotations
 
-import json
 
 import pytest
 
 from ouroboros import usage_accounting as ua
+from tests._usage_store_testing import ledger_rows, write_compacted_journal, write_journal
 
 
 @pytest.fixture
@@ -63,26 +63,24 @@ def test_every_member_sees_every_other_including_the_original_roots_late_review(
     projection = ua.usage_projection(data_root, billing_group_id="P")
     assert projection["accounted_usd"] == pytest.approx(19.5) and projection["limit_usd"] == 20.0
     # Genuine ids stay genuine: each row names its own task and root.
-    rows = [json.loads(line) for line in (data_root / ua.LEDGER_REL).read_text().splitlines()]
-    reserved = {(r["task_id"], r["root_task_id"], r["billing_group_id"]) for r in rows if r["state"] == "reserved"}
-    assert {("P", "P", "P"), ("S", "S", "P"), ("T", "S", "P")} <= reserved
+    rows = ledger_rows(data_root)  # one current row per admitted attempt; refusals left none
+    attributed = {(r["task_id"], r["root_task_id"], r["billing_group_id"]) for r in rows}
+    assert attributed == {("P", "P", "P"), ("S", "S", "P"), ("T", "S", "P")}
     assert ua.usage_projection(data_root, root_task_id="S")["accounted_usd"] == pytest.approx(11.5)
 
 
 def test_legacy_rows_of_the_original_root_join_the_group_without_a_rewrite(data_root):
-    root = ua._drive_root(data_root)
-    with ua._locked(root):
-        records = ua._read_records_locked(root)
-        legacy = {"kind": "attempt", "attempt_id": "legacy-1", "model": "m", "provider": "openai",
-                  "task_id": "P", "root_task_id": "P", "parent_task_id": "", "category": "task", "source": "old",
-                  "reservation_upper_bound_usd": 15.0, "pricing_known": True, "root_limit_usd": 20.0}
-        # Written before the group field existed: no ``billing_group_id`` anywhere.
-        ua._append_rows_locked(root, records, [{**legacy, "state": "reserved"}, {**legacy, "state": "dispatched"},
-                                               {**legacy, "state": "settled", "cost_usd": 15.0, "cost_final": True}])
-    before = (data_root / ua.LEDGER_REL).read_text()
+    legacy = {"kind": "attempt", "attempt_id": "legacy-1", "model": "m", "provider": "openai",
+              "task_id": "P", "root_task_id": "P", "parent_task_id": "", "category": "task", "source": "old",
+              "reservation_upper_bound_usd": 15.0, "pricing_known": True, "root_limit_usd": 20.0}
+    # Journaled before the group field existed: no ``billing_group_id`` anywhere;
+    # the store's one-time import carries the row over as it is.
+    write_journal(data_root, [{**legacy, "state": "reserved"}, {**legacy, "state": "dispatched"},
+                              {**legacy, "state": "settled", "cost_usd": 15.0, "cost_final": True}])
     with pytest.raises(ua.BudgetExceeded):
         _spend(data_root, _scope(data_root, "S", "S", **S), 6.0)
-    assert (data_root / ua.LEDGER_REL).read_text().startswith(before), "history is appended to, never rewritten"
+    [imported] = [row for row in ledger_rows(data_root) if row["attempt_id"] == "legacy-1"]
+    assert "billing_group_id" not in imported, "history is never rewritten"
     from ouroboros.usage_admission import original_group_limit
 
     assert original_group_limit(data_root, "P") == {"limit_usd": 20.0, "source": "ledger_first_row"}
@@ -104,28 +102,25 @@ def test_a_late_charge_establishes_an_overrun_it_did_not_prevent(data_root):
         _spend(data_root, _scope(data_root, "P-post", "P", **P), 0.01)
 
 
-def test_compaction_keeps_the_group_and_the_pacing_cache_reads_it(data_root, monkeypatch):
-    import time
-
-    from ouroboros import usage_compaction
+def test_an_imported_aggregate_keeps_the_group_and_the_pacing_cache_reads_it(data_root):
     from ouroboros.loop_budget import _loop_tree_accounting
-    from ouroboros.usage_compaction import compact_usage_ledger_locked
-
-    for _ in range(16):
-        _spend(data_root, _scope(data_root, "P", "P", **P), 0.5)
-    for _ in range(10):
-        _spend(data_root, _scope(data_root, "S", "S", **S), 0.5)
-    monkeypatch.setattr(usage_compaction, "_fold_clock", lambda: time.time() + 1_000_000)
-    before = ua.usage_projection(data_root, billing_group_id="P")["accounted_usd"]
-    with ua._locked(ua._drive_root(data_root)) as lock:
-        receipt = compact_usage_ledger_locked(data_root, heartbeat=lock)
-    assert receipt is not None, "the pass folded the settled rows"
     from ouroboros.usage_admission import original_group_limit
+
+    common = dict(model="openai/gpt-5.2", provider="openai", category="task", source="test",
+                  billing_group_id="P", billing_group_limit_usd=20.0, pricing_known=True, cost_final=True)
+    # What the retired compaction folded 16 of P's and 10 of S's settled attempts into.
+    write_compacted_journal(data_root, [
+        {**common, "attempt_id": "fold-P", "task_id": "P", "root_task_id": "P", "root_limit_usd": 20.0,
+         "folded_attempt_count": 16, "cost_usd": 8.0, "reservation_upper_bound_usd": 8.0},
+        {**common, "attempt_id": "fold-S", "task_id": "S", "root_task_id": "S",
+         "folded_attempt_count": 10, "cost_usd": 5.0, "reservation_upper_bound_usd": 5.0},
+    ])
     assert original_group_limit(data_root, "P")["limit_usd"] == 20.0
-    baselines = [json.loads(line) for line in (data_root / ua.LEDGER_REL).read_text().splitlines()]
-    assert all(row["billing_group_limit_usd"] == 20.0 for row in baselines
-               if row.get("kind") == "usage_baseline_group" and row.get("billing_group_id") == "P")
-    assert ua.usage_projection(data_root, billing_group_id="P")["accounted_usd"] == pytest.approx(before)
+    aggregates = [row for row in ledger_rows(data_root) if row.get("kind") == "usage_baseline_group"]
+    assert [(row["billing_group_id"], row["billing_group_limit_usd"]) for row in aggregates] == [("P", 20.0)] * 2
+    projection = ua.usage_projection(data_root, billing_group_id="P")
+    assert projection["accounted_usd"] == pytest.approx(13.0)
+    assert projection["attempt_counts"] == {"settled": 26}  # counts weighted by the folded attempts
     with ua.usage_scope(_scope(data_root, "S", "S", **S)):
         tree = _loop_tree_accounting(refresh=True, max_age_sec=0.0, strict=True)
     assert tree["accounted_usd"] == pytest.approx(13.0) and tree["root_limit_usd"] == 20.0
@@ -270,7 +265,7 @@ def test_explicit_other_root_cannot_inherit_the_callers_billing_group(data_root)
         reservation = ua.reserve_attempt(ua.AttemptRequest(task_id="helper", root_task_id="S",
                                           model="m", provider="test", reservation_usd=1.0))
     with ua._locked(data_root):
-        row = ua._final_rows(ua._read_records_locked(data_root))[reservation.attempt_id]
+        row = {row['attempt_id']: row for row in ledger_rows(data_root)}[reservation.attempt_id]
     assert row["root_task_id"] == "S" and row["task_id"] == "helper"
     assert row["billing_group_id"] == "P"
     assert ua.usage_projection(data_root, billing_group_id="P")["accounted_usd"] == pytest.approx(1.0)

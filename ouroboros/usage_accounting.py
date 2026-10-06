@@ -1,10 +1,11 @@
 """Durable physical-model-attempt accounting.
 
-The append-only JSONL ledger is monetary authority; ``llm_usage``/``state.json``
-carry attempt-id projections, never another charge source. No hash chain,
-fanout reservation, epoch/reconcile platform, or per-attempt snapshot database.
-Strict readers capture the prepared writer generation under the budget/check/
-append/fsync lock; folds and network I/O stay outside."""
+The usage store (``usage_store``, ``state/usage.sqlite``) is the monetary
+authority: one row per attempt, UPDATEd on each transition, and the summaries
+every admission and display reads, maintained in the same transaction.
+``llm_usage``/``state.json`` carry attempt-id projections, never another charge
+source. Each budget check and its write share one short store transaction;
+pricing and network I/O stay outside."""
 
 from __future__ import annotations
 
@@ -21,7 +22,7 @@ import threading
 import time
 import uuid
 from dataclasses import asdict, dataclass, field, replace
-from typing import Any, Callable, Dict, Iterator, Literal, Optional, Sequence, Tuple, get_args
+from typing import Any, Callable, Dict, Iterator, Literal, Optional, Tuple, get_args
 
 from ouroboros.pricing import estimate_cost_optional
 from ouroboros._usage_response import (
@@ -30,20 +31,17 @@ from ouroboros._usage_response import (
 from ouroboros.review_dispatch import invoke_bound_api_review_paid_stamp
 from ouroboros.transport_custody import release_pre_dispatch_attempt
 from ouroboros.usage_ledger import (  # noqa: F401 — re-exported substrate
-    LEDGER_REL, QUARANTINE_REL, LedgerResumeState,
-    UsageAccountingError, UsageLedgerCorrupt,
-    _append_bytes_fsync, _append_rows_locked,
-    _drive_root, _final_rows, _ledger_resume_state,
-    _locked, _named_lock, _number,
-    _read_new_records_locked, _read_records_locked, _TERMINAL, _validate_records, _write_bytes_atomic_fsync,
+    QUARANTINE_REL, UsageAccountingError, UsageLedgerCorrupt, UsageLockUnavailable,
+    _drive_root, _named_lock, _number, _TERMINAL,
 )
+from ouroboros import usage_store
+from ouroboros.usage_store import hold as _locked  # noqa: F401 — the money acquisition primitive
 from ouroboros.utils import append_jsonl, atomic_write_json, utc_now_iso  # noqa: F401 -- the accounting module keeps its historical import surface for the L-C2 leaf
 from ouroboros._usage_rows import (  # noqa: F401  (re-exported substrate vocabulary)
     REVIEW_ATTRIBUTION_KEYS,
     _breakdown_bucket,
-    _marker_from_final,
     _physical_call_count,
-    _projection_from_final,
+    breakdown_view,
     _summary,
     _with_integrity,
     _with_limit,
@@ -58,7 +56,7 @@ __all__ = (
     "UsageAccountingError", "UsageLedgerCorrupt", "UsageScope", "capture_attempt_ids",
     "bind_physical_attempt_context", "current_physical_attempt_context",
     "current_physical_attempt_predicate", "current_usage_scope",
-    "ensure_legacy_imported", "execute_physical_attempt", "execute_physical_attempt_async",
+    "execute_physical_attempt", "execute_physical_attempt_async",
     "last_physical_attempt_capture", "last_root_accounting", "physical_attempt_capture_from_exception",
     "mark_dispatched", "mark_unresolved", "physical_attempt_limit",
     "record_subscription_session",
@@ -253,7 +251,7 @@ class UsageScope:
     root_limit_revision: Optional[str] = None
 @dataclass(frozen=True)
 class PhysicalAttemptContext:
-    profile: Literal["owner_max", "owner_low", "owner_nano", "task_local_low"]
+    profile: Literal["owner_max", "owner_low", "owner_nano", "task_local_low", "task_local_nano"]
     rendered_mode: Literal["max", "low", "nano"]
     measurement_basis: Literal["fresh_route_usage", "fresh_model_usage", "cold_estimate"]
     route_fp: str
@@ -262,6 +260,9 @@ class PhysicalAttemptContext:
     capacity_total_tokens: Optional[int]
     context_target_miss: bool
     automatic_pass_used: bool
+    # Main's calibration (real tokens per estimated token) of the measurement above;
+    # the send finalizer sizes the reply with it. None on rows written before it existed.
+    measurement_density: Optional[float] = None
 @dataclass(frozen=True)
 class AttemptRequest:
     model: str
@@ -494,15 +495,13 @@ def _merge_scope(request: AttemptRequest) -> Tuple[AttemptRequest, UsageScope]:
 from ouroboros._usage_cache_splits import (  # noqa: F401,E402  (re-exported seam)
     invalidate_task_cache_splits, last_task_cache_split,
     reset_task_cache_splits as _reset_task_cache_splits, stash_task_cache_split)
-from ouroboros._usage_rows_memo import (  # noqa: F401,E402  (re-exported seam)
-    _LedgerRowsMemo, _ROWS_MEMO, _ROWS_MEMO_LOCK,
-    _memoized_final_rows, _read_records_locked_cached, _render_cached, _writer_locked, read_usage_records,
-)
 
 
 def usage_projection(drive_root=None, *, root_task_id="", global_limit_usd=None,
-                     include_roots=True, allow_stale=False, billing_group_id=""):
-    """Current read-side projection; immutable ledger rows retain historical caps."""
+                     include_roots=False, allow_stale=False, billing_group_id=""):
+    """Current read-side projection from the store's summaries; the recorded
+    rows retain historical caps. ``include_roots`` (an explicit request) adds
+    the per-root map."""
     from ouroboros.usage_admission import current_usage_projection
     return current_usage_projection(drive_root, root_task_id=root_task_id, global_limit_usd=global_limit_usd,
         include_roots=include_roots, allow_stale=allow_stale, billing_group_id=billing_group_id)
@@ -512,109 +511,51 @@ def usage_breakdown(
     drive_root: pathlib.Path | str | None = None,
     *,
     root_task_id: str = "",
-    task_id: str = "", allow_stale: bool = False,
+    task_id: str = "", allow_stale: bool = False, include_owners: bool = False,
 ) -> Dict[str, Any]:
-    """Read-only physical-call/token/cost buckets from validated ledger finals.
-    Both private compatibility fields — the ordered ``[compaction_epoch, seq]`` marker in
-    ``_ledger_high_water_seq`` and the money projection in ``_usage_projection`` — are
-    rendered from THIS one validated read, so a writer authorizes its projection with the
-    marker of the same snapshot, a lagging ``allow_stale`` one (display only) included."""
+    """Physical-call/token/cost buckets of the global scope, one root or one
+    task, read from the store's summaries in one transaction (an addressed
+    root+task pair aggregates only its own rows). ``_ledger_high_water_seq`` is
+    the ``[epoch, seq]`` publication marker of the SAME read. The global
+    per-task/per-root maps enumerate every owner and are rendered only with
+    ``include_owners``. ``allow_stale`` is a display read: after the short
+    display wait it raises ``UsageLockUnavailable`` (unavailable, never zero)."""
     root = _drive_root(drive_root)
-    cache_key = ("usage_breakdown", root_task_id, task_id, None, True)
-
-    def render(final: list, integrity_degraded: bool) -> Dict[str, Any]:
-        # Marker and money are two renderings of THESE rows; unknown marker =>
-        # buckets stay readable while a compatibility writer fails safe.
-        ledger_marker = _marker_from_final(final)
-        rows = final
-        if root_task_id:
-            rows = [row for row in rows if str(row.get("root_task_id") or "") == root_task_id]
-        if task_id:
-            rows = [row for row in rows if str(row.get("task_id") or "") == task_id]
-
-        def grouped(field: str) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-            groups: Dict[str, list[Dict[str, Any]]] = {}
-            unattributed: list[Dict[str, Any]] = []
-            for row in rows:
-                key = str(row.get(field) or "")
-                if str(row.get("kind") or "") in {"legacy_metadata", "legacy_delta"} or not key:
-                    unattributed.append(row)
-                else:
-                    groups.setdefault(key, []).append(row)
-            return (
-                {key: _breakdown_bucket(groups[key]) for key in sorted(groups)},
-                _breakdown_bucket(unattributed),
-            )
-
-        by_model, model_unattributed = grouped("model")
-        by_provider, provider_unattributed = grouped("provider")
-        by_category, category_unattributed = grouped("category")
-        by_task, task_unattributed = grouped("task_id")
-        by_root, root_unattributed = grouped("root_task_id")
-
-        result = {
-            **_with_integrity(_breakdown_bucket(rows), integrity_degraded),
-            "_ledger_high_water_seq": ledger_marker,
-            "by_model": by_model,
-            "by_provider": by_provider,
-            "by_category": by_category,
-            "by_task": by_task,
-            "by_root": by_root,
-            # v6.91 execution-axis VIEW of delegated (subscription-harness) rows for
-            # "where did the money go" readers; never a third monetary sum or authority.
-            "delegated": _with_integrity(
-                _breakdown_bucket([row for row in rows if str(row.get("kind") or "") == "subscription_session"]),
-                integrity_degraded,
-            ),
-            # Legacy call-count metadata and monetary delta stay explicit; neither is
-            # fabricated into a model/provider/category identity.
-            "unattributed": {
-                "model": model_unattributed,
-                "provider": provider_unattributed,
-                "category": category_unattributed,
-                "task": task_unattributed,
-                "root": root_unattributed,
-            },
-        }
-        if integrity_degraded:
-            for grouped_buckets in (
-                by_model, by_provider, by_category, by_task, by_root,
-                result["unattributed"],
-            ):
-                for bucket in grouped_buckets.values():
-                    _with_integrity(bucket, True)
-        result["_usage_projection"] = _projection_from_final(final, integrity_degraded)
-        return result
-
-    return _render_cached(root, cache_key, render, allow_stale=allow_stale)
+    with usage_store.read(root, allow_stale=allow_stale) as txn:
+        result = breakdown_view(txn, root_task_id=root_task_id, task_id=task_id, include_owners=include_owners,
+                                degraded=usage_store.integrity_degraded(root))
+        result["_ledger_high_water_seq"] = txn.marker()
+    return result
 
 
 def usage_writer_snapshot(
     drive_root: pathlib.Path | str | None = None, *, allow_stale: bool = False,
 ) -> Dict[str, Any]:
-    """The compatibility writer's slim read: the totals it persists, the ordering marker,
-    the OpenRouter provider bucket its drift check compares and the totals-only money
-    projection, rendered from ONE validated read exactly like ``usage_breakdown`` (same
-    rows, same marker, same render cache) minus the grouped axes and the per-root map
-    the writer never reads. Provider grouping mirrors ``usage_breakdown``: legacy
-    metadata/delta rows stay unattributed and an absent provider has no bucket."""
+    """The compatibility writer's slim read: the global totals it persists, the
+    publication marker, the OpenRouter provider bucket its drift check compares
+    and the totals-only money projection, all from ONE store read."""
     root = _drive_root(drive_root)
+    with usage_store.read(root, allow_stale=allow_stale) as txn:
+        top, openrouter, marker = txn.bucket("global"), txn.bucket("provider", "openrouter"), txn.marker()
+        degraded = usage_store.integrity_degraded(root)
+    by_provider = {"openrouter": openrouter.render_breakdown()} if openrouter.rows else {}
+    for bucket in by_provider.values():
+        if degraded:
+            _with_integrity(bucket, True)
+    return {
+        **_with_integrity(top.render_breakdown(), degraded),
+        "_ledger_high_water_seq": marker,
+        "by_provider": by_provider,
+        "_usage_projection": _with_integrity(_with_limit(top.render_summary(), None), degraded),
+    }
 
-    def render(final: list, integrity_degraded: bool) -> Dict[str, Any]:
-        openrouter = [row for row in final if str(row.get("provider") or "") == "openrouter"
-                      and str(row.get("kind") or "") not in {"legacy_metadata", "legacy_delta"}]
-        by_provider = {"openrouter": _breakdown_bucket(openrouter)} if openrouter else {}
-        if integrity_degraded:
-            for bucket in by_provider.values():
-                _with_integrity(bucket, True)
-        return {
-            **_with_integrity(_breakdown_bucket(final), integrity_degraded),
-            "_ledger_high_water_seq": _marker_from_final(final),
-            "by_provider": by_provider,
-            "_usage_projection": _projection_from_final(final, integrity_degraded, include_roots=False),
-        }
 
-    return _render_cached(root, ("usage_writer_snapshot", "", "", None, True), render, allow_stale=allow_stale)
+def read_usage_records(drive_root: pathlib.Path | str | None = None, *, final_only: bool = False) -> list:
+    """Every attempt's current row, in write order. Explicit audits and the
+    export only (the store keeps no superseded rows, so ``final_only`` is
+    implied); ordinary readers use summaries and addressed rows."""
+    del final_only
+    return usage_store.read_usage_records(_drive_root(drive_root))
 
 
 def _reservation_cost(request: AttemptRequest) -> Optional[float]:
@@ -745,25 +686,19 @@ def _check_dispatch_fences(scope: UsageScope, root: pathlib.Path) -> None:
 
 
 def reserve_attempt(request: AttemptRequest) -> AttemptReservation:
-    """Atomically check global/root limits and append a ``reserved`` record."""
+    """Atomically check global/root/group limits and record a ``reserved`` attempt."""
     request, scope = _merge_scope(request)
     root = _drive_root(scope.drive_root)
     from ouroboros._usage_wait import send_acquisition
-    from ouroboros.usage_compaction import maybe_compact_usage_ledger_locked
 
     _check_dispatch_fences(scope, root)
     acquire = send_acquisition(lambda: _check_dispatch_fences(scope, root))
-    ensure_legacy_imported(root, acquisition=acquire)
     # Pricing I/O stays outside the monetary transaction.
     bound = _reservation_cost(request)
     pricing_known = bound is not None
     attempt_id = uuid.uuid4().hex
 
-    def prepare(heartbeat, view):
-        if view.has_foldable_attempt():
-            maybe_compact_usage_ledger_locked(root, heartbeat=heartbeat)
-
-    with _writer_locked(root, before_read=prepare, acquisition=acquire) as view:
+    with acquire(root) as view:
         _check_dispatch_fences(scope, root)
         global_limit = _global_limit(request)
         accounted = view.summary()["accounted_usd"]
@@ -791,9 +726,7 @@ def reserve_attempt(request: AttemptRequest) -> AttemptReservation:
 
         raise_group_refusal(view, scope, bound)
         group_id, group_limit = scope_group(scope)
-        view.append(
-            root,
-            [
+        view.write(
                 {
                     "kind": "attempt",
                     "attempt_id": attempt_id,
@@ -840,7 +773,6 @@ def reserve_attempt(request: AttemptRequest) -> AttemptReservation:
                        if request.processing_preference or request.submitted_processing_mode
                        or request.processing_basis else {}),
                 }
-            ],
         )
         if group_id:
             _stash_root_accounting(f"group:{group_id}",
@@ -883,7 +815,6 @@ def record_unmetered_external_dispatch(
         raise UsageAccountingError("external unmetered dispatch requires a stable dispatch_id")
     bound = _CURRENT_SCOPE.get() or UsageScope()
     root = _drive_root(drive_root or bound.drive_root)
-    ensure_legacy_imported(root)
     identity = hashlib.sha256(stable_id.encode("utf-8")).hexdigest()
     attempt_id = f"external-{identity[:24]}"
     from ouroboros.usage_admission import settlement_billing_fields
@@ -910,32 +841,17 @@ def record_unmetered_external_dispatch(
         "source": str(source or bound.source or "external_skill"),
         "external_dispatch_id_sha256": identity,
     }
-    return _append_single_settled_row(root, row, comparable=(
-        "kind", "model", "provider", "task_id", "root_task_id", "parent_task_id",
-        "category", "source", "prompt_tokens", "completion_tokens",
-        "external_dispatch_id_sha256",
-    ))
+    return _record_one_shot(root, row)
 
 
-def _append_single_settled_row(
-    root: pathlib.Path, row: Dict[str, Any], *, comparable: Sequence[str],
-) -> str:
-    """Idempotently append a one-shot settled row; a replay under a DIFFERENT identity
-    is a conflict, never a silent overwrite. Shared by every single-row kind."""
-    attempt_id = str(row["attempt_id"])
-    with _writer_locked(root) as view:
-        existing = view.finals.get(attempt_id)
-        if existing is not None:
-            def identity_value(source: Dict[str, Any], key: str) -> Any:
-                # Rows written before physical_attempt_v1 omitted these optional keys:
-                # missing == explicit empty; a non-empty wave/slot conflicts with either.
-                return str(source.get(key) or "") if key in REVIEW_ATTRIBUTION_KEYS else source.get(key)
-
-            if any(identity_value(existing, key) != identity_value(row, key) for key in comparable):
-                raise UsageAccountingError(f"conflicting settled-row identity: {attempt_id}")
-            return attempt_id
-        view.append(root, [row])
-    return attempt_id
+def _record_one_shot(root: pathlib.Path, row: Dict[str, Any]) -> str:
+    """Idempotently record a one-shot row: an identical identity
+    (``usage_store.ONE_SHOT_IDENTITY``) returns the stored attempt, a replay
+    under a DIFFERENT identity is a conflict, never a silent overwrite."""
+    with _locked(root) as txn:
+        if txn.recorded_one_shot(row) is None:
+            txn.write(row)
+    return str(row["attempt_id"])
 
 
 def record_subscription_session(
@@ -979,7 +895,6 @@ def record_subscription_session(
         raise UsageAccountingError("subscription session requires a stable session_id and route")
     bound = _CURRENT_SCOPE.get() or UsageScope()
     root = _drive_root(drive_root or bound.drive_root)
-    ensure_legacy_imported(root)
     identity = hashlib.sha256(stable_id.encode("utf-8")).hexdigest()
     attempt_id = f"session-{identity[:24]}"
     from ouroboros.usage_admission import settlement_billing_fields
@@ -1027,25 +942,28 @@ def record_subscription_session(
         # limit (design note §4, provider_side_transform) without a fake seal.
         "model_send_seal": "unobserved",
     }
-    return _append_single_settled_row(root, row, comparable=(
-        "kind", "provider", "task_id", "root_task_id", "parent_task_id",
-        "category", "source", *REVIEW_ATTRIBUTION_KEYS, "subscription_route", "session_id_sha256",
-    ))
+    return _record_one_shot(root, row)
 def _transition(reservation: AttemptReservation, state: str, **fields: Any) -> Dict[str, Any]:
+    """One attempt transition in one store transaction: the legality rules
+    below, the dispatch recheck of known spend and the fences, then the UPDATE
+    with its summary deltas. ``_expected_seq``/``_expected_revision`` make a
+    recovery that raced a settlement a no-op returning the current row."""
     from ouroboros._usage_wait import transition_acquisition
     from ouroboros.usage_ledger import is_abandoned_settlement
 
     acquire = transition_acquisition(state, lambda: _check_dispatch_fences(
         reservation.scope or current_usage_scope() or UsageScope(), reservation.drive_root))
-    with _writer_locked(reservation.drive_root, acquisition=acquire) as view:
-        current = view.finals.get(reservation.attempt_id)
+    with (acquire(reservation.drive_root) if acquire else _locked(reservation.drive_root)) as view:
+        current = view.attempt(reservation.attempt_id)
         expected_seq = fields.pop("_expected_seq", None)
+        expected_revision = fields.pop("_expected_revision", None)
         abandon_reason = fields.pop("_abandon_reason", "")
         if current is None:
             if abandon_reason:
                 return {"state": "unknown"}
             raise UsageAccountingError(f"unknown usage attempt {reservation.attempt_id}")
-        if expected_seq is not None and current.get("seq") != expected_seq:
+        if ((expected_seq is not None and current.get("seq") != expected_seq)
+                or (expected_revision is not None and current.get("revision") != expected_revision)):
             return copy.deepcopy(current)
         if state == "released" and current["state"] == "released":
             return copy.deepcopy(current)
@@ -1103,7 +1021,7 @@ def _transition(reservation: AttemptReservation, state: str, **fields: Any) -> D
             from ouroboros.usage_admission import raise_group_refusal
 
             raise_group_refusal(view, scope, dispatch=True)
-        replaced = {"seq", "ts", "pre_compaction_seq", "settle_reason", "reason"}
+        replaced = {"seq", "ts", "revision", "pre_compaction_seq", "settle_reason", "reason"}
         if state == "settled":
             replaced.update(("effort", "effort_resolution", "processing", "speed", "service_tier", "cost_basis", "cost_evidence"))
             if "effort" not in fields and isinstance(current.get("effort"), dict):  # Keep candidate facts, not older observations.
@@ -1114,15 +1032,17 @@ def _transition(reservation: AttemptReservation, state: str, **fields: Any) -> D
             from ouroboros.owner_pause import OwnerPauseRefused, launch_admission
 
             try:
-                # Money acquisition/replay and preparation precede the final
-                # Pause gate. Only the durable local claim holds both locks.
+                # Money acquisition and preparation precede the final Pause
+                # gate. Only the durable local claim holds both locks: the
+                # dispatched row COMMITS inside the launch admission.
                 with launch_admission(scope):
-                    appended = view.append(reservation.drive_root, [row])
+                    appended = view.write(row, current)
+                    view.commit()
             except OwnerPauseRefused as exc:
                 from ouroboros.llm_attempt import _PhysicalSendNotStarted
                 raise _PhysicalSendNotStarted(str(exc) or "owner_pause") from exc
         else:
-            appended = view.append(reservation.drive_root, [row])
+            appended = view.write(row, current)
         from ouroboros._usage_money import billing_group_key
 
         group_id = billing_group_key(current)
@@ -1134,7 +1054,7 @@ def _transition(reservation: AttemptReservation, state: str, **fields: Any) -> D
         if root_task_id:
             _stash_root_accounting(root_task_id, view.summary(root_task_id)["accounted_usd"],
                                    _number(current.get("root_limit_usd")))
-        return copy.deepcopy(appended[0])
+        return copy.deepcopy(appended)
 
 
 def mark_dispatched(
@@ -1192,11 +1112,14 @@ def terminalize_abandoned_attempt(
     reason: str,
     usage: Optional[Dict[str, Any]] = None,
     expected_seq: Optional[int] = None,
+    expected_revision: Optional[int] = None,
 ) -> str:
     """Close a proven abandoned send without claiming its bound was an actual price.
 
-    The current-state decision and append share one lock. A late real receipt
-    may replace this administrative settlement; unknown price stays non-final.
+    The current-state decision and the write share one store transaction; an
+    ``expected_revision`` (or the row's ``expected_seq``) that no longer matches
+    leaves a concurrent settlement authoritative. A late real receipt may
+    replace this administrative settlement; unknown price stays non-final.
     """
     normalized = dict(usage or {})
     measured = any(_reported_token_count(normalized, *keys) for keys in (
@@ -1204,7 +1127,7 @@ def terminalize_abandoned_attempt(
     fields = _settlement_fields(reservation, normalized, None, False) if measured else {
         "cost_usd": None, "cost_final": False, "settle_reason": "abandoned"}
     row = _transition(reservation, "settled", _abandon_reason=str(reason or "owner_task_terminal"),
-                      _expected_seq=expected_seq, **fields)
+                      _expected_seq=expected_seq, _expected_revision=expected_revision, **fields)
     return str(row["state"])
 
 
@@ -1214,9 +1137,10 @@ def settle_attempt(
     *,
     cost_usd: Optional[float] = None,
     cost_final: bool = False,
+    expected_revision: Optional[int] = None,
 ) -> None:
     fields = _settlement_fields(reservation, usage, cost_usd, cost_final)
-    _transition(reservation, "settled", **fields)
+    _transition(reservation, "settled", _expected_revision=expected_revision, **fields)
     stash_task_cache_split(
         (_CURRENT_SCOPE.get() or UsageScope()).task_id, reservation.model,
         int(fields.get("cached_tokens") or 0), provider=reservation.provider,
@@ -1575,19 +1499,6 @@ async def execute_physical_attempt_async(
                                     candidate_manifest_ref=manifest_ref, exc=exc)
         raise
 
-
-# v7 L-C2 split: the one-time legacy usage-telemetry import (source snapshot and
-# archive, candidate rows, state-baseline reconciliation, completed watermark)
-# lives in ouroboros/usage_legacy_import.py. Re-exported under the historical
-# names so callers and monkeypatching tests keep working unchanged (facade
-# identity pinned in tests/test_lc2_owner_facades.py).
-from ouroboros.usage_legacy_import import (  # noqa: E402, F401 -- intentional public re-exports
-    IMPORT_REL,
-    _completed_import_watermark,
-    _ensure_legacy_imported_locked,
-    _legacy_snapshot,
-    ensure_legacy_imported,
-)
 
 
 # Read-side admission projections over this ledger (the review wave's fit and the

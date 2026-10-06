@@ -220,7 +220,7 @@ def set_fence_state(root_drive: Any, root_task_id: str, *, fence_id: str, state:
     from ouroboros.task_results import (
         require_writable_task_result_schema, stamp_task_result_schema, task_result_path,
     )
-    from ouroboros.utils import update_json_locked, utc_now_iso
+    from ouroboros.utils import utc_now_iso
 
     written: Dict[str, Any] = {}
 
@@ -236,10 +236,14 @@ def set_fence_state(root_drive: Any, root_task_id: str, *, fence_id: str, state:
             return None
         fence = {**old, **fields, "state": state, f"{state}_at": utc_now_iso()}
         written.update(fence)
-        return stamp_task_result_schema({**current, "owner_pause": fence})
+        from ouroboros.pause_notices import notice_fields
+        notice = (notice_fields(current, root_drive, root_task_id, fence_id, "owner")
+                  if state == FENCE_PAUSED and old.get("state") != FENCE_PAUSED else {})
+        return stamp_task_result_schema({**current, **notice, "owner_pause": fence})
 
-    update_json_locked(task_result_path(pathlib.Path(root_drive), str(root_task_id)), update,
-                       strict_existing_dict=True)
+    from ouroboros.obligations import update_result
+    update_result(task_result_path(pathlib.Path(root_drive), str(root_task_id)), update,
+                  strict_existing_dict=True)
     return dict(written)
 
 
@@ -475,7 +479,7 @@ def tree_member_results(root_drive: Any, root_task_id: str) -> Dict[str, Dict[st
     census. Rows without a top-level root still need their legacy metadata read.
     The memo selects files only; it never supplies live status or custody.
     """
-    from ouroboros.gateway.task_list_scan import raw_result_facts
+    from ouroboros.task_result_facts import raw_result_facts
     from ouroboros.task_results import load_task_result, task_results_dir
 
     facts, malformed = raw_result_facts(task_results_dir(root_drive, create=False))

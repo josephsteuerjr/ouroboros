@@ -10,6 +10,7 @@ import subprocess
 import sys
 import types
 from pathlib import Path
+from tests._usage_store_testing import ledger_rows
 
 
 def _scope(root: Path):
@@ -81,8 +82,8 @@ def test_generic_llm_attempt_keeps_semantic_scope_source(tmp_path, monkeypatch):
         reservation = reserve_attempt(request)
         release_attempt(reservation)
 
-    rows = [json.loads(line) for line in (tmp_path / "state" / "usage_attempts.jsonl").read_text().splitlines()]
-    reserved = next(row for row in rows if row.get("state") == "reserved")
+    rows = ledger_rows(tmp_path)
+    reserved = rows[0]  # the attempt's current row keeps the reservation's attribution
     assert reserved["source"] == "task_acceptance"
     assert reserved["task_id"] == "review-task"
     assert reserved["root_task_id"] == "root-task"

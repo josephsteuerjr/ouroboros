@@ -23,6 +23,7 @@ import subprocess
 import types
 
 import pytest
+from tests._usage_store_testing import ledger_rows
 
 
 KEY = "OUROBOROS_REVIEW_MAX_CYCLES"
@@ -519,8 +520,7 @@ def test_strict_api_stamp_veto_releases_sync_and_async_attempts(tmp_path):
                                  drive_root=root, task_id="t", root_task_id="t")
 
     def refuse(root):
-        rows = (root / ua.LEDGER_REL).read_text().splitlines()
-        assert json.loads(rows[-1])["state"] == "reserved"
+        assert ledger_rows(root)[-1]["state"] == "reserved"
         raise RuntimeError("wallet unavailable")
 
     sync_root, sent = tmp_path / "sync", []

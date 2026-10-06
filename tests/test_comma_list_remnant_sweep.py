@@ -67,11 +67,12 @@ _RETIRED_KEY_MENTION_ALLOWLIST = {
     ("ouroboros/review_model_routes.py", "OUROBOROS_SCOPE_REVIEW_MODELS"): ("derived env plane reader (get_scope_review_models)", 1),
     ("ouroboros/review_model_routes.py", "OUROBOROS_SCOPE_REVIEW_MODEL"): ("derived env plane reader (singular fallback)", 2),
     ("ouroboros/tools/scope_review.py", "OUROBOROS_SCOPE_REVIEW_MODEL"): ("derived env plane reader (scope model fallback)", 1),
-    # -- raw-dict tolerance: retired-model default refresh over dicts fed
-    #    directly (load_settings purges the keys first; ABI-10-commented).
-    ("ouroboros/server_runtime.py", "OUROBOROS_REVIEW_MODELS"): ("raw-dict retired-model default refresh", 8),
-    ("ouroboros/server_runtime.py", "OUROBOROS_SCOPE_REVIEW_MODELS"): ("raw-dict retired-model default refresh", 10),
-    ("ouroboros/server_runtime.py", "OUROBOROS_SCOPE_REVIEW_MODEL"): ("raw-dict retired-model default refresh", 8),
+    # -- raw-dict tolerance: direct-provider and prior-default review/scope
+    #    normalization over dicts fed directly (load_settings purges the keys
+    #    first; ABI-10-commented).
+    ("ouroboros/server_runtime.py", "OUROBOROS_REVIEW_MODELS"): ("raw-dict review normalization", 5),
+    ("ouroboros/server_runtime.py", "OUROBOROS_SCOPE_REVIEW_MODELS"): ("raw-dict scope review normalization", 7),
+    ("ouroboros/server_runtime.py", "OUROBOROS_SCOPE_REVIEW_MODEL"): ("raw-dict scope review normalization", 7),
     # -- declaration surface over the derived plane (Provider Test resolves a
     #    deterministic model from declared model settings incl. the projected
     #    comma lists; never a route selector).

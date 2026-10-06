@@ -22,6 +22,7 @@ from ouroboros.task_results import load_task_result, write_task_result
 from ouroboros.tools.registry import ToolRegistry
 from ouroboros.tools.review import get_tools
 from ouroboros.utils import append_jsonl
+from tests._usage_store_testing import ledger_rows
 
 
 @pytest.fixture(autouse=True)
@@ -626,7 +627,7 @@ def test_real_budget_pause_cap_amendment_preserves_all_controls_and_ledger(tmp_p
         old_snapshot = snapshot.read_bytes()
         old_queue = copy.deepcopy((workers.PENDING, workers.RUNNING, queue.BUDGET_ROOT_FENCES))
         old_row = load_task_result(f.root, f.accounting)
-        old_ledger = (f.root / "state" / "usage_attempts.jsonl").read_bytes()
+        old_ledger = ledger_rows(f.root)
         ctx = _caller(f)
         out = _request(f, ctx, _source(ctx), new_original_root_cap_usd=9)
         assert out["cap_amendment"]["new_cap_usd"] == 9 and not out["dispatched"], out
@@ -637,8 +638,8 @@ def test_real_budget_pause_cap_amendment_preserves_all_controls_and_ledger(tmp_p
             k: v for k, v in old_row.items() if k != "updated_at"}
         assert (workers.PENDING, workers.RUNNING, queue.BUDGET_ROOT_FENCES) == old_queue
         assert snapshot.read_bytes() == old_snapshot
-        assert (f.root / "state" / "usage_attempts.jsonl").read_bytes() == old_ledger
+        assert ledger_rows(f.root) == old_ledger
         assert budget_pause.dispatch_fenced(f.accounting) and worker.busy_task_id is None
-        assert hold.attempt_id in old_ledger.decode()
+        assert hold.attempt_id in {row["attempt_id"] for row in old_ledger}
     finally:
         budget_pause.end_dispatch_fence(f.accounting)

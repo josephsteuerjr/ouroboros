@@ -8,6 +8,8 @@ import pathlib
 import sys
 from typing import Any
 
+from ouroboros.platform_layer import IS_WINDOWS
+
 
 def external_owner_binding(state: dict) -> tuple[bool, Any, tuple[int, int]]:
     """Ordinary commands use this current state observation, never Panic's cached pair."""
@@ -105,7 +107,7 @@ def restart_current_process(
     log: Any,
     owner_initiated: bool = False,
 ) -> None:
-    """Re-exec this server process.
+    """Hand this server over to its successor: exec on POSIX, supervised spawn on Windows.
 
     ``owner_initiated`` marks the restart the OWNER asked for (the chat Restart
     button, and the control endpoints that restart on the owner's behalf). Only
@@ -148,33 +150,46 @@ def restart_current_process(
     except Exception:
         raw_argv = sys.argv
     argv = [sys.executable, *raw_argv]
-    log.info("Re-executing direct server mode on %s:%d", desired_host, port)
-    try:
-        os.execvpe(sys.executable, argv, env)
-    except Exception:
-        log.exception("Direct re-exec failed; attempting spawned restart fallback.")
+    if IS_WINDOWS:
+        # Windows has no process-image replacement. Its C runtime emulates exec by
+        # starting an UNQUOTED command line and exiting the caller, so a spaced or
+        # empty argument (a Python under "Program Files") reaches the successor
+        # broken. The supervised spawn below quotes argv and IS the transfer here.
+        log.info("Starting the replacement direct server on %s:%d", desired_host, port)
+    else:
+        log.info("Re-executing direct server mode on %s:%d", desired_host, port)
         try:
-            from ouroboros.config import DATA_DIR
-            from ouroboros.process_custody import spawn_supervised
-
-            spawn_supervised(
-                argv,
-                drive_root=pathlib.Path(DATA_DIR),
-                # daemon, NOT session: the replacement IS the next server
-                # generation. A session-scoped entry carries this dying
-                # generation's session id, so the new server's startup reap
-                # would see it as a foreign-session process and SIGKILL itself.
-                # daemon scope is always a reaper survivor (launcher-managed
-                # lifecycle), which is correct for a long-lived top-level server.
-                purpose="server_restart_fallback",
-                scope="daemon",
-                cwd=str(repo_dir),
-                env=env,
-            )
-            log.info("Spawned replacement server process after exec failure.")
+            os.execvpe(sys.executable, argv, env)
+            return  # exec does not return; only a test double of it reaches this line
         except Exception:
-            log.exception("Spawned restart fallback failed; no successor was started.")
-            raise
+            log.exception("Direct re-exec failed; attempting spawned restart fallback.")
+    try:
+        from ouroboros.config import DATA_DIR
+        from ouroboros.process_custody import spawn_supervised
+
+        spawn_supervised(
+            argv,
+            drive_root=pathlib.Path(DATA_DIR),
+            # daemon, NOT session: the replacement IS the next server
+            # generation. A session-scoped entry carries this dying
+            # generation's session id, so the new server's startup reap
+            # would see it as a foreign-session process and SIGKILL itself.
+            # daemon scope is always a reaper survivor (launcher-managed
+            # lifecycle), which is correct for a long-lived top-level server.
+            purpose="server_restart_fallback",
+            scope="daemon",
+            # Windows: the successor keeps the caller's console group, as exec
+            # would (a new group ignores CTRL+C). POSIX fallback: a new session,
+            # so a failed custody write kills only the successor and the
+            # caller's terminal hangup does not reach it.
+            new_process_group=not IS_WINDOWS,
+            cwd=str(repo_dir),
+            env=env,
+        )
+        log.info("Spawned the replacement server process.")
+    except Exception:
+        log.exception("Spawned restart fallback failed; no successor was started.")
+        raise
 
 
 def execute_panic_stop(

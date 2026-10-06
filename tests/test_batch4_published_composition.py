@@ -10,6 +10,7 @@ from tests.test_acceptance_late_consumers import delivered, late  # noqa: F401
 from tests.test_review_operation_collection import fresh_sends  # noqa: F401
 from tests.test_review_operation_lifetime import until
 from tests.test_billing_group import _scope, _spend
+from tests._usage_store_testing import ledger_rows
 
 pytestmark = pytest.mark.serial
 
@@ -28,10 +29,10 @@ def test_owner_cap_is_total_group_allowance_with_successor_and_late_charge(late,
     _spend(f.root, _scope(f.root, f.accounting, f.accounting, group=f.accounting, group_limit=4), 1)
     _spend(f.root, _scope(f.root, "successor", "successor", group=f.accounting, group_limit=4), 2)
     ctx = _caller(f)
-    before = (f.root / ua.LEDGER_REL).read_bytes()
+    before = ledger_rows(f.root)
     out = _request(f, ctx, _source(ctx), action="amend_cap", new_original_root_cap_usd=9)
     assert out["status"] == "amended" and not out["dispatched"] and not late.calls
-    assert (f.root / ua.LEDGER_REL).read_bytes() == before
+    assert ledger_rows(f.root) == before
     assert load_task_result(f.root, f.accounting)["billing_group"] == binding
     with ua.usage_scope(_scope(f.root, "successor", "successor", group=f.accounting, group_limit=4)):
         paid = ua.reserve_attempt(ua.AttemptRequest(model="m", provider="test", reservation_usd=5.8))

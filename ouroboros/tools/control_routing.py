@@ -330,6 +330,7 @@ def _promote_chat_to_task(
     workspace: str = "",
     source: str = "",
     predecessor_task_id: Any = _MISSING_PREDECESSOR_SELECTOR,
+    context_requires_self_body_docs: bool = False,
 ) -> str:
     """Route real work out of the conversation lane into a supervised pooled task.
 
@@ -448,6 +449,7 @@ def _promote_chat_to_task(
         # v6.58.0: "none" opts a project-room task OUT of the room's working_dir
         # default (a folder-less task in a folder-ful project stays possible).
         "workspace": workspace_sentinel,
+        "context_requires_self_body_docs": context_requires_self_body_docs,
         "chat_id": current_chat_id,
         **({"resource_intent": {"kind": "system_repo"}} if intent_system_repo else {}),
         "client_message_id": str(

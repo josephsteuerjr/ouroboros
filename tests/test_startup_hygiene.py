@@ -5,6 +5,7 @@ import types
 import ouroboros.agent_startup_checks as startup_mod
 import ouroboros.world_profiler as world_profiler
 from ouroboros.memory import Memory
+from ouroboros import usage_store
 
 
 def test_check_version_sync_ignores_non_release_tag(tmp_path, monkeypatch):
@@ -182,7 +183,7 @@ def test_check_budget_uses_unresolved_ledger_upper_bound(tmp_path, monkeypatch):
     )
     (tmp_path / "settings.json").write_text("{}\n", encoding="utf-8")
     (tmp_path / "logs" / "events.jsonl").write_text("", encoding="utf-8")
-    ua.ensure_legacy_imported(tmp_path)
+    usage_store.migrate_from_journal(tmp_path)
     reservation = ua.reserve_attempt(ua.AttemptRequest(
         model="openai/gpt-5.5",
         provider="openrouter",
@@ -217,7 +218,7 @@ def test_check_budget_uses_canonical_root_for_split_worker(tmp_path, monkeypatch
         (root / "state" / "state.json").write_text("{}\n", encoding="utf-8")
         (root / "settings.json").write_text("{}\n", encoding="utf-8")
         (root / "logs" / "events.jsonl").write_text("", encoding="utf-8")
-    ua.ensure_legacy_imported(canonical)
+    usage_store.migrate_from_journal(canonical)
     reservation = ua.reserve_attempt(ua.AttemptRequest(
         model="openai/gpt-5.5", provider="openrouter", reservation_usd=4.0,
         drive_root=canonical, global_limit_usd=10.0,

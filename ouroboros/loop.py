@@ -21,6 +21,7 @@ from ouroboros.config import adaptive_quorum, get_context_mode, get_light_model,
 from ouroboros.review_cycles import REASON_REVIEW_CYCLES_EXHAUSTED  # noqa: F401 -- the loop module keeps its historical import surface for the L-B leaves
 from ouroboros.outcomes import ACCEPTANCE_ACCEPTED, ACCEPTANCE_BYPASS_REASON_BY_RAIL, ACCEPTANCE_BYPASS_REASONS, ACCEPTANCE_DECISION_STATUSES, ACCEPTANCE_FINALIZED_UNACCEPTED, ACCEPTANCE_REVISION_REQUESTED, REASON_ACCEPTANCE_REVIEW_SKIPPED_DEADLINE_RESERVE, REASON_DELIVERY_CONTROL_DEGRADED, REASON_OWNER_REQUESTED_FINALIZATION, RESULT_INFRA_FAILED, extract_final_answer, latest_agent_defined_verification, latest_unreconciled_failed_verification, latest_unreconciled_masked_verification, reviewable_effect_projection, should_nudge_verification, turn_has_reviewable_effects  # noqa: F401 -- the loop module keeps its historical import surface for the L-B leaves
 from ouroboros.observability import new_execution_id  # noqa: F401 -- the loop module keeps its historical import surface for the L-B leaves
+from ouroboros.observability import task_timing_scope, timed_phase
 from ouroboros.tool_policy import CAPABILITY_OMISSION_HEADER, format_capability_omissions, initial_tool_schemas, list_non_core_tools  # noqa: F401 -- the loop module keeps its historical import surface for the L-B leaves
 from ouroboros.tools.registry import ToolRegistry
 from ouroboros.llm_claudexor import ModelTurnState
@@ -180,6 +181,7 @@ def _setup_dynamic_tools(tools_registry, tool_schemas, messages, context_mode="m
     from ouroboros.tools.tool_discovery import bind_resident_schemas
 
     enabled_extra = bind_resident_schemas(tools_registry, tool_schemas)
+    tools_registry._ctx._actor_loaded_tool_names = enabled_extra  # a route's schema ceiling keeps these
     non_core_count = len(list_non_core_tools(tools_registry, context_mode=context_mode))
     if non_core_count > 0:
         _append_or_merge_user_message(
@@ -311,6 +313,23 @@ def _provider_unavailable_result(
     return with_terminal_notice(text, usage, llm_trace)
 
 
+def _output_exhausted_notice(facts: Any) -> str:
+    """The one host fact the next ordinary round reads after a reply that ended on its
+    output limit before any visible text or tool call; no retry, no provider terminal.
+
+    Names only what that attempt's own records carry (``_usage_response.output_exhaustion_facts``):
+    the allowance its receipt shows was sent and the reasoning tokens its provider reported.
+    Byte-stable apart from those numbers; how to continue stays Ouroboros's decision (BIBLE P5).
+    """
+    facts = facts if isinstance(facts, dict) else {}
+    sent, reasoning = facts.get("sent_allowance_tokens"), facts.get("reasoning_tokens")
+    return ("[SYSTEM NOTICE]\nThe provider ended your previous reply on its length limit before any "
+            "visible text or tool call; nothing from it was kept."
+            + (f" The reply allowance sent was {sent} tokens." if sent else "")
+            + (f" The provider reported {reasoning} reasoning tokens for it." if reasoning is not None else "")
+            + " Decide how to continue: a smaller step, a tool, or an honest final report.")
+
+
 def _apply_runtime_overrides(
     ctx: Any,
     active_model: str,
@@ -360,7 +379,7 @@ def _record_transcript_prefix(ctx, messages, round_idx, accumulated_usage,
     """
     from ouroboros.tools.compact_context import record_context_view
 
-    record_context_view(ctx, messages, tool_schemas)
+    record_context_view(ctx, messages, tool_schemas, physical_capture=getattr(ctx, "_usable_main_capture", None))
     fact = _observe_transcript_send(ctx, messages, round_idx=round_idx)
     if not fact:
         return
@@ -408,6 +427,7 @@ def _initial_round_route(ctx: Any, llm: LLMClient, initial_effort: str) -> tuple
     return model, initial_effort, use_local, preferred_mode, active_context_mode, context_fit_plan
 
 
+@task_timing_scope(reuse=True)
 def run_llm_loop(
     messages: List[Dict[str, Any]],
     tools: ToolRegistry,
@@ -429,6 +449,10 @@ def run_llm_loop(
     (active_model, active_effort, active_use_local, _preferred_context_mode, active_context_mode,
      context_fit_plan) = _initial_round_route(ctx, llm, initial_effort)
     llm_trace: Dict[str, Any] = {"reasoning_notes": [], "tool_calls": []}
+    if isinstance(getattr(ctx, "memory_view_facts", None), dict):  # this task's view fact (read back as a memory shortage)
+        from ouroboros.memory_inventory import VIEW_TRACE_KEY
+
+        llm_trace[VIEW_TRACE_KEY] = dict(ctx.memory_view_facts)
     accumulated_usage: Dict[str, Any] = {"_task_attempt": getattr(ctx, "task_attempt", None)}
     ctx._accumulated_usage = accumulated_usage
     invalidate_task_cache_splits(task_id or getattr(ctx, "task_id", ""))  # rebuilt attempt = new prefix
@@ -439,6 +463,7 @@ def run_llm_loop(
         accumulated_usage["initial_model_request"] = {
             "model": active_model, "use_local": active_use_local,
         }
+        _emit_physical_mode(event_queue, task_id, drive_logs, context_fit_plan, active_context_mode)
     cost_ceiling = _resolve_task_cost_ceiling(ctx, budget_remaining_usd)
     if cost_ceiling.root_cap_usd is not None:
         # A resumed/late-started tree member must see tree spend before its
@@ -614,6 +639,18 @@ def run_llm_loop(
             # Delivery/finalization in the same round must use that applied route.
             limit_ctx.active_model = ctx.active_model = active_model
             limit_ctx.active_use_local = ctx.active_use_local = active_use_local
+            if (msg is None and str(accumulated_usage.get("_last_llm_error_kind") or "") == "llm_output_exhausted"
+                    and not provider_no_call_source(accumulated_usage, False)[0]):
+                # Output exhaustion is no outage, the primary's (no route walk) or a configured
+                # candidate's (the walk keeps its kind): no wait, no provider terminal. One host fact,
+                # then the next ordinary round decides under the existing round, time and money
+                # limits. A round still holding an unresolved attempt may start no new generation,
+                # so it keeps the recovery below (provider_no_call_source decides). The provider
+                # answered, so the recovery above already ended any wait episode.
+                _append_or_merge_user_message(
+                    messages, _output_exhausted_notice(accumulated_usage.get("_last_llm_output_exhausted")))
+                pending_no_tool_budget = True  # an unfinished no-tool round keeps the same budget tail (#1223)
+                continue
             if msg is None and transport_wait is not None and _transport_wait_step(
                 transport_wait, tools=tools,
                 error_kind=str(accumulated_usage.get("_last_llm_error_kind") or ""),
@@ -679,8 +716,9 @@ def run_llm_loop(
         # A budget-pause HOLD ended by control rejoins the model-wait rails; else re-raise with evidence.
         return _loop_exit_after_exception(exc, limit_ctx, exit_ctx, llm_trace, transport_wait)
     finally:
-        _delegate_hold_close(tools, drive_logs=drive_logs, task_id=task_id, detail="loop_exit")
-        _cleanup_loop_resources(stateful_executor, exit_ctx)
+        with timed_phase("cleanup"):
+            _delegate_hold_close(tools, drive_logs=drive_logs, task_id=task_id, detail="loop_exit")
+            _cleanup_loop_resources(stateful_executor, exit_ctx)
 
 # Cohesive leaves own the implementations below. Keep the full re-export
 # surface: production callers and tests address these historical loop bindings,
@@ -797,6 +835,7 @@ from ouroboros.loop_model_call import (  # noqa: E402, F401 -- intentional publi
     _restore_context_fit_usage,
     _run_cross_model_fallback_chain,
     _rebind_context_fit_plan,
+    _emit_physical_mode,
     _RoundModelCallContext,
     _context_fit_round_id,
     _main_context_profile,

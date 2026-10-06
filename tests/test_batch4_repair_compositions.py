@@ -7,6 +7,7 @@ import pytest
 
 from tests._budget_pause_exact_helpers import _install_queue, _loop_ctx
 from tests.test_restart_retention import _pool_events, _restart_door
+from tests._usage_store_testing import ledger_rows
 
 pytestmark = pytest.mark.serial
 
@@ -70,7 +71,7 @@ def test_pause_at_last_model_preparation_prevents_send(tmp_path, monkeypatch, as
             ua.execute_physical_attempt(request, send)
     assert order == ["paused"]
     with ua._locked(tmp_path):
-        rows = list(ua._final_rows(ua._read_records_locked(tmp_path)).values())
+        rows = list({row['attempt_id']: row for row in ledger_rows(tmp_path)}.values())
     assert len(rows) == 1 and rows[0]["state"] == "released"
 
 

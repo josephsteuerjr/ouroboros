@@ -24,6 +24,7 @@ from tests._delegated_transport_shared import (  # noqa: F401  (autouse fixture 
     _nanny_ctx,
     _owned_gateway_uses_each_test_transport,
 )
+from tests._usage_store_testing import ledger_rows
 
 
 def test_discovery_missing_descriptor_is_a_typed_refusal(tmp_path):
@@ -511,8 +512,7 @@ def test_settlement_follows_the_ledger_and_the_registration_debt_survives(tmp_pa
     second = json.loads(delegate._delegate_wait(ctx, "run-1", wait_sec=1))
     delegate._CUSTODY.clear()
     assert second["settlement"]["settled"] is True
-    rows = [json.loads(l) for l
-            in (tmp_path / "state" / "usage_attempts.jsonl").read_text().splitlines()]
+    rows = ledger_rows(tmp_path)
     sessions = [r for r in rows if r.get("kind") == "subscription_session"]
     assert len(sessions) == 1, "the idempotent ledger row must not be written twice"
     assert dc.replay(tmp_path)["run-1"].settled is True

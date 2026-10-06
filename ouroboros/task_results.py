@@ -934,11 +934,9 @@ def write_task_result(
             "updated_at": now,
         }))
 
-    # Never fall back to an unlocked read/merge/write: stale state would let timing, not the monotonic
-    # reducer, pick a completed-vs-cancelled winner. Callers retry or fail their transition explicitly.
-    return update_json_locked(
-        path,
-        _merge,
+    from ouroboros.obligations import update_result
+    return update_result(
+        path, _merge, writer=update_json_locked,
         strict_existing_dict=bool(strict_existing_dict),
         reject_existing_empty_dict=bool(strict_existing_dict),
     )

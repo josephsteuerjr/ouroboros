@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from ouroboros import task_pacing
 from ouroboros.config import adaptive_quorum
+from ouroboros.observability import timed_phase
 from ouroboros.acceptance_preparation import (
     STAGE_APPLICATION, STAGE_DISPATCH, STAGE_PREPARATION, STAGE_RECONCILE,
 )
@@ -462,7 +463,7 @@ def _execute_task_acceptance_panel(ctx: _TaskAcceptanceContext) -> Any:
     # Route/candidate refusals remain free; one strict stamp gates every slot.
     started = time.monotonic()
     try:
-        with bind_task_acceptance_paid_dispatch(ctx) as usage_ctx:
+        with timed_phase("acceptance"), bind_task_acceptance_paid_dispatch(ctx) as usage_ctx:
             # The bound packet and admission were local. From this handoff on,
             # transport may exist even if it raises before returning its record.
             ctx.stage = STAGE_DISPATCH

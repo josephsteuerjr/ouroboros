@@ -12,6 +12,7 @@ import pytest
 
 from ouroboros.llm import LLMClient, supports_message_cache_control
 from ouroboros.tools.review_helpers import cached_prompt_blocks
+from tests._usage_store_testing import ledger_rows
 
 # The shipped global default (config.SETTINGS_DEFAULTS["OUROBOROS_PROMPT_CACHE_TTL"]):
 # the review lanes' former REVIEW_CACHE_TTL constant collapsed into that setting, so
@@ -339,7 +340,7 @@ def test_finalizer_never_marks_non_openrouter_routes(provider, model):
 
 def test_finalizer_leaves_unsupported_openrouter_family_untouched():
     client = LLMClient(api_key="unused")
-    target = _openrouter_target("openai/gpt-5.5")
+    target = _openrouter_target("x-ai/grok-4")
     kwargs = client._build_remote_kwargs(
         target, _review_pack(), "high", 512, "auto", None, _tools(),
         skip_capability_fetch=True,
@@ -349,7 +350,7 @@ def test_finalizer_leaves_unsupported_openrouter_family_untouched():
     assert client._normalize_payload_cache_ttl(target, kwargs) is None
 
     assert kwargs == before
-    assert not supports_message_cache_control("openai/gpt-5.5")
+    assert not supports_message_cache_control("x-ai/grok-4")
 
 
 def test_finalizer_keeps_gemini_markers_bare_and_adds_no_tool_marker():
@@ -686,16 +687,16 @@ def test_finalizer_reduces_over_cap_breakpoints_and_discloses_the_reduction(monk
     )
 
     payload = captured["payload"]
-    # tools(1) + system(2) + first message block(1) survive; the tail markers are dropped.
+    # No free slot for schemas: system(2) + first message blocks(2) survive.
     assert len(_markers(payload)) == 4
-    assert payload["tools"][-1]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+    assert all("cache_control" not in tool for tool in payload["tools"])
     assert [("cache_control" in block) for block in payload["messages"][0]["content"]] == [
-        True, False, False, False,
+        True, True, False, False,
     ]
     assert [block["text"] for block in payload["messages"][0]["content"]] == [
         "evidence 0", "evidence 1", "evidence 2", "evidence 3",
     ]
-    assert usage["prompt_cache_breakpoints_reduced"] == {"declared": 7, "kept": 4, "dropped": 3}
+    assert usage["prompt_cache_breakpoints_reduced"] == {"declared": 6, "kept": 4, "dropped": 2}
     assert usage["prompt_cache_ttl"] == "1h"
 
 
@@ -991,7 +992,7 @@ def test_cached_prompt_blocks_projects_the_global_setting(monkeypatch):
 def test_reviewer_models_support_cache_markers_where_expected():
     assert supports_message_cache_control("anthropic/claude-fable-5")
     assert supports_message_cache_control("google/gemini-3.5-flash")
-    assert not supports_message_cache_control("openai/gpt-5.6-sol")
+    assert supports_message_cache_control("openai/gpt-5.6-sol")
 
 
 # ---------------------------------------------------------------------------
@@ -1225,7 +1226,6 @@ def test_is_tos_rejection_classification():
 
 
 def test_tos_rejection_settles_zero_with_reason(tmp_path):
-    import json as _json
 
     from ouroboros import usage_accounting as ua
 
@@ -1242,10 +1242,7 @@ def test_tos_rejection_settles_zero_with_reason(tmp_path):
     assert projection["settled_usd"] == 0.0
     assert projection["attempt_counts"].get("settled") == 1
 
-    rows = [
-        _json.loads(line)
-        for line in (tmp_path / "state" / "usage_attempts.jsonl").read_text(encoding="utf-8").splitlines()
-    ]
+    rows = ledger_rows(tmp_path)
     settled = [row for row in rows if row.get("state") == "settled"]
     assert settled and settled[-1]["settle_reason"] == "tos_rejection"
     assert settled[-1]["cost_usd"] == 0.0

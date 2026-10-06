@@ -3,6 +3,7 @@ import { bindMarkdownTables, destroyChatMarkdown, enhanceChatMarkdown, mountChat
 import { renderPageHeader } from './page_header.js';
 import { PAGE_ICONS } from './page_icons.js';
 import { showToast } from './toast.js';
+import { tx } from './i18n.js';
 import { decorateProjectRow, syncSavedProjectContext } from './project_answer.js';
 import { createProjectHandoffs, receiptNotice } from './project_handoff.js';
 import { bindComposerFileTargets, cleanupUploadedAttachments, createChatMedia, showTaskIncidentToast } from './chat_media.js';
@@ -40,6 +41,8 @@ import {
     ACTION_RESUME,
     TASK_CONTROL_TRIGGER_LABEL,
     cancelRunEligibility,
+    resumeRunEligibility,
+    createTaskResumeButton,
     hurryTaskAction,
     openTaskControlMenu,
     requestStop,
@@ -125,6 +128,7 @@ import {
     mergeStickyCostMeta,
     applyToolObservation,
     noteToolHostMetrics,
+    toolEvidenceIncomplete,
     partitionLocalEchoJournal,
     projectCollapsedActivity,
     positiveTaskTerminalFact,
@@ -196,7 +200,7 @@ export function createChatInstance({
     ws, state, updateUnreadBadge, openSettingsTab, openDashboardTab,
     stateSnapshots,
     chatId = 1, projectId = '', idPrefix = 'chat', mountEl = null,
-    asPanel = false, title = 'Chat', initialScrollState = null,
+    asPanel = false, title = 'Chat',
     // app.js signal "a project panel is opening right now" — Main
     // defers its first hydration to it (bounded by an unconditional deadline).
     isProjectOpening = null,
@@ -259,7 +263,7 @@ export function createChatInstance({
                 <div class="chat-toolbar-row">
                     <div class="chat-composer-pills" id="chat-composer-pills">
                         <button class="chat-swarm" id="chat-swarm" type="button" data-armed="false" title="Swarm: route your next message into a new managed task, run a deep plan review with plan_task, then delegate when parallel work helps. Auto-disarms after sending.">Swarm</button>
-                        <div class="chat-context-mode" id="chat-context-mode" data-context-mode="max" role="group" aria-label="Context size mode" title="Context mode (owner setting). Nano is the compact owner window, Low fits ~200K / local models, Max is full. Saves immediately; lowering requires Ouroboros to be idle."><button class="chat-seg" type="button" data-mode="nano">Nano</button><button class="chat-seg" type="button" data-mode="low">Low</button><button class="chat-seg" type="button" data-mode="max">Max</button></div>
+                        <div class="chat-context-mode" id="chat-context-mode" data-context-mode="max" role="group" aria-label="Context size mode" title="Context mode (owner setting). Nano is the compact owner window, Low fits ~250K / local models, Max is full. Saves immediately; lowering requires Ouroboros to be idle."><button class="chat-seg" type="button" data-mode="nano">Nano</button><button class="chat-seg" type="button" data-mode="low">Low</button><button class="chat-seg" type="button" data-mode="max">Max</button></div>
                     </div>
                 </div>
                 <div class="chat-text-row">
@@ -424,6 +428,9 @@ export function createChatInstance({
     let inputHistoryIndex = inputHistory.length;
     let inputDraft = '';
     let historyLoaded = false;
+    // A source read has painted the room. The sessionStorage preview a failed first
+    // read leaves is not one: the first source read after it still opens the room.
+    let sourceHydrated = false;
     let inputHistorySeededFromServer = false; // set true only after a successful server-side recall seed
     let historySyncPromise = null;
     let lastHistorySyncSucceeded = false;
@@ -437,10 +444,6 @@ export function createChatInstance({
     let hydrationGatePromise = null;
     // One derived physical coverage/status for the mounted reading window.
     let historyWindow = null;
-    // Saved page and whole recent read gate only the cross-instance place; reshow
-    // targets and visible mutations use live geometry.
-    let restoredPageReady = !initialScrollState?.history;
-    let recentReady = false;
     let _hasNewActivity = false;
     const isInstanceVisible = () =>
         Boolean(messagesDiv) && messagesDiv.offsetParent !== null && !document.hidden;
@@ -471,9 +474,8 @@ export function createChatInstance({
         liveCardRecords.delete(id);
     }
     const markReviewAnchor = (r, on = false) => setReviewAnchor(r, on, setLiveCardPhase);
-    const explicitCardExpansion = new Map(initialScrollState?.disclosures?.cards || []);
-    const reviewDisclosureByTask = new Map((initialScrollState?.disclosures?.reviews || []).map(([id, value]) =>
-        [id, { ...value, expandedGroups: new Set(value.expandedGroups), expandedAttempts: new Set(value.expandedAttempts) }]));
+    const explicitCardExpansion = new Map();
+    const reviewDisclosureByTask = new Map();
     const skillReviewDetailStore = new Map();
     const reviewHydrator = createReviewHydrator({
         fetchDetail: fetchTaskDetailStrict,
@@ -690,23 +692,19 @@ export function createChatInstance({
     const { captureVisibleTimelineAnchor, restoreVisibleTimelineAnchor, serializeTimelineAnchor, anchorOwnersReady } =
         createTimelineAnchors({ messagesDiv, liveCardRecords });
     const reading = createChatReadingPosition({
-        initial: initialScrollState, feed: messagesDiv, alive: () => !destroyed,
+        feed: messagesDiv, alive: () => !destroyed,
         afterWrite: () => workPointer?.update(), activity: () => { _hasNewActivity = true; },
         updateButton: updateScrollButton,
         visible: () => !destroyed && isInstanceVisible(),
-        ready: () => historyLoaded && (!reading.restoring || restoredPageReady && recentReady)
-            && anchorOwnersReady(reading.target?.historyAnchor, reviewHydrator.ready),
+        ready: () => historyLoaded && anchorOwnersReady(reading.target?.historyAnchor, reviewHydrator.ready),
         anchors: { serialize: serializeTimelineAnchor, restore: restoreVisibleTimelineAnchor, capture: captureVisibleTimelineAnchor },
-        fallback: target => {
-            const ids = pageHistoryIds.get(target.history?.pages?.[target.history?.focus]?.id);
-            const node = ids && [...ids].flatMap(historyNodes).find(node => node.getClientRects().length);
-            return node ? restoreVisibleTimelineAnchor({ node, offset: target.historyAnchor?.offset || 0 }) : false;
-        },
         // A settled place is where the reader is (the read receipt).
         changed: () => { syncLoadOlderControl(); updateScrollButton(); readReceipt.note({ discrete: true }); },
     });
 
     function withStableViewport(mutate, options) { return reading.mutate(mutate, options); }
+    // Turned back into history, or on the way to a place: not following the newest message.
+    const readingHistory = () => !reading.stick || reading.pending;
 
     function withRemoteActivity(mutate) {
         _remoteActivityDepth += 1;
@@ -730,7 +728,6 @@ export function createChatInstance({
         patchTimelineItemAt,
     } = createLiveCardTimelineRenderer({
         withStableViewport, buildTimelineItemHtml, isReplayActive: () => _historyReplayActive,
-        initialAnchor: initialScrollState?.historyAnchor, hydrate: fetchFullLineOutput,
     });
 
     function insertMessageNode(node, options = {}) {
@@ -782,9 +779,8 @@ export function createChatInstance({
         return true;
     }
 
-    // The ONE rule for a task's block being in the transcript (docs/DESIGN.md
-    // "Conversation activity block"): facts the record holds, re-read at every
-    // mutation, no sticky flag; the completion note and receipt rows are not content.
+    // DESIGN's activity-block predicate rechecks facts on each mutation;
+    // completion notes and receipts are not content, and visibility is not sticky.
     function blockVisible(record) {
         if (!record || record.isSubagent) return true;
         return blockHasWork(record)
@@ -793,19 +789,14 @@ export function createChatInstance({
             || (record.finished && record.phaseEl?.dataset?.phase !== 'done');
     }
 
-    // The host's lane fact (census kind, rebuilt task_done, history rows) is
-    // kept on the record for the header pill only: a direct turn keeps the
-    // census verdict (Thinking…) beside its block. It never chooses chrome.
+    // Lane facts from census/task_done/history affect only the header, never chrome.
     function noteDirectTurn(record, direct) {
         if (record && typeof direct === 'boolean') record.direct = direct;
     }
 
-    // The work the block stands on — the presence facts minus open attention and
-    // minus a bare terminal outcome. It selects the chrome (owner decision 16.09):
-    // a block with work is the task card whatever lane produced it (a title, the
-    // conversion control in Main); a block that exists only for open attention or
-    // a non-Done ending keeps no title placeholder and offers no conversion. The
-    // host's lane fact (`_is_direct_chat`) keeps its host jobs and never chooses chrome.
+    // Work chooses card chrome (owner 16.09): title and Main conversion, regardless
+    // of lane. Attention-only or non-Done endings have neither title nor conversion.
+    // Bare outcome/receipts are not work; _is_direct_chat retains its host duties.
     function blockHasWork(record) {
         const id = record.groupId;
         // Visibility depends on work, never the lane.
@@ -819,7 +810,8 @@ export function createChatInstance({
     function noteToolMetrics(taskId, metrics, rawTs, { suppressDomInsert = false } = {}) {
         const [calls, errors, routing, completion] = ['tool_calls', 'tool_errors', 'routing_tool_calls', 'completion_tool_calls']
             .map(key => Number.isInteger(metrics?.[key]) ? metrics[key] : null);
-        if (!calls && !errors && !metrics.tool_evidence?.observations?.length && !metrics.tool_evidence?.legacy?.calls) return false;
+        if (!calls && !errors && !metrics.tool_evidence?.observations?.length
+                && !metrics.tool_evidence?.legacy?.calls && !toolEvidenceIncomplete(metrics.tool_evidence?.coverage)) return false;
         return withStableViewport(() => {
             const record = getLiveCardRecord(taskId);
             const before = captureLiveCardProjection(record);
@@ -936,27 +928,38 @@ export function createChatInstance({
         return withStableViewport(() => syncCancelRunButtonMutation(record));
     }
 
-    // The one reading of "this record offers Stop": the block predicate and the
-    // control share it, so a block never stands on a Stop it hides.
+    // Shared Stop predicate: a hidden button cannot justify a visible block.
     const stopEligible = (record) => cancelRunEligibility({
         groupId: record.groupId, isSubagent: record.isSubagent, finished: record.finished,
-        cancelable: !record.historicalUnavailable && !record.historicalUnconfirmed && cancelableTaskIds.has(record.groupId),
+        cancelable: !record.historicalUnavailable && !record.historicalUnconfirmed
+            && (cancelableTaskIds.has(record.groupId) || activeDirectActivities.has(record.groupId) && blockHasWork(record)),
         converted: record.root.dataset.projectCreated === '1',
     });
 
     function syncCancelRunButtonMutation(record) {
         if (!record?.root) return false;
-        const eligible = stopEligible(record);
+        const canResume = () => resumeRunEligibility(record, activeDirectActivities.get(record.groupId));
+        const resumable = canResume();
+        let changed = false;
+        if (resumable && !record.resumeRunBtn) {
+            record.resumeRunBtn = createTaskResumeButton(record.groupId, { canResume,
+                onSettled: () => refreshHeaderControlState(true) });
+            ensureLiveActionsEl(record)?.appendChild(record.resumeRunBtn);
+            changed = true;
+        } else if (!resumable && record.resumeRunBtn) {
+            record.resumeRunBtn.remove(); record.resumeRunBtn = null; changed = true;
+        }
+        const eligible = stopEligible(record) || resumable;
         const existing = record.root.querySelector('[data-cancel-run]');
         if (!eligible) {
-            if (!existing) return false;
+            if (!existing) return changed;
             existing.remove();
             record.cancelRunBtn = null;
             return true;
         }
         if (existing) {
             record.cancelRunBtn = existing;
-            return false;
+            return changed;
         }
         const actions = ensureLiveActionsEl(record);
         if (!actions) return false;
@@ -971,6 +974,7 @@ export function createChatInstance({
             openTaskControlMenu(btn, {
                 cancelPending: Boolean(record.cancelPendingPolicy),
                 budgetPaused: activeDirectActivities.get(record.groupId)?.phase === 'budget_paused',
+                resumeVisible: canResume(),
                 busy: taskControlBusy(record.groupId),
                 onAction: (action) => {
                     if (action === ACTION_HURRY) return hurryTaskAction(record.groupId);
@@ -1260,6 +1264,18 @@ export function createChatInstance({
     function admitCardMetadata(row) {
         // Carrier facts precede presentation returns.
         if (row.tool_evidence && row.task_id) noteToolMetrics(row.task_id, row, row.ts || row.timestamp || '');
+        if (row.system_type === 'task_evidence') {
+            const record = liveCardRecords.get(row.task_id);
+            if (!record) return false;
+            const activity = activeDirectActivities.get(row.task_id);
+            if (row.suggested_name) applySuggestedName(row.task_id, row.suggested_name);
+            noteDirectTurn(record, activity ? activity.kind !== 'managed_task' : row._is_direct_chat);
+            if (row.task_phase === 'finalizing') markLiveCardFinalizing(row.task_id, row);
+            else if (!row.task_terminal_status && !activity) setHistoricalUnconfirmed(record);
+            if (activity) syncParkedPhase(record, activity.phase, activity);
+            syncCancelRunButton(record);
+            return true;
+        }
         if (isModelWaitReference(row)) {
             const changed = modelWaits.observe(row.task_id, row);
             return row.outcome_axes ? appendTaskSummaryToLiveCard(row) || changed : changed;
@@ -1603,12 +1619,11 @@ export function createChatInstance({
         if (record.countEl.textContent !== text) record.countEl.textContent = text;
     }
 
-    // Re-show the same reading intent; data readiness controls positioning.
+    // Returning to the Chat page reopens the room at its newest message; a window
+    // shown again keeps the same reading intent (data readiness positions it).
     const handlePageShown = (event) => {
-        if (
-            event?.detail?.page === 'chat'
-            || (event?.type === 'visibilitychange' && !document.hidden)
-        ) reading.request();
+        if (event?.detail?.page === 'chat') void showLatest();
+        else if (event?.type === 'visibilitychange' && !document.hidden) reading.request();
     };
     window.addEventListener('ouro:page-shown', handlePageShown);
     document.addEventListener('visibilitychange', handlePageShown);
@@ -2271,11 +2286,8 @@ export function createChatInstance({
                 skillReview: opts.skillReview || null,
                 evidenceRef: opts.evidenceRef || null,
             });
-            // Mirror the sessionStorage slice(-200): the in-memory copy exists
-            // only to feed that snapshot, so it obeys the same cap (P3).
-            if (persistedHistory.length > 200) {
-                persistedHistory.splice(0, persistedHistory.length - 200);
-            }
+            // Match the persisted-history cap.
+            if (persistedHistory.length > 200) persistedHistory.splice(0, persistedHistory.length - 200);
             if (!_historyReplayActive) persistVisibleHistory();
         }
 
@@ -2294,6 +2306,7 @@ export function createChatInstance({
         const sender = senderLabel(role, isProgress, systemType, {
             source, senderLabel: senderLabelOverride, senderSessionId, initiator,
         }, chatSessionId);
+        if (role === 'system' && ['task_pause_notice', 'legacy_memory_notice'].includes(systemType)) text = tx(text);
         const richMarkdown = role !== 'user' && systemType !== 'skill_review' && (role !== 'system' || markdown === true);
         const rendered = role === 'user'
             ? escapeHtml(text)
@@ -2305,7 +2318,7 @@ export function createChatInstance({
         const timeFmt = formatMsgTime(ts);
         const timeHtml = timeFmt ? `<div class="msg-time" title="${escapeHtmlAttr(timeFmt.full)}">${escapeHtml(timeFmt.short)}</div>` : '';
         const pendingHtml = pending ? `<div class="msg-pending">Queued until reconnect</div>` : '';
-        // A placed row with no card keeps the record link its card row would offer.
+        // Preserve the card's source link in a standalone row.
         bubble.innerHTML = `
             <div class="sender">${escapeHtml(sender)}</div>
             <div class="message${richMarkdown ? ' ui-rich-content' : ''}">${rendered}</div>
@@ -2467,6 +2480,7 @@ export function createChatInstance({
                 try { for (const msg of messages) {
                     _historyRow = msg;
                     if (msg.system_type === 'quiz_answer') chatDecision.applyQuizStateFrame(messagesDiv, { ...msg.quiz, task_id: msg.task_id });
+                    if (msg.system_type === 'task_evidence') { admitCardMetadata(msg); continue; }
                     if (isReplayEvidenceRow(msg) || msg.system_type === 'project_question_pointer') continue;
                     if (admitCardMetadata(msg) !== undefined) continue;
                     if (attachReviewFromRow(msg, msg.ts || '') !== undefined) continue;
@@ -2533,9 +2547,7 @@ export function createChatInstance({
                         addStoredRow(msg, taskId, { evidenceRef: cardRowEvidenceRef(msg) });
                         continue;
                     }
-                    // Reconnect: a durably recorded submission must not stay
-                    // `Sending...` — history + snapshot are the authorities
-                    // (a live turn re-links via census hydration).
+                    // Durable history clears Sending; census re-links a still-live turn.
                     if (fromReconnect && msg.role === 'user' && msg.client_message_id) {
                         pendingSubmissions.delete(String(msg.client_message_id));
                     }
@@ -2552,10 +2564,7 @@ export function createChatInstance({
                         addProjectRow(msg, msg.text, { historyId: msg.history_id, historyPosition: msg.history_position, taskId });
                         continue;
                     }
-                    // Delivered media is a bubble, not a task-final
-                    // message — render it BEFORE the taskId/finishLiveCard block so
-                    // a mid-task delivery replayed while its task is still
-                    // running does not falsely finalize that task's live card.
+                    // Render media before final handling: a mid-task delivery cannot finish its card.
                     if (['document', 'photo', 'video', 'links', 'quiz'].includes(msg.msg_type)) {
                         if (msg.msg_type === 'document') appendDocumentBubble(msg);
                         else if (msg.msg_type === 'links') appendLinksMessage(msg);
@@ -2567,7 +2576,7 @@ export function createChatInstance({
                     // untyped final (replay has no later task_done frame, so
                     // the bare final is the task's last word; marked rows —
                     // system_type/msg_type — still never conclude).
-                    const plainUntypedFinal = !msg.system_type && !msg.msg_type;
+                    const plainUntypedFinal = !msg.system_type && !msg.msg_type && msg.task_phase !== 'unfinished';
                     if (
                         taskId
                         && (msg.role === 'assistant' || msg.role === 'system')
@@ -2590,9 +2599,7 @@ export function createChatInstance({
                             finishLiveCard(taskId, msg.task_terminal_status ? taskTerminalPhase(msg) : replayTerminalPhase(record));
                         }
                     }
-                    // A replayed durable routing receipt carries the same
-                    // authority as its live WS frame: a receipt that landed
-                    // while the socket was down still retires `Sending...`.
+                    // A durable routing receipt retires Sending like its live frame.
                     if (msg.chat_annotation && msg.client_message_id) {
                         pendingSubmissions.delete(String(msg.client_message_id));
                     }
@@ -2608,10 +2615,8 @@ export function createChatInstance({
                     if (msg.role === 'user') markIngressSaved(messagesDiv, msg);
                 }
                 _historyRow = null;
-                // Resolve cards whose task is already terminal on the server
-                // (crash storm / hard timeout / cancellation write a terminal
-                // status but no task_summary). Without this their progress-only
-                // cards re-inflate as "Working" forever on reload/reconnect.
+                // Persisted terminals without task_summary (crash/timeout/cancel) also settle
+                // progress-only cards; otherwise reload revives them as Working.
                 const terminalTaskRecords = new Map();
                 for (const msg of messages) {
                     const tid = msg.task_id || '';
@@ -2715,6 +2720,9 @@ export function createChatInstance({
         historySyncPromise = (async () => {
             const armedAtStart = liveCardBound.begin();
             const cardsAtStart = new Set(liveCardRecords.keys());
+            // Whether the reader follows the newest message as the read begins: a
+            // replay can clear and refill the feed, which is not the reader moving.
+            const followingAtStart = reading.stick, generationAtStart = reading.generation;
             try {
                 // No welcome until this read lands.
                 emptyWelcome?.historyPending();
@@ -2729,22 +2737,19 @@ export function createChatInstance({
                 }
                 if (data.recentVersion < recentApplied) return lastHistorySyncSucceeded;
                 const messages = Array.isArray(data.messages) ? data.messages : [];
-                const restoring = !restoredPageReady && !historyPager.getState().initialized
-                    ? historyPager.restore(initialScrollState.history) : null;
                 const oldRecentIds = recentHistoryIds;
                 const admitted = acceptRecentWindow(data, messages);
                 const pagerBeforeRecent = historyPager.getState();
-                const rechainRecent = admitted && !data.reason_code && pagerBeforeRecent.initialized && !pagerBeforeRecent.canNewer
-                    && [...oldRecentIds].some(id => !recentHistoryIds.has(id));
+                // A reader in older history keeps the chain `Load more history` goes on
+                // from, and the rows the newest read let go stay below them; a shifted
+                // window re-anchors only a reader following the newest message.
+                const reader = readingHistory();
+                const rechainRecent = admitted && !reader && !data.reason_code && pagerBeforeRecent.initialized
+                    && !pagerBeforeRecent.canNewer && [...oldRecentIds].some(id => !recentHistoryIds.has(id));
                 const result = historyPager.acceptRecent(data);
                 if (result.status !== 'applied') applyHistoryMessages(messages, { fromReconnect });
-                // Recent owners exist before the saved page attaches content-only rows.
-                if (restoring) {
-                    restoredPageReady = (await restoring).status === 'applied';
-                    if (destroyed) return false;
-                }
                 const recentState = historyPager.getState();
-                const releasableRecentIds = !admitted || rechainRecent || recentState.canNewer ? [] : oldRecentIds;
+                const releasableRecentIds = !admitted || rechainRecent || reader || recentState.canNewer ? [] : oldRecentIds;
                 withStableViewport(() => releaseHistoryIds(releasableRecentIds));
                 if (rechainRecent && !destroyed) void historyPager.latest();
                 if (armedAtStart) {
@@ -2778,7 +2783,10 @@ export function createChatInstance({
                 }
 
                 const wasFirstLoad = !historyLoaded;
-                historyLoaded = true;
+                // The preview a failed first read leaves is no source read: the first
+                // source read after it still opens the room for a reader who followed.
+                const opensAfterPreview = !sourceHydrated && followingAtStart && reading.generation === generationAtStart;
+                historyLoaded = sourceHydrated = true;
                 lastHistorySyncSucceeded = true;
                 messagesDiv.dataset.historyHydrated = 'true';
                 emptyWelcome?.historyRead(data.window?.complete === true);
@@ -2788,12 +2796,15 @@ export function createChatInstance({
                 // — later hydration triggers ride this sticky promise.
                 initialHydrationPromise = historySyncPromise;
                 syncLoadOlderControl();
-                // A recreated project instance restores its predecessor's stashed
-                // mid-history position on first paint instead of pinning to newest.
+                // A room opens at its newest message (owner decisions 2026-07-10,
+                // 2026-10-05); an in-room intent still awaiting data lands first.
                 if (reading.pending) {
                     updateMessagesPadding(false);
                     reading.position();
                 } else if (wasFirstLoad && reading.stick) {
+                    updateMessagesPadding();
+                    reading.followAfterLayout();
+                } else if (opensAfterPreview) {
                     updateMessagesPadding();
                     reading.followAfterLayout();
                 }
@@ -3100,7 +3111,9 @@ export function createChatInstance({
         if (scrollActivityDot) scrollActivityDot.hidden = !_hasNewActivity;
         scrollBottomBtn.classList.toggle('visible', isInstanceVisible() && (!isNearBottom() || (!reading.stick && historyWindow?.gaps)));
     }
-    scrollBottomBtn?.addEventListener('click', async () => {
+    // The one way to the present: ↓, and returning to the room (owner decision
+    // 2026-10-05: a room is always reopened at its newest message).
+    async function showLatest() {
         const current = reading.claim();
         if (historySyncPromise) await historySyncPromise;
         await historyPager.whenIdle();
@@ -3112,7 +3125,8 @@ export function createChatInstance({
         reading.stick = true;
         reading.followAfterLayout();
         updateScrollButton();
-    });
+    }
+    scrollBottomBtn?.addEventListener('click', showLatest);
 
     function updateMessagesPadding(preserveStickiness = true) {
         const mutate = () => {
@@ -3285,8 +3299,7 @@ export function createChatInstance({
     function acceptRecentWindow(data, messages) {
         if (data.recentVersion <= recentApplied) return false;
         recentApplied = data.recentVersion;
-        // The newest admitted window (↓ too) owns readiness and the failure note.
-        recentReady = !data.reason_code;
+        // The newest admitted window (↓ too) owns the failure note.
         historyControls.endRecent(data.reason_code ? new Error('Some saved history could not be loaded.') : null);
         recentCoverage = data.coverage ?? null;
         recentHasOrigins = messages.some(row => row.origin_projected);
@@ -3302,7 +3315,6 @@ export function createChatInstance({
     const retainedHistoryIds = () => new Set([...recentHistoryIds,
         ...[...pageHistoryIds.values()].flatMap(ids => [...ids])]);
     function isHistoryPageProtected(descriptor) {
-        if (reading.pending && reading.target?.history?.pages?.[reading.target.history.focus]?.id === descriptor.id) return true;
         const ids = pageHistoryIds.get(descriptor.id) || new Set();
         if (historyStamps(messagesDiv).some(([id, node]) => ids.has(id) && historyNodeIsProtected(node, messagesDiv))) return true;
         return [...liveCardRecords.values()].some(record =>
@@ -3375,7 +3387,10 @@ export function createChatInstance({
             const admitted = descriptor.direction === 'latest' && acceptRecentWindow(descriptor, messages);
             const archived = descriptor.direction !== 'recent' && descriptor.direction !== 'latest';
             applyHistoryMessages(messages, { archived });
-            if (admitted) withStableViewport(() => releaseHistoryIds(oldRecentIds));
+            // The present re-anchors the chain: rows no page or window owns any more
+            // (windows kept while the reader was in older history) go with it.
+            if (admitted) withStableViewport(() => releaseHistoryIds(new Set([...oldRecentIds,
+                ...historyStamps(messagesDiv).map(([id]) => id)])));
             // An older page drawn can show, or name, the newest arrival without a scroll.
             if (admitted) readReceipt.settle();
             else if (archived) readReceipt.page(descriptor);
@@ -3405,32 +3420,30 @@ export function createChatInstance({
         }
         const snapshot = historyPager.getState();
         if (snapshot.error?.body?.reason_code === 'history_view_changed') {
-            reading.cancel(); restoredPageReady = true;
+            reading.cancel();
             return historyPager.latest();
         }
-        if (snapshot.error) {
-            const result = await historyPager.retry();
-            if (snapshot.retryDirection === 'restore' && result.status === 'applied') {
-                restoredPageReady = true;
-                reading.position();
-                const owned = onHistoryRetry?.();
-                if (historySyncPromise) await owned;
-                else await syncHistory({ includeUser: true });
-            }
-            return result;
-        }
-        return loadHistoryAtEdge(snapshot.canNewer ? 'newer' : 'older');
+        if (snapshot.error) return historyPager.retry();
+        return loadHistoryAtEdge('older');
     }
+    // `Load more history` only ever reads older messages; the present is the one ↓
+    // (owner decisions 2026-09-14, 2026-10-05). A page counts the room's own rows,
+    // so only the server's per-request read ceiling can land one empty: keep
+    // reading until rows land or the room's history ends. When the newest read has
+    // moved past the pager's chain (the room grew while open), the chain is first
+    // re-anchored at that read, so the same press goes on into the missing rows;
+    // a reader in older history with older rows left goes on above them instead.
     async function loadHistoryAtEdge(direction) {
-        let result;
-        // Two bounded physical reads per gesture cross sparse pages without
-        // turning a short island or reflow into an automatic archive chase.
-        for (let reads = 0; reads < 2; reads++) {
-            if (direction === 'older' && historyWindow?.horizonGap && !historyPager.getState().canNewer) {
-                result = await historyPager.latest(); // rebase bytes, preserve the reading destination
-            } else result = await historyPager[direction]();
-            if (destroyed || result.status !== 'applied' || result.messageCount !== 0) break;
+        const { canNewer, canOlder } = historyPager.getState();
+        if (direction === 'older' && historyWindow?.horizonGap && !canNewer && !(canOlder && readingHistory())) {
+            const rebased = await historyPager.latest();
+            if (destroyed || rebased.status !== 'applied') return rebased;
         }
+        let result;
+        do {
+            result = await historyPager[direction]();
+        } while (!destroyed && result.status === 'applied' && result.messageCount === 0
+            && historyPager.getState()[direction === 'older' ? 'canOlder' : 'canNewer']);
         return result;
     }
     loadOlderBtn.addEventListener('click', loadOlderHistory);
@@ -3575,7 +3588,8 @@ export function createChatInstance({
             const record = liveCardRecords.get(k);
             activeDirectActivities.set(k, v);
             restoreCardActivity(liveCardRecords.get(k), v.project_admission_hold);
-            syncParkedPhase(record, v.phase);
+            syncParkedPhase(record, v.phase, v);
+            syncCancelRunButton(record);
             markReviewAnchor(record);
             noteDirectTurn(record, v.kind !== 'managed_task');
             if (v.kind === 'managed_task') missingManagedTaskIds.delete(k);
@@ -3596,6 +3610,7 @@ export function createChatInstance({
             })),
             globallyActiveActivityIds,
         )) {
+            syncCancelRunButton(liveCardRecords.get(taskId));
             const observedAt = liveCardRecords.get(taskId)?.lastLiveObservedAt || 0;
             if (observedAt < snapshotBarrierMs) {
                 // Census absence revokes a live card's Stop; history cards await detail.
@@ -3865,9 +3880,9 @@ export function createChatInstance({
         page,
         chatId,
         projectId,
-        // Called by app.js when this instance's panel is (re)shown so a project
-        // thread restores its scroll position instead of jumping to the top (P7).
-        restoreScrollPosition: reading.request,
+        // Called by app.js when a kept panel is shown again: a room reopens at its
+        // newest message (owner decision 2026-10-05).
+        showLatest,
         refreshHistory: readReceipt.refresh,
         revealQuestion: (taskId, quizId) => chatDecision.revealQuestion(
             taskId, quizId, projectId, chatId, appendQuizMessage, isInstanceVisible,
@@ -3882,21 +3897,6 @@ export function createChatInstance({
         // Unsendable client-side state (staged File objects / an in-flight
         // upload). app.js must hide, not destroy, an instance holding it.
         hasPendingWork: () => pendingAttachments.length > 0 || attachmentsUploading,
-        // Viewport intent stash source for the single-live-panel policy.
-        getScrollState: () => {
-            if (reading.pending) return reading.export();
-            const anchor = serializeTimelineAnchor();
-            const tasks = new Set(anchor?.cardChain?.map(entry => entry.taskId) || []);
-            const sources = [anchor?.historyId, ...[...tasks].flatMap(id => [...(liveCardRecords.get(id)?.historyIds || [])])];
-            const pageId = sources.map(id => [...pageHistoryIds].find(([, ids]) => ids.has(id))?.[0]).find(Boolean);
-            return { scrollTop: reading.top, stick: reading.stick,
-                history: historyPager.exportResume(pageId), historyAnchor: anchor,
-                disclosures: {
-                    cards: [...tasks].map(id => [id, liveCardRecords.get(id)?.root.dataset.expanded === '1']),
-                    reviews: [...reviewDisclosureByTask].filter(([id]) => tasks.has(id)).map(([id, value]) =>
-                        [id, { ...value, expandedGroups: [...value.expandedGroups], expandedAttempts: [...value.expandedAttempts] }]),
-                } };
-        },
         // Full teardown (P3): release every resource this instance acquired —
         // ws subscriptions, window/document listeners, the ResizeObserver, all
         // timers — then drop the buffered collections and remove the DOM last.

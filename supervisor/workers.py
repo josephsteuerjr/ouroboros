@@ -1209,16 +1209,27 @@ def kill_workers(
                 log.error("Worker shutdown blocked: disable fence was not durable")
                 return False
         cleared_running = len(RUNNING)
-        for w in WORKERS.values():
-            if w.proc.pid:
-                kill_worker_tree(w.proc.pid)
-            elif w.proc.is_alive():
-                w.proc.terminate()
-        for w in WORKERS.values():
-            w.proc.join(timeout=3)
-        _kill_survivors()
+        doomed = list(WORKERS.values())
+        for w in doomed:
+            # The timeout reaper's ownership mark: assignment, the health check
+            # and the crash detector skip the slot while it is torn down below.
+            w.reaping = True
+    # Kill and join OUTSIDE the queue lock: the lifecycle serializer still
+    # excludes pool starts and kills, and ingress/stop doors are not held.
+    for w in doomed:
+        if w.proc.pid:
+            kill_worker_tree(w.proc.pid)
+        elif w.proc.is_alive():
+            w.proc.terminate()
+    for w in doomed:
+        w.proc.join(timeout=3)
+    _kill_survivors()
+    from supervisor.worker_process import close_worker_stop_channel
+    for w in doomed:
+        close_worker_stop_channel(w.proc)
+    with _queue_lock:
         dead_pids: set[int] = set()
-        for w in WORKERS.values():
+        for w in doomed:
             try:
                 if w.proc.pid and not w.proc.is_alive():
                     dead_pids.add(int(w.proc.pid))
@@ -1226,9 +1237,6 @@ def kill_workers(
                     retire_confirmed_worker_consumers(w, RUNNING.get(w.busy_task_id))
             except Exception:
                 log.debug("Cannot confirm worker %s dead", w.wid, exc_info=True)
-        from supervisor.worker_process import close_worker_stop_channel
-        for w in WORKERS.values():
-            close_worker_stop_channel(w.proc)
         WORKERS.clear()
         orphaned_ids = []
         drained_ids = []

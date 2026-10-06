@@ -569,3 +569,54 @@ def test_skills_tabs_and_bottom_edge_menu(skills_browser, browser_name, width):
         assert all(method == "GET" for method, _ in state["requests"])
     finally:
         _close_pending_browser(browser, state)
+
+
+@pytest.mark.parametrize("browser_name", ["chromium", "webkit"])
+def test_skills_review_reads_the_list_once_and_findings_render_on_open(skills_browser, browser_name):
+    """Review paints its spinner from the list in memory and reads the list once after
+    the request; a card's findings block is collapsed, summary only, until it is opened."""
+    browser = getattr(skills_browser, browser_name).launch(headless=True)
+    try:
+        page = browser.new_page(viewport={"width": 1280, "height": 900})
+        state, installed = _open_skills(page)
+        findings = [
+            {"item": "exec", "verdict": "warn", "reason": "Spawns a shell"},
+            {"item": "net", "verdict": "info", "reason": "Opens sockets"},
+        ]
+        state["extensions"] = [{**installed, "review_status": "warnings", "content_hash": "a" * 64,
+                                "review_gate": {"executable_review": False}, "review_findings": findings}]
+        page.goto("http://skills.test/", wait_until="networkidle")
+        card = page.locator('.skills-card[data-skill="weather"]')
+        block = card.locator('.skills-review-findings')
+        assert block.locator('summary').inner_text() == "2 review findings"
+        assert block.locator('li').count() == 0
+        assert "Spawns a shell" not in page.locator('#skills-list').inner_html()
+        _capture(page, browser_name, 1280, "findings-collapsed")
+        block.locator('summary').click()
+        block.locator('li').first.wait_for()
+        assert block.locator('li').all_inner_texts() == ["warn exec: Spawns a shell", "info net: Opens sockets"]
+        _capture(page, browser_name, 1280, "findings-opened")
+        block.locator('summary').click()
+        block.locator('summary').click()
+        assert block.locator('li').count() == 2, "closing and reopening keeps the one built list"
+
+        # Review: the spinner needs no list read; the one read follows the request.
+        state["hold_paths"] = {"/api/skills/weather/review"}
+        before = state["requests"].count(("GET", "/api/extensions"))
+        card.locator('button[data-skill-action="review"]').click()
+        dialog = page.locator(".confirm-dialog")
+        dialog.wait_for(state="visible")
+        dialog.locator("[data-confirm-ok]").click()
+        card.locator('.skills-review-progress').wait_for()
+        assert card.get_attribute("data-reviewing") == "1"
+        assert card.locator('.skills-primary-action').count() == 0
+        assert len(state["pending"]) == 1, "the review request is in flight"
+        assert state["requests"].count(("GET", "/api/extensions")) == before, "no list read to paint the spinner"
+        assert block.locator('li').count() == 2, "the local repaint keeps the opened findings"
+        _capture(page, browser_name, 1280, "review-spinner-local")
+        _release_read(state, "/api/skills/weather/review", {"status": "clean", "findings": []})
+        page.wait_for_function("!document.querySelector('.skills-card[data-skill=weather] .skills-review-progress')")
+        assert state["requests"].count(("GET", "/api/extensions")) == before + 1, "one list read after the action"
+        assert state["requests"].count(("POST", "/api/skills/weather/review")) == 1
+    finally:
+        _close_pending_browser(browser, state)

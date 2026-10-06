@@ -159,7 +159,7 @@ class TestAdvisoryReviewStatusInContext:
             task={"id": "task-new", "type": "task", "text": "continue"},
             review_context_builder=lambda: build_review_context(env),
         )
-        dynamic_text = messages[0]["content"][2]["text"]
+        dynamic_text = messages[0]["content"][-1]["text"]
 
         assert "## Review Continuity" in dynamic_text
         assert "repo_commit_ready=no" in dynamic_text

@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import pytest
 
 from ouroboros import task_pacing as pacing, usage_accounting as accounting
+from tests._usage_store_testing import ledger_rows
 
 
 @pytest.fixture
@@ -30,7 +31,7 @@ def request(root, **kwargs):
 
 
 def rows(root):
-    return [json.loads(line) for line in (root / accounting.LEDGER_REL).read_text().splitlines()]
+    return ledger_rows(root)
 
 
 def test_fallback_limit_is_the_value_applied_and_survives_settlement(root, monkeypatch):
@@ -38,7 +39,7 @@ def test_fallback_limit_is_the_value_applied_and_survives_settlement(root, monke
     monkeypatch.setenv("TOTAL_BUDGET", "500")
     accounting.mark_dispatched(reservation)
     accounting.settle_attempt(reservation, {}, cost_usd=0.2, cost_final=True)
-    assert len(rows(root)) == 3
+    assert [(row["state"], row["revision"]) for row in rows(root)] == [("settled", 3)]
     for row in rows(root):
         assert row["global_limit_usd"] == 100
         assert row["global_limit_source"] == "settings_budget_resolver"
@@ -202,7 +203,7 @@ def test_soft_ceilings_reserve_nothing_and_concurrent_sends_still_share_one_pool
     monkeypatch.setenv("TOTAL_BUDGET", "10")
     ceilings = [pacing.resolve_cost_ceiling(10, {}) for _ in range(2)]
     assert [ceiling.ceiling_usd for ceiling in ceilings] == [5, 5]
-    assert not (root / accounting.LEDGER_REL).exists()
+    assert not ledger_rows(root)
     assert all(pacing.cost_ceiling_disclosure(c)["allocation"] == "unreserved_shared_pool" for c in ceilings)
     barrier = threading.Barrier(2)
 
@@ -332,7 +333,7 @@ def test_review_scope_preserves_limit_provenance(tmp_path, monkeypatch):
         scoped = kwargs['review_usage_scope']
         with ua.usage_scope(scoped):
             reservation = ua.reserve_attempt(ua.AttemptRequest(model='fixture', provider='openai', reservation_usd=1))
-        row = json.loads((tmp_path / ua.LEDGER_REL).read_text().splitlines()[-1])
+        row = ledger_rows(tmp_path)[-1]
         observed.update(row)
         ua.release_attempt(reservation)
         raise Captured

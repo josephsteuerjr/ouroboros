@@ -18,6 +18,7 @@ from ouroboros.send_clock import CLOCK_NOTE_PREFIX
 from tests.test_context_fit_integration import _plan
 from tests.test_llm_claudexor import MODEL, ROUTE, result, ledger, setup as gateway_fixture
 from tests.test_model_wait import live_wait as wait_fixture
+from tests._usage_store_testing import dispatched_attempts
 
 setup = gateway_fixture
 live_wait = wait_fixture
@@ -86,9 +87,9 @@ def test_native_account_repair_rebinds_real_physical_candidate_before_send(main_
     else:
         answer, _cost, _mode = _dispatch(ctx)
         assert answer["content"] == result()["message"]["content"]
-    rows = ledger(ctx.drive_root)
-    assert [row["state"] for row in rows] == ["reserved", "dispatched", "released", "reserved", "dispatched", "settled"]
-    dispatched = [row for row in rows if row["state"] == "dispatched"]
+    rows = ledger(ctx.drive_root)  # one current row per attempt: the released send, then the answered one
+    assert [(row["state"], row["revision"]) for row in rows] == [("released", 3), ("settled", 3)]
+    dispatched = dispatched_attempts(ctx.drive_root)
     assert dispatched[0]["physical_context"]["route_fp"] == "capacity-account-a"
     assert dispatched[1]["physical_context"]["route_fp"] == "capacity-account-b"
     assert dispatched[1]["physical_context"]["capacity_total_tokens"] == 240_000
@@ -227,6 +228,26 @@ def test_reprepare_selected_vision_route_preserves_source_and_accounts_caption(m
     assert "image caption" in str(prepared.kwargs["messages"][-1]["content"] if inline_first else sent[-1]["content"])
     assert ctx.messages[-1]["content"] == [image] and captions == [True]
     assert ctx.accumulated_usage["cost"] == 0.01
+
+
+@pytest.mark.parametrize("destination,ceiling", [
+    ("openai::gpt-5.6-terra", 128), ("openai/gpt-5.6-luna", None), (MODEL, None),
+])
+def test_a_wait_card_switch_sends_the_list_fitted_to_the_chosen_routes_ceiling(main_call, destination, ceiling):
+    from tests.test_route_tool_schema_limit import PINNED, _catalog, _names
+
+    ctx = main_call[0]
+    ctx.tool_schemas[:] = _catalog(129)  # extras first, then core and meta
+    catalog = _names(ctx.tool_schemas)
+    physical = loop._physical_context_for_fit(loop._measure_round_main_fit(ctx, automatic_pass_used=False))
+    with ua.bind_physical_attempt_context(physical):
+        prepared = _reprepare_waiting_main(ctx, {"messages": deepcopy(ctx.messages), "model": destination,
+                                                "model_role": "main", "tools": deepcopy(ctx.tool_schemas)})
+    sent, notice = _names(prepared.kwargs["tools"]), "at most 128 tool schemas" in str(prepared.kwargs["messages"])
+    # The switched send, its measurement and discovery carry one list: fitted on a ceiling, untouched without one.
+    assert sent == _names(ctx.tool_schemas) and notice is (ceiling is not None)
+    last_extra = catalog[-len(PINNED) - 1]
+    assert sent == ([name for name in catalog if name != last_extra] if ceiling else catalog)
 
 
 def test_processing_repair_does_not_authorize_native_source_reset(main_call, monkeypatch):

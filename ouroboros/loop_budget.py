@@ -131,11 +131,17 @@ def _check_budget_limits(
             # service finalization) before anything destructive happens.
             probe_messages = [dict(message) for message in ctx.messages]
             _loop()._append_or_merge_user_message(probe_messages, forced_prompt)
-            probe = task_pacing.prospective_wrapup_attempt_request(
-                llm=ctx.llm, messages=probe_messages, model=ctx.active_model,
-                reasoning_effort=ctx.active_effort, tools=ctx.tool_schemas,
-                allow_server_web_search=server_web, prompt_tokens=prompt_estimate,
-            )
+            from ouroboros.loop_forced_finalization import _forced_physical_context
+            from ouroboros.usage_accounting import bind_physical_attempt_context
+
+            # Priced under the probe's own Main measurement: a rendered Nano reserves the reply
+            # the window leaves, not the whole ceiling (which over-reserved a wrap-up that fits).
+            with bind_physical_attempt_context(_forced_physical_context(ctx, probe_messages)):
+                probe = task_pacing.prospective_wrapup_attempt_request(
+                    llm=ctx.llm, messages=probe_messages, model=ctx.active_model,
+                    reasoning_effort=ctx.active_effort, tools=ctx.tool_schemas,
+                    allow_server_web_search=server_web, prompt_tokens=prompt_estimate,
+                )
             wrapup_args = dict(request=probe, **balances)
             wrapup_fits = task_pacing.wrapup_reservation_fits(**wrapup_args)
             two_fit = _second_reservation_fits(ctx, wrapup_args, wrapup_fits, relaxed=last_fit_relaxed)

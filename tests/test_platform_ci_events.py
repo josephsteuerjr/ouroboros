@@ -76,8 +76,8 @@ def test_desktop_pr_matrix_keeps_merge_checkout_and_pr_base_evidence_secret_free
     assert _value(base, event="push", ref="refs/heads/ouroboros-stable") == "previous-tip"
 
 
-# "17 3 * * *" is a cron string this workflow does not carry: an event bearing
-# a stale cron still admits no ordinary job.
+# This workflow carries no schedule (owner, 2026-10-05): an event bearing any
+# cron, current or stale, admits no ordinary job.
 @pytest.mark.parametrize("cron", ["37 4 * * *", pytest.param("17 3 * * *", id="foreign-cron")])
 def test_scheduled_main_runs_do_not_enter_the_ordinary_matrix(cron):
     for name in ("quick-test", "full-test"):

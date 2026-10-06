@@ -10,6 +10,7 @@ from tests.test_acceptance_delivery import (
     _CLEAN_VERDICT, _EpisodeLLM, _ROW_API, _ROW_NATIVE, _ROW_SESSION,
     _fake_session, _offline_env, _priced_offline_model, _real_panel, _roots, _tool_call,
 )
+from tests._usage_store_testing import ledger_rows
 
 
 def _call(ctx, **kw):
@@ -54,9 +55,8 @@ def test_child_one_native_reviewer_can_reason_again_but_inherits_money_and_deadl
     assert seen[0].deadline_at == ctx.task_metadata["deadline_at"]
     if sends == 2:
         assert any(m.get("role") == "tool" and "hello" in str(m) for m in llm.calls[-1]["messages"])
-    ledger = (tmp_path / "state/usage_attempts.jsonl").read_text() if sends else ""
     if sends:
-        rows = [json.loads(line) for line in ledger.splitlines()]
+        rows = ledger_rows(tmp_path)
         assert all(r["root_task_id"] == "root" and r["task_id"] == "child" for r in rows)
     assert not (tmp_path / "state/child_review_cycles.json").exists()  # no extra cycle owner
 

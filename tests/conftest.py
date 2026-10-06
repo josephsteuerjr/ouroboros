@@ -632,6 +632,26 @@ def _clear_server_stop_flags_between_tests():
 
 
 @pytest.fixture(autouse=True)
+def _keep_process_logging_out_of_the_pytest_process(monkeypatch):
+    """Restart and shutdown tests run ``server.main()`` in this process and launcher tests import
+    ``launcher``; each would run the per-process logging bootstrap here, leaving root handlers
+    bound to that test's tmp dir and captured stderr, the root level at INFO and both excepthooks
+    replaced for the rest of the xdist worker. A later test then logged through the stale handlers
+    (the supervisor-watchdog stack test lost its watchdog thread that way, red only in the full
+    battery). The pytest process owns its own logging: the bootstrap is a no-op here and both hooks
+    are restored after every test; tests/test_process_logging.py runs the bootstrap in fresh
+    interpreters."""
+    import sys
+    import threading
+
+    from ouroboros import process_logging
+
+    monkeypatch.setattr(process_logging, "_configured", True)
+    monkeypatch.setattr(threading, "excepthook", threading.excepthook)
+    monkeypatch.setattr(sys, "excepthook", sys.excepthook)
+
+
+@pytest.fixture(autouse=True)
 def _restore_gateway_settings_bindings_between_tests():
     """``server._sync_gateway_settings_module()`` copies the server module's CURRENT
     ``load_settings`` / ``save_settings`` / ``_apply_settings_to_env`` /
@@ -795,7 +815,8 @@ def _isolate_workspace_executor_globals():
     (services._LOCK is non-reentrant, so calling a service helper there would deadlock).
     """
     try:
-        from ouroboros import workspace_executor as we
+        from ouroboros import owned_shutdown, workspace_executor as we
+        owned_shutdown._GENERATION_STOP = owned_shutdown._Stop()  # the one owned-work stop is per process
     except Exception:
         we = None
     try:

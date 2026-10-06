@@ -13,6 +13,7 @@ import logging
 from typing import Any, Callable, Dict, List, Optional
 
 from ouroboros._usage_rows import REVIEW_ATTRIBUTION_KEYS
+from ouroboros.observability import timed_phase
 from ouroboros.delegate_registration_policy import record_persistent as _record_persistent
 from ouroboros.subagent_history import session_request_facts
 
@@ -63,6 +64,7 @@ def pending_invocations(drive_root: Any,
     return replay_pending(drive_root, rows)
 
 
+@timed_phase("release_task_runs")
 def release_task_runs(drive_root: Any, task_id: str, *,
                       gateway_factory: Optional[Callable[[], Any]] = None) -> List[Dict[str, Any]]:
     """Run the one non-panic terminal custody boundary for a normal loop exit."""
@@ -78,6 +80,7 @@ def release_task_runs(drive_root: Any, task_id: str, *,
     return list(result.get("outcomes") or [])
 
 
+@timed_phase("custody_reconcile", within="release_task_runs")
 def reconcile_task_runs(drive_root: Any, task_id: str, *,
                         gateway_factory: Optional[Callable[[], Any]] = None,
                         deliberate_terminal: str = "") -> List[Dict[str, Any]]:
@@ -220,6 +223,7 @@ def _reconcile_each(drive_root: Any, runs: List[RunCustody],
     return outcomes
 
 
+@timed_phase("custody_pending", within="release_task_runs")
 def _recover_pending_invocation(drive_root: Any, gateway: Any,
                                 record: Dict[str, Any], *,
                                 deliberate_terminal: str = "") -> Dict[str, Any]:
@@ -405,6 +409,7 @@ def _owner_terminal_is_deliberate(drive_root: Any, task_id: str, *,
                          EXECUTION_FAILED, EXECUTION_CANCELLED}
 
 
+@timed_phase("custody_run", within="release_task_runs")
 def _reconcile_one(drive_root: Any, gateway: Any, custody: RunCustody, *,
                    deliberate_terminal: str = "") -> Dict[str, Any]:
     from ouroboros.gateways.claudexor import ClaudexorUnavailable

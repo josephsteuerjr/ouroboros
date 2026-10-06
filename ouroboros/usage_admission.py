@@ -1,4 +1,4 @@
-"""Read-side admission projections over the physical-attempt ledger.
+"""Read-side admission projections over the usage store.
 
 Two readers that decide whether money may be committed, kept beside each other
 because both must see the same axes the reservation itself checks
@@ -15,7 +15,8 @@ existed — when it has no group and its root is ``G``, so legacy history joins
 by the original root without being rewritten. The check is symmetric: the
 original root's own later work (its reviews, its post-work) is a member of the
 same group and sees every successor's spend. Nothing here is a second ledger:
-it derives the group axis from the same validated final rows. Unknown-priced admission keeps its
+the group axis is the store's ``group`` summary (``billing_group_key``), kept
+in the same transaction as every attempt row. Unknown-priced admission keeps its
 existing policy (an unknown bound is admitted while the known accounting still
 fits); the projection discloses unknown liabilities and never promises a bound
 on an eventual bill. A late charge that exceeds the cap is recorded and bars
@@ -28,22 +29,11 @@ import logging
 import math
 import pathlib
 from dataclasses import replace
-from typing import Any, Dict, Iterable, Optional, Sequence
+from typing import Any, Dict, Optional, Sequence
 
 log = logging.getLogger(__name__)
 
 GROUP_KEY_PREFIX = "group:"
-
-
-def group_member(row: Dict[str, Any], group_id: str) -> bool:
-    """Whether one ledger row counts toward billing group ``group_id``."""
-    from ouroboros._usage_money import billing_group_key
-
-    return bool(group_id) and billing_group_key(row) == group_id
-
-
-def group_rows(finals: Iterable[Dict[str, Any]], group_id: str) -> list:
-    return [row for row in finals if group_member(row, group_id)]
 
 
 def scope_group(scope: Any) -> tuple:
@@ -102,26 +92,26 @@ def effective_billing_fields(budget_root: Any, root_id: str, fields: Dict[str, A
 
 
 def ledger_billing_binding(budget_root: Any, root_task_id: str) -> Dict[str, Any]:
-    """Recover attribution from existing ledger authority, never current settings.
+    """The group binding the root's own earliest recorded row carries, never current settings.
 
-    Writer preparation may recover old missing carriage from its verified archive.
-    Otherwise unknown original authority raises ``LedgerBindingUnknown``; callers
-    refuse it rather than borrow a current allowance.
+    The store's ``bindings`` row (the import carried a compacted block's
+    binding, or an older block's own cap literal: ``legacy_live``). ``{}`` when
+    nothing recorded one: the caller then binds the root as its own group under
+    the configured cap and discloses it (``legacy_default``).
     """
     from ouroboros import usage_accounting as ua
-    from ouroboros._usage_rows import UNKNOWN_BINDING, LedgerBindingUnknown
+    from ouroboros import usage_store
 
     root = ua._drive_root(budget_root)
-    with ua._writer_locked(root) as view:
-        row = view.bindings.roots.get(root_task_id)
-    if row == UNKNOWN_BINDING:
-        raise LedgerBindingUnknown(f"original ledger binding unknown for root {root_task_id}")
-    if row is not None:
-        return {"billing_group_id": str(row.get("billing_group_id") or root_task_id),
-                "billing_group_limit_usd": row.get("billing_group_limit_usd", row.get("root_limit_usd")),
-                "billing_group_limit_source": row.get("billing_group_limit_source") or "ledger_first_row",
-                "billing_group_limit_revision": row.get("billing_group_limit_revision")}
-    return {}
+    with usage_store.read(root) as txn:
+        row = txn.binding("root", root_task_id)
+    if row is None:
+        return {}
+    limit = row.get("billing_group_limit_usd", row.get("root_limit_usd"))
+    return {"billing_group_id": str(row.get("billing_group_id") or root_task_id),
+            "billing_group_limit_usd": None if limit is None else ua._number(limit),
+            "billing_group_limit_source": row.get("billing_group_limit_source") or "ledger_first_row",
+            "billing_group_limit_revision": row.get("billing_group_limit_revision")}
 
 
 def task_billing_fields(task: Dict[str, Any], root_task_id: str, root_limit: Optional[float],
@@ -146,6 +136,8 @@ def task_billing_fields(task: Dict[str, Any], root_task_id: str, root_limit: Opt
     task_id = str(task.get("id") or task.get("task_id") or "")
     try:
         row = load_task_result(pathlib.Path(budget_root), root_task_id, strict=True) if budget_root else None
+        # A root without a result row may still have spent (its live rows name its
+        # group), so the ledger is consulted: a warm view off every other lock.
         historical = ledger_billing_binding(budget_root, root_task_id) if budget_root and not row else {}
         if not row and root_task_id != task_id and not historical:
             return unavailable
@@ -192,17 +184,17 @@ def task_billing_fields(task: Dict[str, Any], root_task_id: str, root_limit: Opt
         if not binding and row and budget_root:
             binding = ledger_billing_binding(budget_root, root_task_id)
         if not binding and pin_initial and task_id == root_task_id and budget_root:
+            # A root that already ran without recording its cap (no pinned binding, no
+            # usable ledger literal) is its own group under the configured cap, disclosed.
+            legacy = bool(row.get("started_at")) or row.get("status") in {"completed", "cancelled", "failed"}
             binding = {"billing_group_id": root_task_id, "billing_group_limit_usd": root_limit,
-                       "billing_group_limit_source": "initial_task_admission",
+                       "billing_group_limit_source": "legacy_default" if legacy else "initial_task_admission",
                        "billing_group_limit_revision": utc_now_iso()}
             def pin(current):
                 nonlocal binding
                 if current.get("billing_group"):
                     binding = current["billing_group"]
                     return None
-                if current.get("started_at") or current.get("status") in {"completed", "cancelled", "failed"}:
-                    # A legacy task with no initial binding must use its ledger, never today's setting.
-                    raise ValueError("initial billing authority unavailable")
                 return stamp_task_result_schema({"task_id": root_task_id, "status": "requested", **current,
                                                  "billing_group": binding})
             if persist_initial:
@@ -243,7 +235,7 @@ def settlement_billing_fields(root: Any, task_id: str, root_task_id: str) -> Dic
 
 
 def raise_group_refusal(view: Any, scope: Any, bound: Optional[float] = None, *, dispatch: bool = False) -> None:
-    """The group axis of ONE reservation, on the caller's locked snapshot."""
+    """The group axis of ONE reservation, inside the caller's store transaction."""
     from ouroboros import usage_accounting as ua
 
     group, limit = scope_group(scope)
@@ -267,25 +259,25 @@ def accounting_key(scope: Any) -> str:
 
 
 def original_group_limit(drive_root: Any, group_id: str) -> Dict[str, Any]:
-    """The cap group ``group_id`` started under, from its own earliest ledger row.
+    """The cap group ``group_id`` started under, from its earliest recorded binding.
 
     ``{"limit_usd": float|None, "source": str}``; ``source`` is
-    ``ledger_first_row``, ``no_attempt_recorded`` (the caller then decides,
-    and discloses, what applies to work that never spent anything) or
-    ``ledger_binding_unknown`` (original carriage is unavailable: never a cap).
+    ``ledger_first_row``, ``legacy_live`` (an older block's own cap literal) or
+    ``no_attempt_recorded`` (nothing recorded one: the caller then decides, and
+    discloses, what applies — the configured cap, ``legacy_default``).
     """
     from ouroboros import usage_accounting as ua
-    from ouroboros._usage_rows import UNKNOWN_BINDING
+    from ouroboros import usage_store
+    from ouroboros._usage_rows import LEGACY_LIVE_SOURCE
 
     root = ua._drive_root(drive_root)
-    with ua._writer_locked(root) as view:
-        row = view.bindings.groups.get(group_id)
-    if row == UNKNOWN_BINDING:
-        return {"limit_usd": None, "source": "ledger_binding_unknown"}
-    if row is not None:
-        carried = row.get("billing_group_limit_usd", row.get("root_limit_usd"))
-        return {"limit_usd": ua._number(carried), "source": "ledger_first_row"}
-    return {"limit_usd": None, "source": "no_attempt_recorded"}
+    with usage_store.read(root) as txn:
+        row = txn.binding("group", group_id)
+    if row is None:
+        return {"limit_usd": None, "source": "no_attempt_recorded"}
+    carried = row.get("billing_group_limit_usd", row.get("root_limit_usd"))
+    source = LEGACY_LIVE_SOURCE if row.get("billing_group_limit_source") == LEGACY_LIVE_SOURCE else "ledger_first_row"
+    return {"limit_usd": None if carried is None else ua._number(carried), "source": source}
 
 
 def _per_slot(value: Any, count: int) -> list:
@@ -452,34 +444,31 @@ def current_usage_projection(
     *,
     root_task_id: str = "",
     global_limit_usd: Optional[float] = None,
-    include_roots: bool = True, allow_stale: bool = False, billing_group_id: str = "",
+    include_roots: bool = False, allow_stale: bool = False, billing_group_id: str = "",
 ) -> Dict[str, Any]:
-    """Return a replayed global projection, or one root/subtree projection.
-    ``include_roots=False`` skips the per-root ``by_root`` map for hot-path readers
-    (``/api/state``); the slim result keeps the two fields ``budget_remaining`` reads.
-    ``allow_stale``: DISPLAY readers only, never money (``_memoized_final_rows``)."""
+    """The global projection, or one root's or one whole-work group's, from the
+    store's summary rows. ``include_roots`` adds the per-root map (every root
+    summary: an explicit request, never the default). ``allow_stale``: DISPLAY
+    readers only (the short wait, then unavailable), never money."""
     from ouroboros import usage_accounting as ua
+    from ouroboros import usage_store
+    from ouroboros._usage_rows import projection_view
+
     root = ua._drive_root(drive_root)
-    if billing_group_id:  # the whole-work group's rows (``usage_admission.group_member``)
-        projection = ua._render_cached(root, ("usage_projection", "", billing_group_id, None, True), lambda f, degraded:
-                              ua._projection_from_final(f, degraded, billing_group_id=billing_group_id), allow_stale=allow_stale)
-        return amended_projection(root, billing_group_id, projection, group=True)
-    if root_task_id:
-        projection = ua._render_cached(
-            root, ("usage_projection", root_task_id, "", None, True),
-            lambda f, degraded: ua._projection_from_final(f, degraded, root_task_id=root_task_id), allow_stale=allow_stale)
-        return amended_projection(root, root_task_id, projection)
+    if billing_group_id or root_task_id:
+        with usage_store.read(root, allow_stale=allow_stale) as txn:
+            projection = projection_view(txn, root_task_id=root_task_id, billing_group_id=billing_group_id,
+                                         degraded=usage_store.integrity_degraded(root))
+        return amended_projection(root, billing_group_id or root_task_id, projection, group=bool(billing_group_id))
     if global_limit_usd is not None:
         configured_limit = max(0.0, float(global_limit_usd))
     else:
         from ouroboros.settings_setup_contract import resolve_total_budget_usd
         configured_limit = resolve_total_budget_usd() or 0.0
     limit = configured_limit if (global_limit_usd is not None or configured_limit > 0) else None
-    return ua._render_cached(
-        root, ("usage_projection", "", "", limit, include_roots),
-        lambda final, degraded: ua._projection_from_final(final, degraded, limit,
-                                                       include_roots=include_roots), allow_stale=allow_stale)
-
+    with usage_store.read(root, allow_stale=allow_stale) as txn:
+        return projection_view(txn, limit=limit, include_roots=include_roots,
+                               degraded=usage_store.integrity_degraded(root))
 
 
 def amended_projection(root, identity, projection, *, group=False):
@@ -505,21 +494,18 @@ def task_money_snapshot(root, task, root_id, *, root_limit=None):
     under a shared group key, and never an amendment to a saved cost ceiling.
     """
     from ouroboros import usage_accounting as ua
+    from ouroboros import usage_store
     fields = task_billing_fields(task, root_id, root_limit, root)
     fields = effective_billing_fields(root, root_id, fields)
     group = str(fields.get("billing_group_id") or root_id)
     if group.startswith(UNAVAILABLE_GROUP_PREFIX):
         return None
-    from ouroboros._usage_rows import UNKNOWN_BINDING
-    with ua._writer_locked(ua._drive_root(root)) as view:
-        own, shared = view.summary(root_id), view.summary(billing_group_id=group)
-        initial = view.bindings.roots.get(root_id) or {}
+    with usage_store.read(ua._drive_root(root)) as txn:
+        own, shared = txn.summary(root_id), txn.summary(billing_group_id=group)
+        initial = txn.binding("root", root_id) or {}
         cap = fields.get("root_limit_usd")
-        if cap is None and not fields.get("root_limit_source"):
-            if initial == UNKNOWN_BINDING:
-                return None  # the root's original cap is unknown, never unlimited
-            cap = initial.get("root_limit_usd")
-        initial = {} if initial == UNKNOWN_BINDING else initial
+        if cap is None and not fields.get("root_limit_source") and initial.get("root_limit_usd") is not None:
+            cap = ua._number(initial["root_limit_usd"])
         axes = {"root": {"accounted_usd": own["accounted_usd"], "limit_usd": cap,
                          "source": fields.get("root_limit_source") or initial.get("root_limit_source"),
                          "revision": fields.get("root_limit_revision")},
@@ -533,4 +519,4 @@ def task_money_snapshot(root, task, root_id, *, root_limit=None):
                 "root_limit_usd": None if room is None else shared["accounted_usd"] + room,
                 "remaining_known_usd": room, "root_axis": axes["root"], "group_axis": axes["group"],
                 "accounting_basis": "billing_group", "binding_axis": binding,
-                "integrity_degraded": (ua._drive_root(root) / ua.QUARANTINE_REL).is_file(), "age_sec": 0.0}
+                "integrity_degraded": usage_store.integrity_degraded(ua._drive_root(root)), "age_sec": 0.0}

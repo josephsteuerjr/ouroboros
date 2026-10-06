@@ -19,6 +19,7 @@ from tests._delegated_transport_shared import (  # noqa: F401  (autouse fixture 
     _owned_gateway_uses_each_test_transport,
     _plain_ctx,
 )
+from tests._usage_store_testing import ledger_rows
 
 
 def test_a_subscription_session_settles_at_zero_and_keeps_the_projection_final(tmp_path):
@@ -35,7 +36,7 @@ def test_a_subscription_session_settles_at_zero_and_keeps_the_projection_final(t
     disclosed = tmp_path / "disclosed"
     record_subscription_session("s-free", drive_root=disclosed, route="r", task_id="t1",
                                 root_task_id="t1", spend_usd=0.0)
-    rows = [json.loads(l) for l in (disclosed / "state" / "usage_attempts.jsonl").read_text().splitlines()]
+    rows = ledger_rows(disclosed)
     row = next(r for r in rows if r.get("kind") == "subscription_session")
     assert row["cost_usd"] == 0.0 and row["cost_final"] is True
     assert usage_projection(disclosed)["cost_final"] is True
@@ -43,7 +44,7 @@ def test_a_subscription_session_settles_at_zero_and_keeps_the_projection_final(t
     charged = tmp_path / "charged"
     record_subscription_session("s-billed", drive_root=charged, route="r", task_id="t1",
                                 root_task_id="t1", spend_usd=4.10)
-    rows = [json.loads(l) for l in (charged / "state" / "usage_attempts.jsonl").read_text().splitlines()]
+    rows = ledger_rows(charged)
     row = next(r for r in rows if r.get("kind") == "subscription_session")
     assert row["cost_usd"] == 4.10, "a real charge must ride the ledger as money"
     assert row["cost_final"] is True
@@ -51,7 +52,7 @@ def test_a_subscription_session_settles_at_zero_and_keeps_the_projection_final(t
     unknown = tmp_path / "unknown"
     record_subscription_session("s-quiet", drive_root=unknown, route="r", task_id="t1",
                                 root_task_id="t1")
-    rows = [json.loads(l) for l in (unknown / "state" / "usage_attempts.jsonl").read_text().splitlines()]
+    rows = ledger_rows(unknown)
     row = next(r for r in rows if r.get("kind") == "subscription_session")
     assert row["cost_final"] is False, "an undisclosed spend is not a proven zero"
     assert row["pricing_known"] is False
@@ -155,8 +156,7 @@ def test_settlement_reads_the_harnesss_own_spend_field(tmp_path, monkeypatch):
     json.loads(delegate._delegate_wait(ctx, "run-1", wait_sec=1))
     delegate._CUSTODY.clear()
 
-    rows = [json.loads(line) for line
-            in (tmp_path / "state" / "usage_attempts.jsonl").read_text().splitlines()]
+    rows = ledger_rows(tmp_path)
     row = next(r for r in rows if r.get("kind") == "subscription_session")
     assert row["cost_usd"] == 4.10, "the harness's reported spend must reach the ledger"
     assert row["cost_final"] is True
@@ -269,8 +269,7 @@ def _settled_run(tmp_path, monkeypatch, summary, observed=None):
     ctx.task_metadata = {"root_task_id": "t-a"}
     payload = json.loads(delegate._delegate_wait(ctx, "run-1", wait_sec=1))
     delegate._CUSTODY.clear()
-    rows = [json.loads(line) for line
-            in (tmp_path / "state" / "usage_attempts.jsonl").read_text().splitlines()]
+    rows = ledger_rows(tmp_path)
     events = [json.loads(line) for line
               in (tmp_path / "logs" / "events.jsonl").read_text().splitlines()]
     return (payload,

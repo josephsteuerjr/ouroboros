@@ -363,6 +363,9 @@ CURRENT_PRODUCER_CONTRACTS = {
     "SAFETY_ADVICE": (False, "ok"),
     "LIGHT_MODE_REPO_CHANGED": (False, "ok"),
     "BROWSER_ACTION_OUTCOME_UNKNOWN": (True, "error"),
+    # tools/vision.py `_no_image_route`: no configured model could take the image at all,
+    # told apart from VLM_NO_VISION_MODEL (every candidate confirmed unable); same VLM family answer.
+    "VLM_NO_MODEL": (True, "vlm_error"),
     # The actual skill-metadata target refusal publishes its specific native
     # code; standalone historical-style text retains the generic blocked code.
     "SKILL_PAYLOAD_BLOCKED": (True, "blocked"),

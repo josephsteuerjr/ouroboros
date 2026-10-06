@@ -9,6 +9,7 @@ from tests.test_processing_transport import transport  # noqa: F401 - fake physi
 from tests.test_restart_retention import _done_ids, _pool_events
 from tests.test_review_operation_lifetime import env  # noqa: F401 - isolated operation fixture
 from tests.test_send_clock import ticking  # noqa: F401 - deterministic clock samples
+from tests._usage_store_testing import ledger_rows
 
 pytestmark = pytest.mark.serial
 
@@ -158,11 +159,12 @@ def test_sent_review_settles_after_pause_and_author_close_with_original_group(en
     assert collected.actors[0]["parsed"]["verdict"] == "PASS"
     assert observations == [None]
     assert ua.usage_projection(f.root, billing_group_id="original")["accounted_usd"] == pytest.approx(2.0)
-    rows = [json.loads(line) for line in (f.root / ua.LEDGER_REL).read_text().splitlines()]
+    rows = ledger_rows(f.root)
     review_rows = [r for r in rows if r.get("task_id") == TASK]
     assert {r["root_task_id"] for r in review_rows} == {TASK}
     assert {r["billing_group_id"] for r in review_rows} == {"original"}
-    assert len([r for r in review_rows if r["state"] == "reserved"]) == 1, "collection buys nothing"
+    # One attempt (one current row), settled: collection buys nothing.
+    assert [r["state"] for r in review_rows] == ["settled"], "collection buys nothing"
     with pytest.raises(ua.BudgetExceeded):
         _spend(f.root, _scope(f.root, "original", "original", group="original", group_limit=2.0), 0.1)
 

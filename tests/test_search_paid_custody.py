@@ -5,7 +5,7 @@ import pytest
 
 from ouroboros import net_transport, usage_accounting as ua, usage_ledger as ledger
 from ouroboros.tools import search
-from tests.test_usage_writer_view import request, root as root
+from tests._usage_store_testing import ledger_rows, request, root as root
 
 pytestmark = pytest.mark.serial
 
@@ -37,7 +37,9 @@ def test_empty_completed_search_keeps_paid_liability_on_fallback_error(root, mon
         assert error.value is refusal
         assert error.value.physical_attempt_capture is own_capture
         assert ua._PHYSICAL_LIMIT.get().used == 1
-    rows = ua.read_usage_records(root)
-    assert [row["state"] for row in rows] == ["reserved", "dispatched", "unresolved" if settlement_fails else "settled"]
+    # One current row per attempt; its revision counts reserve, dispatch, terminal.
+    rows = ledger_rows(root)
+    assert [(row["state"], row["revision"]) for row in rows] == [
+        ("unresolved" if settlement_fails else "settled", 3)]
     assert calls == [1]
     assert ua.usage_projection(root)["accounted_usd"] == 1

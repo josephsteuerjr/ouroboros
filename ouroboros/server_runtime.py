@@ -41,12 +41,16 @@ _DIRECT_PROVIDER_LEGACY_DEFAULTS = {
     "openai": {
         # v6.82.0: the outgoing v6.81 OpenAI slot defaults (gpt-5.5 main/heavy,
         # gpt-5.4-mini light/fallback, both spellings) migrate to the new gpt-5.6
-        # slot defaults; all four models stay LIVE (no retirement remap).
+        # slot defaults; all four models stay LIVE (no retirement remap). The first
+        # direct main/code default (4.44.0 to 4.50.0-rc.9) was only ever stored as
+        # `openai::gpt-5.4`; Code is the Heavy key now.
         "OUROBOROS_MODEL": {
             "anthropic/claude-opus-4.6", "openai/gpt-5.5", "openai::gpt-5.5",
+            "openai::gpt-" + "5.4",
         },
         "OUROBOROS_MODEL_HEAVY": {
             "anthropic/claude-opus-4.6", "openai/gpt-5.5", "openai::gpt-5.5",
+            "openai::gpt-" + "5.4",
         },
         "OUROBOROS_MODEL_LIGHT": {
             "anthropic/claude-sonnet-4.6", "openai/gpt-5.4-mini", "openai::gpt-5.4-mini",
@@ -85,27 +89,25 @@ _DIRECT_PROVIDER_LEGACY_DEFAULTS = {
 }
 _DIRECT_PROVIDER_LEGACY_DEFAULTS["openai"]["OUROBOROS_MODEL_LIGHT"].add("openai::gpt-4.1")
 _DIRECT_PROVIDER_LEGACY_DEFAULTS["openai"]["OUROBOROS_MODEL_FALLBACKS"].add("openai::gpt-4.1")
+# Main/Code/Light default from v5.31.0-rc.1 to v5.32.0-rc.1 (Code is the Heavy key now).
 _LEGACY_GEMINI_31_FLASH_LITE = "google/gemini-" + "3.1-flash-lite"
-_LEGACY_GEMINI_31_PRO_PREVIEW = "google/gemini-" + "3.1-pro-preview"
-_LEGACY_GEMINI_3_FLASH_PREVIEW = "google/gemini-" + "3-flash-preview"
-for _legacy_defaults in _DIRECT_PROVIDER_LEGACY_DEFAULTS.values():
-    for _slot in ("OUROBOROS_MODEL", "OUROBOROS_MODEL_HEAVY", "OUROBOROS_MODEL_LIGHT"):
-        _legacy_defaults[_slot].add(_LEGACY_GEMINI_31_FLASH_LITE)
 # Outgoing SHIPPED OpenRouter defaults, applied for EVERY
 # exclusive-direct provider (incl. cloudru/gigachat/minimax/deepseek, which have no per-provider
 # legacy table): before each defaults refresh a stored copy of the shipped default matched the
 # `current in {"", default}` check because SETTINGS_DEFAULTS still carried it;
 # after the defaults refresh these stored copies are still "the old DEFAULT, not
-# an explicit choice" and must keep migrating to the provider slots. All models
-# here stay LIVE (no retirement remap).
+# an explicit choice" and must keep migrating to the provider slots. Whether a
+# provider still serves an id here plays no part: it migrates because it was ours.
 _PRIOR_SHIPPED_SLOT_DEFAULTS = {
     "OUROBOROS_MODEL": {
+        _LEGACY_GEMINI_31_FLASH_LITE,
         "google/gemini-3.5-flash",
         "google/gemini-3.7-flash",
         "x-ai/grok-4.5",
     },
-    "OUROBOROS_MODEL_HEAVY": {"google/gemini-3.5-flash"},
+    "OUROBOROS_MODEL_HEAVY": {_LEGACY_GEMINI_31_FLASH_LITE, "google/gemini-3.5-flash"},
     "OUROBOROS_MODEL_LIGHT": {
+        _LEGACY_GEMINI_31_FLASH_LITE,
         "google/gemini-3.5-flash",
         "google/gemini-3.6-flash",
     },
@@ -180,18 +182,10 @@ _SCOPE_REVIEW_PRIOR_DEFAULTS = frozenset({
     "openai/gpt-5.5", "openai::gpt-5.5",
     "anthropic/claude-fable-5", "anthropic::claude-fable-5",
 })
-_RETIRED_MODEL_DEFAULT_REPLACEMENTS = {
-    "openai/gpt-" + "5.4": "openai/gpt-5.5",
-    "openai::gpt-" + "5.4": "openai::gpt-5.5",
-    "openai/gpt-" + "5.4-pro": "openai/gpt-5.5-pro",
-    "openai::gpt-" + "5.4-pro": "openai::gpt-5.5-pro",
-    # NB: gpt-5.4-mini is intentionally absent — it is a LIVE model (the 5.5 family
-    # shipped without a mini lane), so it must pass through unchanged. A prior mapping
-    # here rewrote it to a non-existent "gpt-5.5-mini" and broke every call on that slot.
-    _LEGACY_GEMINI_31_FLASH_LITE: "google/gemini-3.5-flash",
-    _LEGACY_GEMINI_31_PRO_PREVIEW: "google/gemini-3.5-flash",
-    _LEGACY_GEMINI_3_FLASH_PREVIEW: "google/gemini-3.5-flash",
-}
+# No table here declares an external model "retired": a saved model id is the owner's
+# choice and stays as written, and a model a provider really withdrew answers with that
+# provider's own error. Only equality with one of OUR former shipped defaults migrates
+# (the sets above), because only then is the value ours rather than the owner's.
 
 
 def _truthy_setting(value) -> bool:
@@ -208,52 +202,6 @@ def _serialize_model_list(models: list[str]) -> str:
 
 def _unique_changed_keys(keys: list[str]) -> list[str]:
     return list(dict.fromkeys(keys))
-
-
-def _refresh_retired_model_defaults(settings: dict) -> tuple[dict, list[str]]:
-    normalized = dict(settings)
-    changed: list[str] = []
-    keys = [
-        "OUROBOROS_MODEL",
-        "OUROBOROS_MODEL_HEAVY",
-        "OUROBOROS_MODEL_LIGHT",
-        "OUROBOROS_MODEL_FALLBACKS",
-        "OUROBOROS_SCOPE_REVIEW_MODEL",
-    ]
-    for key in keys:
-        # A local Heavy value is explicit owner routing intent.  Preserve its
-        # exact model string even when it happens to match a globally retired
-        # cloud identifier; the local runtime may intentionally serve that ID.
-        if key == "OUROBOROS_MODEL_HEAVY" and _truthy_setting(
-            normalized.get("USE_LOCAL_HEAVY")
-        ):
-            continue
-        value = _setting_text(normalized, key)
-        replacement = _RETIRED_MODEL_DEFAULT_REPLACEMENTS.get(value)
-        if replacement:
-            normalized[key] = replacement
-            changed.append(key)
-    review_value = _setting_text(normalized, "OUROBOROS_REVIEW_MODELS")
-    if review_value:
-        models = [
-            _RETIRED_MODEL_DEFAULT_REPLACEMENTS.get(item, item)
-            for item in _parse_model_list(review_value)
-        ]
-        serialized = _serialize_model_list(models)
-        if serialized != review_value:
-            normalized["OUROBOROS_REVIEW_MODELS"] = serialized
-            changed.append("OUROBOROS_REVIEW_MODELS")
-    scope_review_value = _setting_text(normalized, "OUROBOROS_SCOPE_REVIEW_MODELS")
-    if scope_review_value:
-        models = [
-            _RETIRED_MODEL_DEFAULT_REPLACEMENTS.get(item, item)
-            for item in _parse_model_list(scope_review_value)
-        ]
-        serialized = _serialize_model_list(models)
-        if serialized != scope_review_value:
-            normalized["OUROBOROS_SCOPE_REVIEW_MODELS"] = serialized
-            changed.append("OUROBOROS_SCOPE_REVIEW_MODELS")
-    return normalized, _unique_changed_keys(changed)
 
 
 def _migrate_scope_review_prior_default(settings: dict) -> tuple[dict, list[str]]:
@@ -537,19 +485,17 @@ def _clear_shipped_legacy_heavy(settings: dict) -> list[str]:
 
 def apply_runtime_provider_defaults(settings: dict) -> tuple[dict, bool, list[str]]:
     """Auto-fill safe runtime defaults for the agreed provider cases."""
-    normalized, retired_changed = _refresh_retired_model_defaults(settings)
+    normalized = dict(settings)
     legacy_heavy_changed = _clear_shipped_legacy_heavy(normalized)
     provider = _exclusive_direct_remote_provider(normalized)
 
     if not provider:
         normalized, scope_changed = _migrate_scope_review_prior_default(normalized)
         local_changed = _clear_shipped_defaults_for_local_only(normalized)
-        changed_keys = _unique_changed_keys(
-            retired_changed + legacy_heavy_changed + scope_changed + local_changed
-        )
+        changed_keys = _unique_changed_keys(legacy_heavy_changed + scope_changed + local_changed)
         return normalized, bool(changed_keys), changed_keys
 
-    changed_keys: list[str] = [*retired_changed, *legacy_heavy_changed]
+    changed_keys: list[str] = [*legacy_heavy_changed]
     provider_defaults = _DIRECT_PROVIDER_AUTO_DEFAULTS[provider]
     main_shipped_default = _setting_text(SETTINGS_DEFAULTS, "OUROBOROS_MODEL")
     for key in _ALL_MODEL_SLOT_KEYS:

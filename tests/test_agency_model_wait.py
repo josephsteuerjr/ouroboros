@@ -59,7 +59,7 @@ def test_resource_refusal_does_not_suspend_cyber_execution(live_wait, tmp_path, 
         advisory = next(row for row in events if row["type"] == "safety_advisory")
         assert advisory["assessment_allowed"] is False and code in advisory["assessment"]
     assert len(transport.accepted_operations) == 1
-    assert [row["state"] for row in ledger(root)] == ["reserved", "dispatched", "released"]
+    assert [(row["state"], row["revision"]) for row in ledger(root)] == [("released", 3)]
     assert current_model_wait() is controller and not controller.closed
     assert "wait_for_resources" not in json.dumps(transport.uploads[0][0])
 

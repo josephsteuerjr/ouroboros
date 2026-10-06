@@ -104,7 +104,8 @@ def test_model_send_design_note_matches_the_observability_contract():
     assert (REPO / "ouroboros" / "model_send_seal.py").exists()
     assert "refuse dispatch with the existing `PhysicalAttemptPreparationFailed`" \
         not in note_flat
-    assert "The call is NOT blocked" in note_flat
+    assert "It never calls `verify_sealed_candidate` or reads that record back" in note_flat
+    assert "facts; they do not gate a later model call" in note_flat
 
 
 def test_settings_docs_name_every_key_owner_and_what_startup_persists():
@@ -364,7 +365,7 @@ def test_phase3_governance_language_is_pinned_without_new_qa_surface():
     assert "AST analyzer" in development
     assert "Diff size, line count, and file count alone are not findings" in development
 
-    assert "Mutable external-fact inventory" in development
+    assert "External facts: unknown is not no" in development
     for column in (
         "Location",
         "Fact",
@@ -375,7 +376,13 @@ def test_phase3_governance_language_is_pinned_without_new_qa_surface():
         "Recommendation",
     ):
         assert f"| {column} " in development
-    assert "does not migrate their runtime representations" in development_flat
+    for rule in (
+        "Unknown is not no.",
+        "A refusal is an observation about one request.",
+        "A model name, prefix or family is never that evidence",
+        "tests/test_model_name_invariance.py",
+    ):
+        assert rule in development_flat
 
     for text in (development, system, authoring, architecture, checklists):
         flat = " ".join(text.split())
@@ -406,8 +413,9 @@ def test_continuity_projection_contract_is_mirrored_across_governance_docs():
     assert "state/skill_review_root_tasks.jsonl" in development
     assert "state/skill_review_root_tasks.jsonl" in architecture
     assert "SKILL_REVIEW_ROOT_TASKS_WARN_BYTES" in architecture
-    assert "eight hot stores" in architecture
-    assert "eight os.stat calls" in _read("ouroboros/agent_startup_checks.py")
+    assert "nine hot stores" in architecture
+    assert "memory/chronicle/records.jsonl" in architecture
+    assert "nine os.stat calls" in _read("ouroboros/agent_startup_checks.py")
     for item in (
         "source_completeness",
         "actor_readable_projection",
@@ -585,7 +593,7 @@ def test_prompt_tool_names_resolve_to_registered_tools(tmp_path):
 # Language-tagged code fences (```yaml, ```python …) are examples and are not
 # scanned; the plain ``` fence holding the §1 module tree IS scanned. The first
 # ARCHITECTURE line carries the release version by contract and is skipped, as
-# are DEVELOPMENT's "Mutable external-fact inventory" (dated provenance is the
+# are DEVELOPMENT's "External facts: unknown is not no" (dated provenance is the
 # rule there) and the "Documentation contract" section that quotes the markers.
 
 DOC_RESIDUE_PATTERNS = {
@@ -603,7 +611,7 @@ DOC_RESIDUE_PATTERNS = {
     "cyrillic": r"[А-Яа-яЁё]",
 }
 DOC_RESIDUE_SKIPPED_SUBSECTIONS = {
-    "docs/DEVELOPMENT.md": ("Mutable external-fact inventory", "Documentation contract"),
+    "docs/DEVELOPMENT.md": ("External facts: unknown is not no", "Documentation contract"),
 }
 
 
