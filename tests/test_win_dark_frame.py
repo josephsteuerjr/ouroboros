@@ -134,6 +134,11 @@ def test_none_window_is_a_noop():
     wdf.apply_dark_titlebar(None)  # must not raise
 
 
+def test_window_without_events_is_a_noop():
+    window = SimpleNamespace(native=None)  # no .events at all (foreign backend)
+    wdf.apply_dark_titlebar(window, force_dark=True)  # must not raise
+
+
 def test_non_windows_platform_is_a_noop(monkeypatch):
     monkeypatch.setattr(wdf, "_IS_WINDOWS", False)
     window = _FakeWindow()

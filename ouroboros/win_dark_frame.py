@@ -13,6 +13,9 @@ returned by ``webview.create_window`` before ``webview.start``. The attribute
 is applied from the window's ``shown`` event so the native handle exists; the
 handler resolves the HWND from ``window.native.Handle`` (set by the WinForms
 backend at form construction) and calls ``DwmSetWindowAttribute`` directly.
+A backend without ``shown`` or ``native`` (e.g. a CEF-forced GUI, which never
+fires ``shown`` in 5.4) simply never applies the attribute - silently, which
+is acceptable because the launcher always uses the WinForms backend.
 DWM attribute calls are safe from a non-GUI thread (they change composition
 metadata, not window state), and pywebview 5.4 dispatches ``shown`` handlers
 on a worker thread — the same pattern its own fullscreen toggle uses from the
