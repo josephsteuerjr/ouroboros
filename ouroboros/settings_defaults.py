@@ -414,6 +414,28 @@ RETIRED_COMMA_LIST_SETTING_KEYS: tuple[str, ...] = (
 )
 
 
+# The third classification INSIDE RETIRED_SETTING_KEYS (review pool, PR-3): the
+# former review-lane keys. Their migration is AUTOMATIC — the read seam
+# (``review_pool_migration.migrate_review_lanes``) turns what the lanes executed
+# into reviewer rows of OUROBOROS_SUBAGENTS before the purge — so the RC auditor
+# reports them as a note ("migrated on load; no action required"), never as an
+# incompatibility; membership in RETIRED_SETTING_KEYS is pinned fail-closed by the
+# auditor at runtime and by tests/test_rc_audit_fixture_suite.py.
+REVIEW_POOL_MIGRATED_SETTING_KEYS: tuple[str, ...] = (
+    "OUROBOROS_REVIEWER_SLOTS",
+    "OUROBOROS_EFFORT_REVIEW",
+    "OUROBOROS_EFFORT_SCOPE_REVIEW",
+    "OUROBOROS_EFFORT_DEEP_SELF_REVIEW",
+    "OUROBOROS_MODEL_DEEP_SELF_REVIEW",
+)
+# The one sentence every surface uses for that class (the RC auditor's check text
+# and the settings read seam share it, so the two never describe the migration differently).
+REVIEW_POOL_MIGRATION_CLASS_LINE = (
+    "the review lanes are migrated on load into the review pool — reviewer rows of the "
+    "subagent catalog (OUROBOROS_SUBAGENTS, Settings → Agents); no action required"
+)
+
+
 # The second classification INSIDE RETIRED_SETTING_KEYS: retired keys whose
 # SUCCESSOR SETTING this retirement table states, so the first-boot notice can
 # name it instead of telling the owner there is none. Membership is a decision
