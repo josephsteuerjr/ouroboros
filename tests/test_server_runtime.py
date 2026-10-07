@@ -96,20 +96,14 @@ _PROVIDER_ENV_KEYS = (
 )
 
 
-def _read_time_review_models(monkeypatch, provider_env: dict) -> tuple[list, list]:
-    """ABI 7.0 (ABI-10): the retired comma keys are never INTRODUCED into
-    settings — the direct-provider review adaptation lives on the READ side
-    (`get_review_models`/`get_scope_review_models` over the derived env plane).
-    Returns (triad, scope) as that install class resolves them."""
-    from ouroboros.config import get_review_models, get_scope_review_models
+def _factory_pool_models(provider_env: dict) -> list:
+    """ABI 7.0 (ABI-10) / PR-3: the retired comma keys are never INTRODUCED into
+    settings — the direct-provider review adaptation is the factory review POOL
+    (``factory_review_rows``: catalog rows minted for that install class), not a
+    read-time substitution. Returns the pool's model ids."""
+    from ouroboros.subscription_install_presets import factory_review_rows
 
-    for key in (*_PROVIDER_ENV_KEYS, "OUROBOROS_REVIEW_MODELS",
-                "OUROBOROS_SCOPE_REVIEW_MODELS", "OUROBOROS_SCOPE_REVIEW_MODEL",
-                "OUROBOROS_MODEL", "OUROBOROS_MODEL_LIGHT"):
-        monkeypatch.delenv(key, raising=False)
-    for key, value in provider_env.items():
-        monkeypatch.setenv(key, value)
-    return list(get_review_models() or []), list(get_scope_review_models() or [])
+    return [row["route"]["target_id"] for row in factory_review_rows(provider_env)]
 
 
 def test_apply_runtime_provider_defaults_autofills_official_openai_models():
@@ -178,12 +172,9 @@ def test_apply_runtime_provider_defaults_autofills_official_openai_models():
     assert "OUROBOROS_REVIEW_MODELS" not in normalized
 
 
-def test_openai_only_review_models_resolve_at_read_time(monkeypatch):
-    triad, scope = _read_time_review_models(monkeypatch, {
-        "OPENAI_API_KEY": "sk-openai", "OUROBOROS_MODEL": "openai::gpt-5.6-terra",
-    })
-    assert triad and all(m.startswith("openai::") for m in triad)
-    assert scope and all(m.startswith("openai::") for m in scope)
+def test_openai_only_factory_pool_stays_on_openai():
+    pool = _factory_pool_models({"OPENAI_API_KEY": "sk-openai", "OUROBOROS_MODEL": "openai::gpt-5.6-terra"})
+    assert pool and all(m.startswith("openai::") for m in pool)
 
 
 def test_apply_runtime_provider_defaults_migrates_saved_openai_values():
@@ -589,13 +580,10 @@ def test_apply_runtime_provider_defaults_cloudru_only_elevates_to_direct():
     assert "OUROBOROS_SCOPE_REVIEW_MODEL" not in normalized
 
 
-def test_cloudru_only_review_models_resolve_at_read_time(monkeypatch):
-    triad, scope = _read_time_review_models(monkeypatch, {
-        "CLOUDRU_FOUNDATION_MODELS_API_KEY": "cr-key",
-        "OUROBOROS_MODEL": "cloudru::zai-org/GLM-4.6",
-    })
-    assert triad and all(m.startswith("cloudru::") for m in triad)
-    assert scope and all(m.startswith("cloudru::") for m in scope)
+def test_cloudru_only_factory_pool_stays_on_cloudru():
+    pool = _factory_pool_models({"CLOUDRU_FOUNDATION_MODELS_API_KEY": "cr-key",
+                                 "OUROBOROS_MODEL": "cloudru::zai-org/GLM-4.6"})
+    assert pool and all(m.startswith("cloudru::") for m in pool)
 
 
 def test_apply_runtime_provider_defaults_minimax_only_uses_current_models():
@@ -617,12 +605,9 @@ def test_apply_runtime_provider_defaults_minimax_only_uses_current_models():
     assert "OUROBOROS_SCOPE_REVIEW_MODEL" not in normalized
 
 
-def test_minimax_only_review_models_resolve_at_read_time(monkeypatch):
-    triad, scope = _read_time_review_models(monkeypatch, {
-        "MINIMAX_API_KEY": "minimax-key", "OUROBOROS_MODEL": "minimax::MiniMax-M3",
-    })
-    assert triad == ["minimax::MiniMax-M3", "minimax::MiniMax-M2.7", "minimax::MiniMax-M2.7"]
-    assert scope and all(m.startswith("minimax::") for m in scope)
+def test_minimax_only_factory_pool_is_the_provider_role_panel():
+    pool = _factory_pool_models({"MINIMAX_API_KEY": "minimax-key", "OUROBOROS_MODEL": "minimax::MiniMax-M3"})
+    assert pool == ["minimax::MiniMax-M3", "minimax::MiniMax-M2.7", "minimax::MiniMax-M2.7"]
 
 
 def test_apply_runtime_provider_defaults_cloudru_migrates_populated_shipped_defaults():
@@ -672,13 +657,10 @@ def test_apply_runtime_provider_defaults_gigachat_only_elevates_to_direct():
     assert "OUROBOROS_SCOPE_REVIEW_MODEL" not in normalized
 
 
-def test_gigachat_only_review_models_resolve_at_read_time(monkeypatch):
-    triad, scope = _read_time_review_models(monkeypatch, {
-        "GIGACHAT_USER": "user", "GIGACHAT_PASSWORD": "pass",
-        "OUROBOROS_MODEL": "gigachat::GigaChat-2-Max",
-    })
-    assert triad and all(m.startswith("gigachat::") for m in triad)
-    assert scope and all(m.startswith("gigachat::") for m in scope)
+def test_gigachat_only_factory_pool_stays_on_gigachat():
+    pool = _factory_pool_models({"GIGACHAT_USER": "user", "GIGACHAT_PASSWORD": "pass",
+                                 "OUROBOROS_MODEL": "gigachat::GigaChat-2-Max"})
+    assert pool and all(m.startswith("gigachat::") for m in pool)
 
 
 def test_apply_runtime_provider_defaults_gigachat_credentials_migrates_shipped_defaults():

@@ -34,7 +34,6 @@ from devtools.benchmarks.common.manifests import (
 )
 from devtools.benchmarks.common.model_slots import (
     disabled_subagents_setting,
-    single_model_reviewer_slots_setting,
 )
 from devtools.benchmarks.common.run_roots import (
     assert_file_output_outside_repo,
@@ -972,13 +971,10 @@ def _prepare_applied_settings(
     # than values accidentally inherited from the live settings file.  Keep a
     # disabled actor row for provenance, but make the execution authority
     # explicit: the runtime must refuse delegated children.
-    overrides["OUROBOROS_SUBAGENTS"] = disabled_subagents_setting(model)
-    overrides["OUROBOROS_REVIEWER_SLOTS"] = single_model_reviewer_slots_setting(
-        model,
-        review_slots=1,
-        scope_slots=1,
-        review_effort="max",
-        scope_effort="max",
+    # The one packet review seat on the measured model rides the same roster
+    # (the pool ignores the delegation switch).
+    overrides["OUROBOROS_SUBAGENTS"] = disabled_subagents_setting(
+        model, review_slots=1, review_effort="max",
     )
     # Keep automatic routing explicit and parameter-compatible. Optional
     # only/order flags remain an auditable laboratory override.

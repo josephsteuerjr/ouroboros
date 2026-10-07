@@ -576,11 +576,6 @@ DIRECT_PROVIDER_REVIEW_ROLES = {
     "zai": ("main", "main", "main"),
 }
 
-DIRECT_PROVIDER_SCOPE_DEFAULTS = {
-    provider: defaults["main"]
-    for provider, defaults in DIRECT_PROVIDER_DEFAULTS.items()
-}
-
 _ANTHROPIC_MODEL_ALIASES = {
     "claude-opus-4.6": "claude-opus-4-6",
     "claude-opus-4.7": "claude-opus-4-7",

@@ -268,11 +268,11 @@ def test_the_model_catalog_is_facts_only_and_keyed_by_handle():
     api, session = catalog["rows"]
     assert api == {
         "subagent_id": "google/gemini-3.8-flash", "route_class": "API model",
-        "requested_effort": "(not explicitly set)", "recommended_use": verbatim,
+        "requested_effort": "(not explicitly set)", "review_eligible": False, "recommended_use": verbatim,
     }
     assert list(session) == [
         "subagent_id", "route_class", "requested_effort", "requested_target",
-        "mutating_access", "credential_profile_id", "recommended_use",
+        "mutating_access", "credential_profile_id", "review_eligible", "recommended_use",
     ], "facts lead, the owner's words ride last"
     assert session["subagent_id"] == "codex=gpt-6-astra/xhigh/@koshak"
     assert session["requested_target"] == "codex=gpt-6-astra"
@@ -434,7 +434,11 @@ def test_onboarding_preview_and_completion_refuse_identical_engines(onboarding):
         json={**WIZARD_PAYLOAD, "subscriptionsConnected": True, "OUROBOROS_SUBAGENTS": near})
     assert response.status_code == 200, response.text
     saved = json.loads(onboarding.saved()["OUROBOROS_SUBAGENTS"])["items"]
-    assert [row["effort"] for row in saved] == ["low", "high"]
+    # The owner's draft rides first; the wizard's review seats are MARKED catalog
+    # rows on the same list (the pool has no inline lane to live in).
+    assert [row["effort"] for row in saved[:2]] == ["low", "high"]
+    assert saved[2:] and all(row["review_eligible"] and row["route"]["kind"] == "agent_session"
+                             for row in saved[2:])
 
 
 def test_an_actor_first_start_accepts_its_own_handle_and_stored_id_and_refuses_another_row(

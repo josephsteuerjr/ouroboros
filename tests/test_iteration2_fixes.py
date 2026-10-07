@@ -67,11 +67,13 @@ def test_apply_all_model_one_low_reviewer_by_default(monkeypatch):
     for k in ("OUROBOROS_REVIEW_MODELS", "OUROBOROS_EFFORT_REVIEW", "OUROBOROS_EFFORT_SCOPE_REVIEW"):
         monkeypatch.delenv(k, raising=False)
     apply_all_model("google/gemini-3.5-flash")
-    assert os.environ["OUROBOROS_REVIEW_MODELS"] == "google/gemini-3.5-flash"  # one reviewer, no commas
+    # The review pool is the roster: ONE packet review seat on the solve model (no comma key).
+    assert "OUROBOROS_REVIEW_MODELS" not in os.environ and "OUROBOROS_REVIEWER_SLOTS" not in os.environ
     assert os.environ["OUROBOROS_EFFORT_REVIEW"] == "low"
-    assert os.environ["OUROBOROS_EFFORT_SCOPE_REVIEW"] == "low"
     actors = json.loads(os.environ["OUROBOROS_SUBAGENTS"])
-    assert [row["route"]["target_id"] for row in actors["items"]] == ["google/gemini-3.5-flash"]
+    assert [row["route"]["target_id"] for row in actors["items"]] == ["google/gemini-3.5-flash"] * 2
+    [seat] = [row for row in actors["items"] if row.get("review_eligible")]
+    assert (seat["delivery"], seat["effort"]) == ("packet", "low")
 
 
 def test_apply_all_model_configurable_slots_and_effort(monkeypatch):
@@ -80,7 +82,8 @@ def test_apply_all_model_configurable_slots_and_effort(monkeypatch):
     for k in ("OUROBOROS_REVIEW_MODELS", "OUROBOROS_EFFORT_REVIEW", "OUROBOROS_EFFORT_SCOPE_REVIEW"):
         monkeypatch.delenv(k, raising=False)
     apply_all_model("m", review_slots=3, review_effort="medium")
-    assert os.environ["OUROBOROS_REVIEW_MODELS"] == "m,m,m"
+    seats = [row for row in json.loads(os.environ["OUROBOROS_SUBAGENTS"])["items"] if row.get("review_eligible")]
+    assert [(row["route"]["target_id"], row["effort"]) for row in seats] == [("m", "medium")] * 3
     assert os.environ["OUROBOROS_EFFORT_REVIEW"] == "medium"
 
 

@@ -19,7 +19,9 @@ live_wait = wait_fixture
 
 
 def test_pure_projection_preserves_native_delivery_and_changes_only_one_role():
-    native = ReviewSlot(slot_id="critic", model=MODEL, effort="high", subagent_id="frozen-actor", session_profile="a")
+    # F8: the delivery class is the slot's own fact; the subagent id is identity only.
+    native = ReviewSlot(slot_id="critic", model=MODEL, effort="high", subagent_id="frozen-actor", session_profile="a",
+                        native_retrieval_override=True)
     other = replace(native, slot_id="other", session_profile="other-pin")
     override = {"reviewer:critic": {"model": "local-review", "model_account_override": "", "use_local": True},
                 "main": {"model": "unrelated", "model_account_override": "main", "use_local": False}}

@@ -214,9 +214,12 @@ test('validation protects stable unique IDs, route shape, effort and ten-row lim
     assert.match(validateAvailableSubagentsSetting(setting([
         sessionRow({ route: { kind: ROUTE_KIND_AGENT_SESSION, target_id: 'codex=' } }),
     ])).join(' '), /harness=model/);
+    // The ceiling is the catalog's (MAX_CONFIGURED_SUBAGENTS, 26 since the review
+    // pool joined the catalog); the message quotes the module constant.
     const tooMany = Array.from({ length: MAX_AVAILABLE_SUBAGENTS + 1 }, (_, index) =>
         apiRow({ subagent_id: `actor_${index}` }));
-    assert.match(validateAvailableSubagentsSetting(setting(tooMany)).join(' '), /at most 10/);
+    assert.match(validateAvailableSubagentsSetting(setting(tooMany)).join(' '),
+        new RegExp(`at most ${MAX_AVAILABLE_SUBAGENTS}\\b`));
 });
 
 test('Settings loads the backend migration candidate when no new setting is materialized', () => {

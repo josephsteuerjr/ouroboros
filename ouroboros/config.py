@@ -48,6 +48,7 @@ from ouroboros.settings_defaults import (
 from ouroboros.settings_scales import (
     EFFORT_SCALE, OPTIONAL_BOUND_LEGACY, UNLIMITED,  # noqa: F401
     PROMPT_CACHE_TTL_SCALE, defaults_for_settings_document, optional_bound_value,  # noqa: F401
+    REVIEW_POOL_DEFAULT_EFFORT,  # noqa: F401
     VALID_RUNTIME_MODES,  # noqa: F401
     VALID_SAFETY_MODES,  # noqa: F401
     _RUNTIME_MODE_RANK,  # noqa: F401
@@ -83,7 +84,6 @@ from ouroboros.review_model_routes import (
     _DIRECT_PROVIDER_REVIEW_RUNS,  # noqa: F401
     _exclusive_direct_remote_provider_env,  # noqa: F401
     adaptive_quorum,  # noqa: F401
-    direct_provider_review_models_fallback,  # noqa: F401
     get_review_enforcement,  # noqa: F401
     get_review_models,  # noqa: F401
     get_review_targets,  # noqa: F401

@@ -1,4 +1,9 @@
-"""Exact structured reviewer-route and effort-authority regressions."""
+"""Exact structured reviewer LANE route and effort-authority regressions.
+
+removed by package A after package C freezes the lane readers: the triad
+effort/identity rules now run on the review pool (``tests/test_review_pool.py``);
+what stays covers the lane parser, the advisory row and the scope lane.
+"""
 
 import json
 
@@ -6,8 +11,6 @@ import pytest
 
 from ouroboros.reviewer_slot_config import (
     REVIEWER_SLOTS_ENV,
-    commit_triad_delivery,
-    load_reviewer_slot_config,
     parse_reviewer_slots,
     structured_scope_review_slots,
 )
@@ -103,23 +106,8 @@ def test_malformed_advisory_target_never_consults_the_shared_route(monkeypatch):
         advisory.advisory_gate_unavailability_reason()
 
 
-def test_compound_session_effort_precedes_surface_defaults(monkeypatch):
-    from ouroboros.tools import plan_review_runtime
-
+def test_compound_session_effort_precedes_the_scope_surface_default(monkeypatch):
     payload = _payload()
-    payload["triad"] = [
-        {
-            "slot_id": "cursor-row",
-            "route": {
-                "kind": "agent_session",
-                "target_id": "cursor=cursor-grok-4.6-xhigh-fast",
-            },
-        },
-        {
-            "slot_id": "plain-row",
-            "route": {"kind": "agent_session", "target_id": "codex=gpt-5.6-sol"},
-        },
-    ]
     payload["scope"] = [
         {
             "slot_id": "agy-row",
@@ -130,48 +118,8 @@ def test_compound_session_effort_precedes_surface_defaults(monkeypatch):
         },
     ]
     monkeypatch.setenv(REVIEWER_SLOTS_ENV, json.dumps(payload))
-    monkeypatch.setenv("OUROBOROS_EFFORT_REVIEW", "low")
     monkeypatch.setenv("OUROBOROS_EFFORT_SCOPE_REVIEW", "medium")
-
-    config = load_reviewer_slot_config()
-    assert [row.effort for row in config.triad] == ["", ""]
-    assert commit_triad_delivery()["efforts"] == ["xhigh", "low"]
     assert [slot.effort for slot in structured_scope_review_slots()] == ["max"]
-    # The owner's review-effort setting reaches the plan panel exactly like the
-    # commit triad (no plan-local constant overrides it any more).
-    assert [slot.effort for slot in plan_review_runtime.plan_review_slots()] == ["xhigh", "low"]
-    assert [slot.declared_effort for slot in plan_review_runtime.plan_review_slots()] == ["", ""]
-
-
-def test_declared_plan_effort_outranks_row_pins_but_not_compound_slugs(monkeypatch):
-    """The envelope's reviewer_effort is an ORDER for this plan: it outranks the
-    owner's per-row pin; only a compound Cursor/Agy slug keeps its encoded effort. It
-    travels as an argument of the plan builder alone, so the commit gate, scope,
-    acceptance and skill-review identities are byte-identical before and after."""
-    from ouroboros.skill_review_cycles import skill_review_contract_fingerprint
-    from ouroboros.tools import plan_review_runtime
-    from ouroboros.tools.commit_gate import commit_review_contract_fingerprint
-
-    payload = _payload()
-    payload["triad"] = [
-        {"slot_id": "cursor-row", "route": {"kind": "agent_session", "target_id": "cursor=cursor-grok-4.6-xhigh-fast"}},
-        {"slot_id": "plain-row", "route": {"kind": "agent_session", "target_id": "codex=gpt-5.6-sol"}},
-        {"slot_id": "pinned-row", "route": {"kind": "api_chat", "target_id": "openai/gpt-5.6-sol"}, "effort": "low"},
-    ]
-    monkeypatch.setenv(REVIEWER_SLOTS_ENV, json.dumps(payload))
-    monkeypatch.setenv("OUROBOROS_EFFORT_REVIEW", "medium")
-    before = (commit_triad_delivery(), [s.effort for s in structured_scope_review_slots()],
-              commit_review_contract_fingerprint(),
-              skill_review_contract_fingerprint(["m"], delivery=commit_triad_delivery()))
-    declared = plan_review_runtime.plan_review_slots(default_effort="max")
-    assert [s.effort for s in declared] == ["xhigh", "max", "max"]  # the pinned `low` row runs the order
-    assert [s.declared_effort for s in declared] == ["", "max", "max"]
-    assert [s.effort for s in plan_review_runtime.plan_review_slots()] == ["xhigh", "medium", "low"]
-    assert [s.declared_effort for s in plan_review_runtime.plan_review_slots()] == ["", "", ""]
-    after = (commit_triad_delivery(), [s.effort for s in structured_scope_review_slots()],
-             commit_review_contract_fingerprint(),
-             skill_review_contract_fingerprint(["m"], delivery=commit_triad_delivery()))
-    assert before == after and before[0]["efforts"] == ["xhigh", "medium", "low"]
 
 
 def test_last_execution_projection_keeps_a_declared_effort_apart_from_the_row(tmp_path, monkeypatch):
@@ -193,36 +141,6 @@ def test_last_execution_projection_keeps_a_declared_effort_apart_from_the_row(tm
     last = reviewer_slot_config.reviewer_slot_last_executions()
     assert last["declared"]["requested"]["effort"] == "" and last["declared"]["requested"]["declared_effort"] == "max"
     assert last["own"]["requested"]["effort"] == "low" and "declared_effort" not in last["own"]["requested"]
-
-
-def test_compound_effort_stabilizes_replay_identity_against_global_drift(monkeypatch):
-    from ouroboros.skill_review_cycles import skill_review_contract_fingerprint
-
-    payload = _payload()
-    payload["triad"][0]["route"]["target_id"] = "cursor=cursor-grok-4.6-xhigh"
-    monkeypatch.setenv(REVIEWER_SLOTS_ENV, json.dumps(payload))
-    monkeypatch.setenv("OUROBOROS_EFFORT_REVIEW", "low")
-    first = commit_triad_delivery()
-    first_fp = skill_review_contract_fingerprint(
-        first["models"], required_items=("manifest_schema",), delivery=first,
-    )
-
-    monkeypatch.setenv("OUROBOROS_EFFORT_REVIEW", "high")
-    same = commit_triad_delivery()
-    same_fp = skill_review_contract_fingerprint(
-        same["models"], required_items=("manifest_schema",), delivery=same,
-    )
-    assert first["efforts"] == same["efforts"] == ["xhigh"]
-    assert first_fp == same_fp
-
-    payload["triad"][0]["route"]["target_id"] = "cursor=cursor-grok-4.6-max"
-    monkeypatch.setenv(REVIEWER_SLOTS_ENV, json.dumps(payload))
-    changed = commit_triad_delivery()
-    changed_fp = skill_review_contract_fingerprint(
-        changed["models"], required_items=("manifest_schema",), delivery=changed,
-    )
-    assert changed["efforts"] == ["max"]
-    assert changed_fp != first_fp
 
 
 def test_compound_effort_stabilizes_commit_fingerprint_against_global_drift(

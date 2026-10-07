@@ -7,7 +7,6 @@ from typing import Awaitable, Callable
 
 from ouroboros.provider_models import (
     DIRECT_PROVIDER_DEFAULTS,
-    DIRECT_PROVIDER_SCOPE_DEFAULTS,
     compute_direct_review_models_fallback,
     migrate_model_value,
 )
@@ -287,8 +286,10 @@ def _normalize_direct_scope_review_model(settings: dict, provider: str) -> str:
     current = migrate_model_value(provider, current_raw) if current_raw else ""
     default = migrate_model_value(provider, default_raw) if default_raw else ""
     provider_prefix = _provider_prefix(provider)
+    # The scope lane's per-provider default was the provider's Main (the former
+    # ``DIRECT_PROVIDER_SCOPE_DEFAULTS``, retired with the lane).
     auto_value = migrate_model_value(
-        provider, DIRECT_PROVIDER_SCOPE_DEFAULTS.get(provider, ""),
+        provider, DIRECT_PROVIDER_DEFAULTS.get(provider, {}).get("main", ""),
     )
     legacy_defaults = {
         migrate_model_value(provider, item) for item in _SCOPE_REVIEW_LEGACY_DEFAULTS

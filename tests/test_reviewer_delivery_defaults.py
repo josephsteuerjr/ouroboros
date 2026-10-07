@@ -1,11 +1,14 @@
 """#1334 / #1116 / #1335: reviewer delivery defaults and the one-time notices.
 
-A direct api_chat triad row carries its saved ``delivery``; a row saved before
-the field keeps its packet meaning (owner 1D) and every consumer reads the one
-``retrieves`` fact rather than inferring it from an actor id. The shipped panel
-reads the work itself; an OpenAI-compatible-only install reviews on Main instead
-of unreachable OpenRouter ids; and an upgraded install hears once, factually,
-about the default panel and any finite task limit it still runs under.
+A direct api_chat LANE row carries its saved ``delivery``; a row saved before
+the field keeps its packet meaning (owner 1D — PR-3 spells that reading out as
+an explicit ``packet``) and every consumer reads the one ``retrieves`` fact
+rather than inferring it from an actor id. The pool's own delivery tests live
+in ``tests/test_review_pool.py``; the lane parts here are
+removed by package A after package C freezes the lane readers. A
+compatible-only install reviews on Main (now as the factory pool row); and an
+upgraded install hears once, factually, about the default panel and any finite
+task limit it still runs under.
 """
 
 from __future__ import annotations
@@ -49,7 +52,9 @@ def test_a_bare_row_keeps_packet_and_an_explicit_delivery_is_the_rows_own_fact()
     config = parse_reviewer_slots(_panel(_api("bare"), _api("native", delivery="native"),
                                          _api("packet", delivery="packet")))
     bare, native, packet = config.triad
-    assert (bare.delivery, bare.retrieves) == ("", False)
+    # The lane reader's reading of an absent field is the row's packet meaning,
+    # stated explicitly (F8: every consumer reads the fact, never an absence).
+    assert (bare.delivery, bare.retrieves) == ("packet", False)
     assert (native.delivery, native.native_retrieval, native.retrieves) == ("native", True, True)
     assert (packet.delivery, packet.retrieves) == ("packet", False)
     assert not native.subagent_id  # no synthetic roster actor carries it
@@ -66,20 +71,7 @@ def test_delivery_is_refused_wherever_it_means_nothing(config, where):
         parse_reviewer_slots(config)
 
 
-def test_the_delivery_slot_and_row_plan_carry_native_without_an_actor(clean_env):
-    clean_env.setenv(REVIEWER_SLOTS_ENV, _panel(_api("n", delivery="native"), _api("p")))
-    slots = rsc.triad_delivery_slots(role_hint="task acceptance")
-    assert [(s.slot_id, s.native_retrieval, s.retrieves, s.subagent_id) for s in slots] == [
-        ("n", True, True, ""), ("p", False, False, "")]
-    plan = rsc.commit_triad_delivery()
-    assert plan["retrieves"] == [True, False] and plan["legacy_skill_fingerprint"] is False
-    assert [rsc.row_plan_retrieves(plan, i) for i in range(2)] == [True, False]
-    # A plan without the vector falls back to route + actor (old callers, fixtures).
-    legacy = {k: v for k, v in plan.items() if k != "retrieves"}
-    assert [rsc.row_plan_retrieves(legacy, i) for i in range(2)] == [False, False]
-
-
-def test_settings_round_trip_keeps_bare_rows_bare_and_native_rows_native(clean_env):
+def test_settings_round_trip_keeps_bare_rows_packet_and_native_rows_native(clean_env):
     from starlette.requests import Request
 
     from ouroboros.gateway.settings import api_reviewer_slots
@@ -88,9 +80,9 @@ def test_settings_round_trip_keeps_bare_rows_bare_and_native_rows_native(clean_e
     request = Request({"type": "http", "method": "GET", "path": "/api/reviewer-slots",
                        "headers": [], "query_string": b""})
     body = json.loads(asyncio.run(api_reviewer_slots(request)).body)
-    assert "delivery" not in body["triad"][0] and body["triad"][1]["delivery"] == "native"
+    assert body["triad"][0]["delivery"] == "packet" and body["triad"][1]["delivery"] == "native"
     saved = json.dumps({key: body[key] for key in ("triad", "scope", "advisory")})
-    assert [row.delivery for row in parse_reviewer_slots(saved).triad] == ["", "native"]
+    assert [row.delivery for row in parse_reviewer_slots(saved).triad] == ["packet", "native"]
 
 
 def test_the_shipped_default_triad_reads_natively_on_the_same_models(clean_env):
@@ -98,20 +90,6 @@ def test_the_shipped_default_triad_reads_natively_on_the_same_models(clean_env):
     config = rsc.load_reviewer_slot_config()
     assert config.source == "default"
     assert [(r.target_id, r.delivery) for r in config.triad] == [("m/a", "native"), ("m/b", "native"), ("m/c", "native")]
-
-
-def test_the_skill_fingerprint_names_native_delivery_only_where_a_row_reads(clean_env):
-    from ouroboros.skill_review_cycles import skill_review_contract_fingerprint
-
-    def fingerprint(panel):
-        clean_env.setenv(REVIEWER_SLOTS_ENV, panel)
-        delivery = rsc.commit_triad_delivery()
-        return skill_review_contract_fingerprint(delivery["models"], delivery=delivery,
-                                                 required_items=("a",), review_profile="p")
-
-    bare, packet, native = (fingerprint(_panel(_api("t"))), fingerprint(_panel(_api("t", delivery="packet"))),
-                            fingerprint(_panel(_api("t", delivery="native"))))
-    assert bare == packet != native
 
 
 def test_the_triad_multi_model_row_runs_its_native_delivery(monkeypatch, tmp_path):
@@ -144,11 +122,17 @@ def test_the_triad_multi_model_row_runs_its_native_delivery(monkeypatch, tmp_pat
 
 def test_a_compatible_only_install_reviews_on_main(clean_env):
     from ouroboros.review_model_routes import get_review_models, get_scope_review_models
+    from ouroboros.settings_defaults import OPENROUTER_REVIEW_DEFAULTS
+    from ouroboros.subscription_install_presets import factory_review_rows
     from ouroboros.tools.claude_advisory_review import _advisory_default_model
 
-    clean_env.setenv("OPENAI_COMPATIBLE_BASE_URL", "https://llm.example/v1")
-    clean_env.setenv("OUROBOROS_MODEL", "openai-compatible::glm-5.3")
-    assert get_review_models() == ["openai-compatible::glm-5.3"] * 3
+    doc = {"OPENAI_COMPATIBLE_BASE_URL": "https://llm.example/v1", "OUROBOROS_MODEL": "openai-compatible::glm-5.3"}
+    for key, value in doc.items():
+        clean_env.setenv(key, value)
+    # The factory POOL is one row of the one reachable model (PR-3: the host
+    # never multiplies a seat; the env plane keeps the shipped list as-is).
+    assert [row["route"]["target_id"] for row in factory_review_rows(doc)] == ["openai-compatible::glm-5.3"]
+    assert get_review_models() == list(OPENROUTER_REVIEW_DEFAULTS["triad"])
     assert get_scope_review_models() == ["openai-compatible::glm-5.3"]
     assert _advisory_default_model() == "openai-compatible::glm-5.3"
     # The default panel shows the advisory on that route instead of a keyless OpenRouter default.
@@ -160,15 +144,15 @@ def test_a_compatible_only_install_reviews_on_main(clean_env):
 
 @pytest.mark.parametrize("other_key", ["OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_BASE_URL"])
 def test_another_remote_route_keeps_the_existing_defaults(clean_env, other_key):
-    from ouroboros.review_model_routes import get_review_models
     from ouroboros.settings_defaults import OPENROUTER_REVIEW_DEFAULTS
+    from ouroboros.subscription_install_presets import factory_review_rows
 
-    clean_env.setenv("OPENAI_COMPATIBLE_BASE_URL", "https://llm.example/v1")
-    clean_env.setenv("OUROBOROS_MODEL", "openai-compatible::glm-5.3")
-    clean_env.setenv(other_key, "x-key" if other_key != "OPENAI_BASE_URL" else "https://base.example")
-    assert get_review_models() != ["openai-compatible::glm-5.3"] * 3
+    doc = {"OPENAI_COMPATIBLE_BASE_URL": "https://llm.example/v1", "OUROBOROS_MODEL": "openai-compatible::glm-5.3",
+           other_key: "x-key" if other_key != "OPENAI_BASE_URL" else "https://base.example"}
+    models = [row["route"]["target_id"] for row in factory_review_rows(doc)]
+    assert models != ["openai-compatible::glm-5.3"]
     if other_key == "OPENROUTER_API_KEY":
-        assert get_review_models() == list(OPENROUTER_REVIEW_DEFAULTS["triad"])
+        assert models == list(OPENROUTER_REVIEW_DEFAULTS["triad"])
 
 
 def test_the_onboarding_preview_is_native_and_reachable_on_a_compatible_only_install():

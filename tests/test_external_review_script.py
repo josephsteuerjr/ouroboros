@@ -41,7 +41,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 @pytest.mark.parametrize('delivery,refused', [('native', False), ('packet', True), ('', True)])
 def test_contributor_config_roundtrip_keeps_direct_api_delivery(monkeypatch, delivery, refused):
     from scripts.run_external_review import _diff_size_refusal, _slot_plan_payload
-    from ouroboros.reviewer_slot_config import parse_reviewer_slots, triad_delivery_slots
+    from ouroboros.reviewer_slot_config import parse_reviewer_slots
 
     row = {'slot_id': 't', 'route': {'kind': 'api_chat', 'target_id': 'openai/test'}}
     if delivery:
@@ -49,9 +49,10 @@ def test_contributor_config_roundtrip_keeps_direct_api_delivery(monkeypatch, del
     monkeypatch.setenv('OUROBOROS_REVIEWER_SLOTS', json.dumps({
         'triad': [row], 'scope': [{'slot_id': 's', 'route': row['route']}]}))
     resolved = _resolved_review_config()
-    assert resolved['triad_slots'][0].get('delivery', '') == delivery
+    # The lane reader writes a bare direct triad row's legacy delivery (packet) explicitly (F8).
+    assert resolved['triad_slots'][0].get('delivery', '') == (delivery or 'packet')
     stored = parse_reviewer_slots(json.dumps(_slot_plan_payload(resolved)))
-    assert triad_delivery_slots(config=stored)[0].retrieves is (not refused)
+    assert stored.triad[0].retrieves is (not refused)
     assert _diff_size_refusal(SimpleNamespace(contributor=True), resolved, 101, 100) is refused
     assert _diff_size_refusal(SimpleNamespace(contributor=True), resolved, 100, 100) is False
     assert _diff_size_refusal(SimpleNamespace(contributor=False), resolved, 101, 100) is True
@@ -62,7 +63,7 @@ def test_contributor_mixed_panel_keeps_packet_limit():
 
     rows = [{'route': {'kind': 'api_chat'}, 'delivery': 'native'},
             {'route': {'kind': 'agent_session'}},
-            {'route': {'kind': 'api_chat'}, 'subagent_id': 'reader'}]
+            {'route': {'kind': 'api_chat'}, 'subagent_id': 'reader', 'delivery': 'native'}]  # F8: the fact, not the id
     args = SimpleNamespace(contributor=True)
     assert not _diff_size_refusal(args, {'triad_slots': rows}, 101, 100)
     assert _diff_size_refusal(args, {'triad_slots': rows + [{'route': {'kind': 'api_chat'}}]}, 101, 100)
@@ -215,6 +216,14 @@ def _contributor_fakes(module, monkeypatch, repo: Path, drive: Path) -> None:
                         lambda *, profile="production_commit_gate": json.loads(json.dumps(shared.GOLDEN_CONFIG)))
     monkeypatch.setattr(module, "_select_healthy_openrouter_key", lambda **_kwargs: None)
     monkeypatch.setenv("OUROBOROS_REVIEWER_SLOTS", "")  # the slot freeze rewrites it in-process
+    # The gate's panel is the review pool: the golden triad seats as catalog rows
+    # (the wrapper's lane freeze carries the scope seat until package D moves the
+    # operator lane onto ``review_change(surface=preflight)``).
+    from tests.review_pool_rosters import pool_roster, pool_seat
+
+    monkeypatch.setenv("OUROBOROS_SUBAGENTS", pool_roster(
+        pool_seat("t1", "openai/gpt-5.6-sol", effort="high"),
+        pool_seat("t2", "codex=gpt-5.6-sol", kind="agent_session", profile_id="pinned", effort="high")))
 
 
 def _run_golden_contributor_review(tmp_path: Path, monkeypatch) -> SimpleNamespace:

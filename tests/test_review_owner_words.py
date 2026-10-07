@@ -23,6 +23,7 @@ from ouroboros.tools.review_helpers import build_goal_section
 from ouroboros.utils import append_jsonl
 from tests.test_plan_review_engine import CLEAN, DECK_SPEC, _call, _state, _user_text
 from tests.test_plan_review_engine import harness as _plan_review_harness
+from tests.review_pool_rosters import set_review_pool
 
 harness = _plan_review_harness  # the plan-review fixture, under the name its tests take
 
@@ -126,7 +127,7 @@ def _triad_prompt(tmp_path, monkeypatch, kind: str) -> tuple[str, int, str]:
 
 @pytest.mark.parametrize("kind", ["root", "child"])
 def test_the_triad_packet_reads_the_words_in_its_dynamic_half(tmp_path, monkeypatch, kind):
-    monkeypatch.setattr("ouroboros.reviewer_slot_config.DEFAULT_TRIAD_DELIVERY", "")  # pin the packet seat
+    set_review_pool(monkeypatch)  # pin the packet seats
     prompt, stable, _task = _triad_prompt(tmp_path, monkeypatch, kind)
     conscious, conscious_stable, _task = _triad_prompt(tmp_path, monkeypatch, "conscious")
     words = _section(kind)
@@ -139,7 +140,8 @@ def test_the_triad_packet_reads_the_words_in_its_dynamic_half(tmp_path, monkeypa
 
 
 def test_the_retrieving_triad_reads_the_words_in_its_session_task(tmp_path, monkeypatch):
-    """The shipped default triad reads the work itself: its session task carries the same section."""
+    """A natively retrieving pool reads the work itself: its session task carries the same section."""
+    set_review_pool(monkeypatch, delivery="native")
     prompt, _stable, task = _triad_prompt(tmp_path, monkeypatch, "root")
     assert not prompt and _section("root") in task and task.index("GOAL_SENTINEL") < task.index(OWNER)
     _prompt, _stable, conscious = _triad_prompt(tmp_path, monkeypatch, "conscious")
@@ -241,9 +243,8 @@ def test_reviewers_get_no_memory_or_story(tmp_path, monkeypatch):
     review_root.mkdir()
     mind_root.mkdir()
     headings = ("## Identity", "## My story", "## This room", "## Working sources", "## Dialogue History")
-    for delivery in (None, ""):  # the retrieving rows' session task (the default), then the packet seat
-        if delivery is not None:
-            monkeypatch.setattr("ouroboros.reviewer_slot_config.DEFAULT_TRIAD_DELIVERY", delivery)
+    for delivery in ("native", "packet"):  # the retrieving rows' session task, then the packet seat
+        set_review_pool(monkeypatch, delivery=delivery)
         prompt, _stable, task = _triad_prompt(review_root, monkeypatch, "root")
         assert OWNER in prompt + task
         for heading in headings:

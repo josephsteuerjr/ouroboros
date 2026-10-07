@@ -137,15 +137,17 @@ def skill_review_contract_fingerprint(
                 delivery.get("session_profiles") or [], delivery.get("slot_ids") or [],
             )
         ]
-        # Actor binding is delivery identity (native retrieval vs packet);
-        # added only when present so unchanged rosters keep their exact bytes.
+        # The catalog binding is row identity/provenance; added only when
+        # present so unchanged rosters keep their exact bytes.
         actor_ids = [str(a or "") for a in (delivery.get("subagent_ids") or [])]
         if any(actor_ids):
             for row, actor in zip(rows, actor_ids):
                 row["subagent_id"] = actor
-        # A direct api row saved as native delivery (#1334): same identity rule.
+        # Delivery identity is the aligned ``retrieves`` vector ALONE (F8): an
+        # api row that reads natively is a different contract from the packet
+        # row of the same model, whatever id it carries.
         for row, flag in zip(rows, delivery.get("retrieves") or []):
-            if flag and row["route"] == "api_chat" and not row.get("subagent_id"):
+            if flag and row["route"] == "api_chat":
                 row["delivery"] = "native"
         identity = {"reviewer_rows": sorted(rows, key=lambda row: row["slot_id"])}
         if any(row["route"] == "agent_session" for row in rows):

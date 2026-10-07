@@ -75,7 +75,9 @@ def test_deep_review_row_parses_on_the_shared_vocabulary(env):
         {"route": {"kind": "api_chat", "target_id": "openai/gpt-5.6-sol-pro"}, "effort": "xhigh"})).deep_review
     assert api.slot_id == DEEP_REVIEW_SLOT_ID and api.kind == "api_chat"
     assert api.target_id == "openai/gpt-5.6-sol-pro" and api.effort == "xhigh"
-    assert api.retrieves is False and api.native_retrieval is False
+    # F8: delivery is the row's fact, never its id — a deep-review api row has no
+    # ``packet`` delivery, so it reads the subject (deep review is always a reader).
+    assert api.retrieves is True and api.native_retrieval is True and api.delivery == ""
 
     session = parse_reviewer_slots(_payload(
         {"route": {"kind": "agent_session", "target_id": "codex=gpt-5.6-sol", "profile_id": "koshak"}})).deep_review
@@ -127,7 +129,7 @@ def test_deep_review_slot_synthesizes_the_api_row_from_the_model_key(env):
         row = deep_review_slot()
         assert row.slot_id == DEEP_REVIEW_SLOT_ID and row.kind == "api_chat"
         assert row.target_id == "openai/legacy-deep-model"
-        assert row.retrieves is False and row.subagent_id == "" and row.effort == ""
+        assert row.retrieves is True and row.subagent_id == "" and row.effort == ""  # a reader (F8)
     # A saved row wins over the key.
     env.setenv(REVIEWER_SLOTS_ENV, _payload({"route": {"kind": "api_chat", "target_id": "openai/saved"}}))
     assert deep_review_slot().target_id == "openai/saved"

@@ -20,6 +20,11 @@ from ouroboros.settings_integrity import runtime_setting
 # vendor tier above `max`; above-ceiling tiers adapt per route (API wire recovery / delegated).
 EFFORT_SCALE: tuple[str, ...] = ("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra")
 
+# A review-pool row saved with an empty effort reviews at this tier (the former
+# `OUROBOROS_EFFORT_REVIEW` shipped default). The row's own effort, when set, and
+# a wave's explicit order both outrank it; a compound route keeps its own tier.
+REVIEW_POOL_DEFAULT_EFFORT = "high"
+
 
 def effort_rank(value: str) -> int:
     """Index of an effort in EFFORT_SCALE (−1 if unknown). Strength-ordering SSOT."""

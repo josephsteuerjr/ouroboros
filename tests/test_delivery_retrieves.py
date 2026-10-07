@@ -1,9 +1,11 @@
 """ONE delivery-class predicate (`review_execution.delivery_retrieves`).
 
 A reviewer row RETRIEVES the subject with its own tools when it is a hosted
-session or a configured-subagent api row (native tool rounds); every other api
-row receives the assembled packet. Before this predicate existed, four callers
-carried their own inline copy of that rule — a class that can drift.
+session or an api row whose saved delivery is NATIVE (tool rounds); a PACKET
+api row receives the assembled packet. The predicate is route × delivery —
+F8: a pool row's ``subagent_id`` is identity only and says nothing about
+delivery. Before this predicate existed, four callers carried their own
+inline copy of that rule — a class that can drift.
 """
 
 from ouroboros.review_execution import ReviewRouteKind, delivery_retrieves
@@ -13,12 +15,12 @@ from ouroboros.tools.plan_review_runtime import slot_retrieves
 
 
 def test_predicate_accepts_route_kind_or_wire_string():
-    assert delivery_retrieves(ReviewRouteKind.AGENT_SESSION, "") is True
-    assert delivery_retrieves("agent_session", "") is True
-    assert delivery_retrieves(ReviewRouteKind.API_CHAT, "api-critic") is True
-    assert delivery_retrieves("api_chat", " ") is False
-    assert delivery_retrieves(ReviewRouteKind.API_CHAT, "") is False
-    assert delivery_retrieves(None, "") is False
+    assert delivery_retrieves(ReviewRouteKind.AGENT_SESSION, False) is True
+    assert delivery_retrieves("agent_session", None) is True
+    assert delivery_retrieves(ReviewRouteKind.API_CHAT, True) is True
+    assert delivery_retrieves("api_chat", False) is False
+    assert delivery_retrieves(ReviewRouteKind.API_CHAT, None) is False
+    assert delivery_retrieves(None, False) is False
 
 
 def test_owner_deadline_reaches_the_triad_and_scope_requests(monkeypatch, tmp_path):
@@ -58,22 +60,23 @@ def test_owner_deadline_reaches_the_triad_and_scope_requests(monkeypatch, tmp_pa
 
 
 def test_slot_properties_and_plan_review_facade_share_the_predicate():
-    api = ReviewSlot(slot_id="t1", model="m", effort="low")
-    native = ReviewSlot(slot_id="t2", model="m", effort="low", subagent_id="api-critic")
-    session = ReviewSlot(slot_id="t3", model="m", effort="low", route=ReviewRouteKind.AGENT_SESSION)
+    api = ReviewSlot(slot_id="t1", model="m", effort="low", subagent_id="packet-critic", native_retrieval_override=False)
+    native = ReviewSlot(slot_id="t2", model="m", effort="low", subagent_id="api-critic", native_retrieval_override=True)
+    session = ReviewSlot(slot_id="t3", model="m", effort="low", route=ReviewRouteKind.AGENT_SESSION, subagent_id="builder")
     assert [s.retrieves for s in (api, native, session)] == [False, True, True]
     assert [slot_retrieves(s) for s in (api, native, session)] == [False, True, True]
     assert native.native_retrieval is True and session.native_retrieval is False
     # The executor-selecting property and the delivery predicate can never
-    # disagree: wire-string routes and whitespace ids normalize the same way.
-    stringy = ReviewSlot(slot_id="t4", model="m", effort="low", route="api_chat", subagent_id="api-critic")
-    blank = ReviewSlot(slot_id="t5", model="m", effort="low", subagent_id="   ")
+    # disagree: wire-string routes normalize the same way, and an id alone
+    # never makes an api slot retrieve (F8).
+    stringy = ReviewSlot(slot_id="t4", model="m", effort="low", route="api_chat", native_retrieval_override=True)
+    id_only = ReviewSlot(slot_id="t5", model="m", effort="low", subagent_id="api-critic")
     assert stringy.retrieves is True and stringy.native_retrieval is True
-    assert blank.retrieves is False and blank.native_retrieval is False
+    assert id_only.retrieves is False and id_only.native_retrieval is False
 
     rows = [
-        ConfiguredReviewerSlot(slot_id="a", kind="api_chat", target_id="m", effort="low"),
-        ConfiguredReviewerSlot(slot_id="b", kind="api_chat", target_id="m", effort="low", subagent_id="api-critic"),
+        ConfiguredReviewerSlot(slot_id="a", kind="api_chat", target_id="m", effort="low", delivery="packet"),
+        ConfiguredReviewerSlot(slot_id="b", kind="api_chat", target_id="m", effort="low", subagent_id="b", delivery="native"),
         ConfiguredReviewerSlot(slot_id="c", kind="agent_session", target_id="codex=m", effort="low"),
     ]
     assert [r.retrieves for r in rows] == [False, True, True]

@@ -75,18 +75,21 @@ class ReviewRouteKind(str, Enum):
     AGENT_SESSION = "agent_session"
 
 
-def delivery_retrieves(route: Any, subagent_id: Any) -> bool:
+def delivery_retrieves(route: Any, native_retrieval: Any) -> bool:
     """THE delivery-class predicate: does this reviewer row read the subject
-    with its own tools (a hosted session, or a configured-subagent api row's
-    native tool rounds) instead of receiving the assembled packet?
+    with its own tools (a hosted session, or an api row saved with the
+    ``native`` delivery — bounded native tool rounds) instead of receiving the
+    assembled packet?
 
     One definition for every caller — slot properties, admission, packet fit
     and the surfaces' request builders — so a delivery class can never be
     recognised by one caller and missed by another. ``route`` may be a
-    ``ReviewRouteKind`` or its wire string."""
+    ``ReviewRouteKind`` or its wire string; ``native_retrieval`` is the row's
+    own explicit delivery fact. Every pool row carries a catalog id, so the id
+    is NOT a delivery signal (F8) and this predicate no longer reads one."""
     return (
         str(getattr(route, "value", route) or "") == ReviewRouteKind.AGENT_SESSION.value
-        or bool(str(subagent_id or "").strip())
+        or bool(native_retrieval)
     )
 
 class ReviewRouteUnavailable(RuntimeError):

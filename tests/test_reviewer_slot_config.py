@@ -1,13 +1,10 @@
-"""Reviewer-slot SSOT (phase 6.1 / ABI 7.0): structured parse, default panel, projection.
+"""Reviewer-slot LANE parser (phase 6.1 / ABI 7.0): structured parse, default panel, projection.
 
-The one structured setting is the ONE configuration surface (ABI-10, owner
-5.4=A: the legacy comma-list migration read is REMOVED); without it the loader
-serves the shipped default panel over the derived env plane. The comma keys
-survive only as a runtime projection for legacy consumers (external review
-tooling, benchmark manifests) — no review surface reads them (owner R2 retired
-the task-acceptance API pin). Malformed configuration REFUSES typed on every
-surface — an unknown token must never silently pick a transport, in either
-direction.
+removed by package A after package C freezes the lane readers: PR-3 moved every
+TRIAD review surface to the review pool (``tests/test_review_pool.py``); what
+stays here tests the lane parser, its advisory/scope/deep-review rows and the
+comma-key projection, which packages B/C/E still read in this tree. The tests
+that asserted the lane FED the triad surfaces are gone with that behavior.
 """
 import json
 
@@ -18,12 +15,10 @@ from ouroboros.reviewer_slot_config import (
     SCOPE_SLOT_LIMIT,
     TRIAD_SLOT_LIMIT,
     advisory_slot_config,
-    commit_triad_delivery,
     commit_triad_rows,
     load_reviewer_slot_config,
     parse_reviewer_slots,
     project_reviewer_slots_into_env,
-    reviewer_slot_config_error,
     reviewer_slot_save_check,
 )
 
@@ -71,9 +66,6 @@ def test_structured_config_round_trips(monkeypatch):
     assert config.advisory.enabled is False
     assert config.advisory.kind == "agent_session"
     assert config.advisory.target_id == "codex"
-    delivery = commit_triad_delivery()
-    assert delivery["slot_ids"] == ["t_api", "t_sess"]
-    assert delivery["legacy_skill_fingerprint"] is False
 
 
 @pytest.mark.parametrize("mutate,fragment", [
@@ -279,18 +271,6 @@ def test_config_error_is_empty_on_absent_valid_and_legacy_only(monkeypatch):
     assert reviewer_slot_config_error() == ""
 
 
-def test_config_error_reports_row_precise_text(monkeypatch):
-    from ouroboros.reviewer_slot_config import reviewer_slot_config_error
-
-    monkeypatch.setenv(REVIEWER_SLOTS_ENV, "{broken")
-    assert "not valid JSON" in reviewer_slot_config_error()
-    monkeypatch.setenv(
-        REVIEWER_SLOTS_ENV,
-        json.dumps({"triad": [], "scope": [], "advisory": None}),
-    )
-    assert "triad needs at least one slot" in reviewer_slot_config_error()
-
-
 def test_authored_state_is_three_valued_and_invalid_means_the_loader_refuses(monkeypatch):
     """``authored_reviewer_slots_state`` is what the retired-keys notice reads: absent and
     invalid are DIFFERENT states, because on malformed text the loader raises instead of
@@ -304,7 +284,6 @@ def test_authored_state_is_three_valued_and_invalid_means_the_loader_refuses(mon
     state, err = authored_reviewer_slots_state("{broken")
     assert state == "invalid" and "not valid JSON" in err
     monkeypatch.setenv(REVIEWER_SLOTS_ENV, "{broken")
-    assert reviewer_slot_config_error() == err
     with pytest.raises(ValueError, match="not valid JSON"):
         load_reviewer_slot_config()  # no default panel serves on malformed text
 
@@ -331,12 +310,6 @@ def test_slot_id_is_never_an_array_index(monkeypatch):
 # ---------------------------------------------------------------------------
 # Caps are pinned to their real owners, not free-floating copies.
 # ---------------------------------------------------------------------------
-
-
-def test_triad_cap_is_the_commit_review_ceiling():
-    from ouroboros.tools.review import MAX_MODELS
-
-    assert TRIAD_SLOT_LIMIT == MAX_MODELS
 
 
 def test_scope_cap_is_the_parallel_review_pool_width():
@@ -378,19 +351,6 @@ def test_absent_structured_key_serves_the_default_panel(monkeypatch):
     # no longer carries the historical all-packet skill fingerprint identity.
     assert all(r.delivery == "native" and r.native_retrieval and r.retrieves for r in config.triad)
     assert not any(r.delivery for r in config.scope)
-    delivery = commit_triad_delivery()
-    assert delivery["retrieves"] == [True, True] and delivery["legacy_skill_fingerprint"] is False
-
-
-def test_default_panel_with_the_packet_default_keeps_its_historical_fingerprint(monkeypatch):
-    import ouroboros.reviewer_slot_config as rsc
-
-    monkeypatch.delenv(REVIEWER_SLOTS_ENV, raising=False)
-    _clear_legacy(monkeypatch)
-    monkeypatch.setenv("OUROBOROS_REVIEW_MODELS", "m/one,m/two")
-    monkeypatch.setattr(rsc, "DEFAULT_TRIAD_DELIVERY", "")
-    delivery = commit_triad_delivery()
-    assert delivery["retrieves"] == [False, False] and delivery["legacy_skill_fingerprint"] is True
 
 
 def test_default_panel_efforts_resolve_to_the_surface_defaults(monkeypatch):
@@ -420,9 +380,6 @@ def test_retired_phase5_route_envs_are_ignored(monkeypatch):
     assert all(row.session_target == "" and row.profile_id == "" for row in config.triad)
     assert config.advisory.kind == "api_chat"
     assert config.advisory.target_id == ""
-    delivery = commit_triad_delivery()
-    assert delivery["legacy_skill_fingerprint"] is False  # native default (#1334), no session routing
-    assert delivery["session_targets"] == ["", ""]
 
 
 def test_default_panel_round_trips_through_the_settings_endpoint(monkeypatch):
@@ -461,13 +418,9 @@ def test_projection_exposes_only_api_rows(monkeypatch):
     assert os.environ["OUROBOROS_SCOPE_REVIEW_MODELS"] == "openai/gpt-5.6-terra"
 
 
-def test_all_delegated_triad_projects_no_api_model_and_acceptance_follows_the_rows(monkeypatch):
+def test_all_delegated_triad_projects_no_api_model(monkeypatch):
     """An all-session triad has no api model id to project: the comma key keeps
-    the shipped default for its LEGACY readers only (never a stale comma value),
-    while task acceptance — like every review surface — reads the session row
-    itself (owner R2; the former API-default substitution is gone)."""
-    from ouroboros.reviewer_slot_config import triad_delivery_slots
-
+    the shipped default for its LEGACY readers only (never a stale comma value)."""
     payload = json.loads(json.dumps(_STRUCTURED))
     payload["triad"] = [payload["triad"][1]]
     _set_structured(monkeypatch, payload)
@@ -481,10 +434,6 @@ def test_all_delegated_triad_projects_no_api_model_and_acceptance_follows_the_ro
     # stale comma value. ABI-10 retired ``SETTINGS_DEFAULTS["OUROBOROS_REVIEW_MODELS"]``,
     # so the default list is read from its v7 SSOT.
     assert os.environ["OUROBOROS_REVIEW_MODELS"] == ",".join(OPENROUTER_REVIEW_DEFAULTS["triad"])
-    slots = triad_delivery_slots(role_hint="task acceptance")
-    assert [(s.slot_id, s.route.value, s.session_target, s.effort) for s in slots] == [
-        ("t_sess", "agent_session", "codex=gpt-5.6-sol", "xhigh"),
-    ]
 
 
 def test_projection_malformed_leaves_legacy_keys_and_floors(monkeypatch):
@@ -498,12 +447,6 @@ def test_projection_malformed_leaves_legacy_keys_and_floors(monkeypatch):
     assert os.environ["OUROBOROS_REVIEW_MODELS"] == "owner/comma-value"
     with pytest.raises(ValueError):
         commit_triad_rows()
-    # Task acceptance refuses on the same parse (R3) instead of reading the
-    # comma key its projection left in place.
-    from ouroboros.reviewer_slot_config import triad_delivery_slots
-
-    with pytest.raises(ValueError):
-        triad_delivery_slots(role_hint="task acceptance")
 
 
 # ---------------------------------------------------------------------------
@@ -737,18 +680,17 @@ def test_effort_field_is_the_single_source_over_an_embedded_target_effort(monkey
     assert session_route_for_review_slot(bare).effort == ""
 
 
-def test_all_delegated_triad_writes_no_fallback_record_and_reaches_acceptance(monkeypatch):
-    """Owner R2: when every triad row is delegated, task acceptance RUNS those
-    rows — there is no API-default substitution to disclose, no durable
-    fallback record, and the retired disclosure apparatus is gone from the
-    module. The save check still validates (400 on malformed) and stays quiet."""
+def test_all_delegated_triad_writes_no_fallback_record(monkeypatch):
+    """Owner R2: when every triad row is delegated there is no API-default
+    substitution to disclose, no durable fallback record, and the retired
+    disclosure apparatus is gone from the module. The save check still
+    validates (400 on malformed) and stays quiet."""
     import pathlib
 
     from ouroboros.config import DATA_DIR
     from ouroboros.reviewer_slot_config import (
         project_reviewer_slots_into_env,
         reviewer_slot_save_check,
-        triad_delivery_slots,
     )
 
     payload = {
@@ -763,16 +705,11 @@ def test_all_delegated_triad_writes_no_fallback_record_and_reaches_acceptance(mo
     assert "t1 (agent session codex" in disclosure and "≈12 s" in disclosure and "$0.07" in disclosure
     assert reviewer_slot_save_check(json.dumps(payload), previous_raw=json.dumps(payload)) == ""
     # No stored value ran the shipped default panel: its triad already reads
-    # natively (#1334), so nothing newly retrieves — unless the default is packet.
+    # natively (#1334), so nothing newly retrieves.
     assert reviewer_slot_save_check(json.dumps(payload)) == ""
-    with monkeypatch.context() as packet_default:
-        packet_default.setattr("ouroboros.reviewer_slot_config.DEFAULT_TRIAD_DELIVERY", "")
-        assert reviewer_slot_save_check(json.dumps(payload), previous_raw="") == disclosure
     _set_structured(monkeypatch, payload)
     project_reviewer_slots_into_env()
     assert not (pathlib.Path(DATA_DIR) / "state" / "reviewer_slot_api_fallback.json").exists()
-    slots = triad_delivery_slots(role_hint="task acceptance")
-    assert [(s.slot_id, s.route.value, s.session_target) for s in slots] == [("t1", "agent_session", "codex")]
     with pytest.raises(ValueError, match="triad needs at least one slot"):
         reviewer_slot_save_check(json.dumps({**payload, "triad": []}))
 
@@ -796,28 +733,6 @@ def test_the_retired_acceptance_api_pin_apparatus_is_gone():
 
     assert [(module.__name__, name) for module in (reviewer_slot_config, claudexor_daemon)
             for name in _RETIRED_API_PIN_NAMES if hasattr(module, name)] == []
-
-
-def test_mixed_triad_reaches_acceptance_in_row_order(monkeypatch):
-    """A session row beside an api row: acceptance carries BOTH, in the owner's
-    order, each with its own delivery — the mutation that proves no row is
-    filtered out of the panel any more."""
-    from ouroboros.reviewer_slot_config import triad_delivery_slots
-
-    payload = {
-        "triad": [
-            {"slot_id": "t1", "route": {"kind": "agent_session", "target_id": "codex"}},
-            {"slot_id": "t2", "route": {"kind": "api_chat", "target_id": "openai/gpt-5.6-luna"}},
-        ],
-        "scope": [{"slot_id": "s1", "route": {"kind": "api_chat", "target_id": "openai/gpt-5.6-terra"}}],
-        "advisory": {"enabled": True, "route": {"kind": "api"}},
-    }
-    _set_structured(monkeypatch, payload)
-    slots = triad_delivery_slots(role_hint="task acceptance")
-    assert [(s.slot_id, s.route.value, s.model) for s in slots] == [
-        ("t1", "agent_session", "codex"), ("t2", "api_chat", "openai/gpt-5.6-luna"),
-    ]
-    assert [s.retrieves for s in slots] == [True, False]
 
 
 def test_advisory_disabled_is_a_standing_owner_decision(monkeypatch):
@@ -893,10 +808,9 @@ def test_runner_facts_carry_the_applied_receipt_fields():
 def test_malformed_advisory_route_raises_typed_not_attributeerror(monkeypatch):
     """A non-dict advisory route must be a ValueError, not an AttributeError.
 
-    The commit gate's fail-closed branch and reviewer_slot_config_error's
-    callers all treat this parser as the TYPED authority and catch ValueError
-    only; `(raw.get("route") or {}).get(...)` let a string/list route raise
-    AttributeError straight through those handlers.
+    The lane parser's callers treat it as the TYPED authority and catch
+    ValueError only; `(raw.get("route") or {}).get(...)` let a string/list
+    route raise AttributeError straight through those handlers.
     """
     from ouroboros import reviewer_slot_config as rsc
 
@@ -908,12 +822,8 @@ def test_malformed_advisory_route_raises_typed_not_attributeerror(monkeypatch):
         raw = json.dumps({**base_rows, "advisory": {"route": bad_route}})
         with pytest.raises(ValueError, match="advisory route must be an object"):
             rsc.parse_reviewer_slots(raw)
-        monkeypatch.setenv(rsc.REVIEWER_SLOTS_ENV, raw)
-        assert "advisory route must be an object" in rsc.reviewer_slot_config_error()
 
     good = json.dumps({**base_rows, "advisory": {"route": {"kind": "agent_session", "target_id": "codex"}}})
-    monkeypatch.setenv(rsc.REVIEWER_SLOTS_ENV, good)
-    assert rsc.reviewer_slot_config_error() == ""
     assert rsc.parse_reviewer_slots(good).advisory.target_id == "codex"
 
 

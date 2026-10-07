@@ -194,8 +194,19 @@ def test_get_review_models_empty_env_falls_back_to_default(monkeypatch):
     assert models == list(OPENROUTER_REVIEW_DEFAULTS["triad"])
 
 
-def test_get_review_models_repeats_main_in_openai_only_mode(monkeypatch):
-    """The OpenAI-only profile runs its Main reviewer three independent times."""
+def _factory_pool_models(doc: dict) -> list:
+    """The review POOL a settings document gets at the factory (PR-3): the
+    exclusive-provider panel is minted into the catalog once, never multiplied
+    at read time by ``get_review_models`` (which keeps the env list as-is)."""
+    from ouroboros.subscription_install_presets import factory_review_rows
+
+    return [row["route"]["target_id"] for row in factory_review_rows(doc)]
+
+
+def test_factory_pool_repeats_main_in_openai_only_mode(monkeypatch):
+    """The OpenAI-only profile runs its Main reviewer three independent times —
+    as three catalog rows. The env list stays the owner's/shipped list, migrated
+    where it names the provider, with no read-time ``[main]×N`` substitution."""
     monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -209,13 +220,12 @@ def test_get_review_models_repeats_main_in_openai_only_mode(monkeypatch):
         "openai/gpt-5.6-terra,google/gemini-3.6-flash,anthropic/claude-opus-4.6",
     )
 
-    models = get_review_models()
-
-    assert models == [
+    assert _factory_pool_models({"OPENAI_API_KEY": "sk-openai", "OUROBOROS_MODEL": "openai::gpt-5.6-terra"}) == [
         "openai::gpt-5.6-terra",
         "openai::gpt-5.6-terra",
         "openai::gpt-5.6-terra",
     ]
+    assert get_review_models() == ["openai::gpt-5.6-terra", "google/gemini-3.6-flash", "anthropic/claude-opus-4.6"]
 
 
 def test_get_review_models_does_not_apply_openai_only_fallback_with_compatible_base_url(monkeypatch):
@@ -255,38 +265,23 @@ def test_get_review_models_preserves_explicit_official_openai_list(monkeypatch):
     assert models == ["openai::gpt-5.5", "openai::gpt-4.1"]
 
 
-def test_get_review_models_repeats_main_in_anthropic_only_mode(monkeypatch):
+def test_factory_pool_repeats_main_in_anthropic_only_mode():
     """The Anthropic-only profile repeats even an explicit provider Main."""
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant")
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
-    monkeypatch.delenv("OPENAI_COMPATIBLE_API_KEY", raising=False)
-    monkeypatch.delenv("CLOUDRU_FOUNDATION_MODELS_API_KEY", raising=False)
-    monkeypatch.delenv("OUROBOROS_MODEL_LIGHT", raising=False)
-    monkeypatch.setenv("OUROBOROS_MODEL", "anthropic::claude-opus-4-6")
-    monkeypatch.setenv(
-        "OUROBOROS_REVIEW_MODELS",
-        "openai/gpt-5.5,google/gemini-3.5-flash,anthropic/claude-opus-4.6",
-    )
-
-    models = get_review_models()
-
-    assert models == [
+    assert _factory_pool_models({"ANTHROPIC_API_KEY": "sk-ant", "OUROBOROS_MODEL": "anthropic::claude-opus-4-6"}) == [
         "anthropic::claude-opus-4-6",
         "anthropic::claude-opus-4-6",
         "anthropic::claude-opus-4-6",
     ]
 
 
-def test_get_review_models_and_scope_route_to_gigachat_in_gigachat_only_mode(monkeypatch):
-    """v6.14.0: GigaChat joins the direct-provider review fallback. A GigaChat-only
-    env (no other provider) must route the commit triad AND the scope reviewer to
-    gigachat:: models, never to an empty list or an unconfigured foreign provider —
-    the single-isolated-provider invariant (docs/DEVELOPMENT.md "Provider
-    Independence"). GIGACHAT_DIRECT_DEFAULTS uses the universally available
-    GigaChat-2-Max for every slot,
-    so the quorum-safe fallback degrades to [main, main, main]."""
+def test_factory_pool_routes_to_gigachat_in_gigachat_only_mode(monkeypatch):
+    """v6.14.0: GigaChat joins the direct-provider review panel. A GigaChat-only
+    install (no other provider) gets a gigachat:: review pool, never an empty one
+    or an unconfigured foreign provider — the single-isolated-provider invariant
+    (docs/DEVELOPMENT.md "Provider Independence"). GIGACHAT_DIRECT_DEFAULTS uses the
+    universally available GigaChat-2-Max for every slot, so the quorum-safe panel is
+    [main, main, main] — three catalog rows (PR-3). An explicit gigachat scope list
+    on the env plane passes through unchanged."""
     monkeypatch.setenv("GIGACHAT_CREDENTIALS", "giga-creds")
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -296,21 +291,14 @@ def test_get_review_models_and_scope_route_to_gigachat_in_gigachat_only_mode(mon
     monkeypatch.delenv("CLOUDRU_FOUNDATION_MODELS_API_KEY", raising=False)
     monkeypatch.delenv("OUROBOROS_MODEL_LIGHT", raising=False)
     monkeypatch.setenv("OUROBOROS_MODEL", "gigachat::GigaChat-2-Max")
-    monkeypatch.setenv(
-        "OUROBOROS_REVIEW_MODELS",
-        "openai/gpt-5.5,google/gemini-3.5-flash,anthropic/claude-opus-4.8",
-    )
-    monkeypatch.setenv("OUROBOROS_SCOPE_REVIEW_MODELS", "openai/gpt-5.5")
+    monkeypatch.setenv("OUROBOROS_SCOPE_REVIEW_MODELS", "gigachat::GigaChat-2-Max")
 
-    review_models = get_review_models()
-    scope_models = get_scope_review_models()
-
-    assert review_models == [
+    assert _factory_pool_models({"GIGACHAT_CREDENTIALS": "giga-creds", "OUROBOROS_MODEL": "gigachat::GigaChat-2-Max"}) == [
         "gigachat::GigaChat-2-Max",
         "gigachat::GigaChat-2-Max",
         "gigachat::GigaChat-2-Max",
     ]
-    assert scope_models and all(m.startswith("gigachat::") for m in scope_models)
+    assert get_scope_review_models() == ["gigachat::GigaChat-2-Max"]
 
 
 def test_from_zero_local_only_review_slots_inherit_main_and_stay_local(monkeypatch):
@@ -331,14 +319,20 @@ def test_from_zero_local_only_review_slots_inherit_main_and_stay_local(monkeypat
     )
     monkeypatch.setenv("OUROBOROS_SCOPE_REVIEW_MODELS", "openai/gpt-5.6-terra")
 
-    assert get_review_models() == ["owner/local-main"] * 3
+    # The factory pool is ONE row of the local Main (the host never multiplies
+    # a seat); every review slot built from it runs on the local lane.
+    assert _factory_pool_models({"USE_LOCAL_MAIN": "true", "LOCAL_MODEL_SOURCE": "owner/local.gguf",
+                                 "OUROBOROS_MODEL": "owner/local-main"}) == ["owner/local-main"]
     assert get_scope_review_models() == ["owner/local-main"]
     assert review_model_uses_local("owner/local-main") is True
 
-    from ouroboros.review_substrate import reviewer_slots
+    from ouroboros.reviewer_slot_config import review_pool_slots
+    from ouroboros.subscription_install_presets import factory_review_rows
 
-    slots = reviewer_slots()
-    assert [slot.model for slot in slots] == ["owner/local-main"] * 3
+    rows = factory_review_rows({"USE_LOCAL_MAIN": "true", "LOCAL_MODEL_SOURCE": "owner/local.gguf",
+                                "OUROBOROS_MODEL": "owner/local-main"})
+    slots = review_pool_slots({"OUROBOROS_SUBAGENTS": json.dumps({"enabled": True, "items": rows})})
+    assert [slot.model for slot in slots] == ["owner/local-main"]
     assert all(slot.use_local for slot in slots)
 
 

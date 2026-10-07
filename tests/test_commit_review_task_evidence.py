@@ -254,7 +254,8 @@ def test_triad_request_preserves_evidence_and_native_root(evidence_context, monk
     messages = [{"role": "user", "content": "packet"}]
     asyncio.run(_query_model(None, "model", messages, asyncio.Semaphore(1), ctx,
                             route=route, session_task="Review", session_root=str(ctx.repo_dir),
-                            task_evidence=evidence, subagent_id="native" if delivery == "native" else "", use_local=False))
+                            task_evidence=evidence, subagent_id="native" if delivery == "native" else "",
+                            native_retrieval=delivery == "native", use_local=False))  # F8: the delivery fact, not the id
     request = captured[0]
     assert request.evidence["task_execution"]["source_ref"] == evidence["source_ref"]
     assert evidence["source_ref"] in request.evidence_refs

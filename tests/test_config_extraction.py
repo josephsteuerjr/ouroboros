@@ -37,6 +37,9 @@ _ADDED_OWNERS = {
     "RESTART_REQUIRED_SETTINGS": settings_scales,
     # An explicit root starting effort is validated against the effort scale it names.
     "requested_effort": settings_scales,
+    # The review pool's effort of last resort (PR-3): a marked row with no effort of
+    # its own and no compound slug reviews at this value, never the lane-era surface setting.
+    "REVIEW_POOL_DEFAULT_EFFORT": settings_scales,
     "get_finalization_grace_sec": runtime_limits,
     "PROMOTE_CONFIRM_WAIT_SEC": runtime_limits,
     "get_promote_confirm_wait_sec": runtime_limits,
@@ -174,7 +177,6 @@ _MOVED_OWNERS = {
     "_DIRECT_PROVIDER_REVIEW_RUNS": review_model_routes,
     "_exclusive_direct_remote_provider_env": review_model_routes,
     "adaptive_quorum": review_model_routes,
-    "direct_provider_review_models_fallback": review_model_routes,
     "get_review_enforcement": review_model_routes,
     "get_review_models": review_model_routes,
     "get_scope_review_models": review_model_routes,

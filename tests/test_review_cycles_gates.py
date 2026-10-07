@@ -471,18 +471,32 @@ def test_skill_review_contract_fingerprint_preserves_legacy_and_tracks_rows(monk
 
 
 def test_commit_contract_fingerprint_tracks_resolved_review_efforts(monkeypatch):
-    """Synthesis F4 (commit side): the commit fingerprint's triad/scope rows
-    carry RESOLVED efforts (surface defaults fill empty per-row efforts), so a
-    global review or scope-review effort change lapses refusal/replay."""
+    """Synthesis F4 (commit side): the commit fingerprint's pool rows carry their
+    RESOLVED efforts, so a pool row's effort change lapses refusal/replay. PR-3:
+    the pool reads no global review effort — a row with no effort of its own
+    reviews at the pool default — so only the ROW's value moves the fingerprint.
+    (The scope-review effort leg is the lane's, removed with it by package B.)"""
+    import json
+
     from ouroboros.tools.commit_gate import commit_review_contract_fingerprint
 
+    def _catalog(effort):
+        return json.dumps({"enabled": True, "items": [{
+            "subagent_id": "critic", "recommended_use": "Reviewer.",
+            "route": {"kind": "api_model", "target_id": "openai/gpt-5.6-terra"},
+            "effort": effort, "review_eligible": True,
+        }]})
+
+    monkeypatch.setenv("OUROBOROS_SUBAGENTS", _catalog("high"))
     monkeypatch.setenv("OUROBOROS_EFFORT_REVIEW", "high")
     monkeypatch.setenv("OUROBOROS_EFFORT_SCOPE_REVIEW", "high")
     base = commit_review_contract_fingerprint()
     assert base and len(base) == 64
     monkeypatch.setenv("OUROBOROS_EFFORT_REVIEW", "low")
+    assert base == commit_review_contract_fingerprint()  # the lane-era global effort is not a pool fact
+    monkeypatch.setenv("OUROBOROS_SUBAGENTS", _catalog("low"))
     assert base != commit_review_contract_fingerprint()
-    monkeypatch.setenv("OUROBOROS_EFFORT_REVIEW", "high")
+    monkeypatch.setenv("OUROBOROS_SUBAGENTS", _catalog("high"))
     assert base == commit_review_contract_fingerprint()
     monkeypatch.setenv("OUROBOROS_EFFORT_SCOPE_REVIEW", "low")
     assert base != commit_review_contract_fingerprint()

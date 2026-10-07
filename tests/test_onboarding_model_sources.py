@@ -213,9 +213,18 @@ def test_recovery_endpoint_preserves_visible_panel_and_inherited_inspection(onbo
     })
     assert preset.ok
     roster = json.loads(preset.available_subagents)
-    panel = json.loads(preset.reviewer_slots)
+    # The preset's review seats are MARKED catalog rows (the pool); the recovery
+    # endpoint still speaks the lane body (package E moves it onto the pool), so
+    # the saved lane panel here references those rows the way the lane era did.
+    marked = [row["subagent_id"] for row in roster["items"] if row.get("review_eligible")]
+    assert len(marked) >= 3
+    panel = {
+        "triad": [{"slot_id": f"triad_{i}", "subagent_id": row} for i, row in enumerate(marked[:3], start=1)],
+        "scope": [{"slot_id": "scope_1", "subagent_id": marked[0]}],
+        "advisory": {"enabled": False, "subagent_id": marked[0]},
+        "deep_review": {"subagent_id": marked[0]},
+    }
     panel["triad"][0]["effort"] = "xhigh"
-    panel["advisory"]["enabled"] = False
     settings = {
         "subscriptionsConnected": True, "skipSubscriptionPresets": True,
         "OUROBOROS_MODEL": "claudexor::codex=main",

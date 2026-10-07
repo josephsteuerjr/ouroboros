@@ -643,19 +643,12 @@ def test_acceptance_rows_follow_the_configured_triad_delivery(monkeypatch):
     session row at all. The generic model-list builder keeps its explicit pin for
     callers that pass no route list (a caller's own statement, never a surface
     default), and a stale retired route env still leaks into nothing."""
-    from ouroboros.reviewer_slot_config import REVIEWER_SLOTS_ENV, triad_delivery_slots
+    from ouroboros.reviewer_slot_config import triad_delivery_slots
+    from tests.review_pool_rosters import pool_roster, pool_seat
 
     monkeypatch.setenv("OUROBOROS_REVIEW_ROUTES", "agent_session,agent_session")
-    monkeypatch.setenv(REVIEWER_SLOTS_ENV, json.dumps({
-        "triad": [
-            {"slot_id": "slot_1", "route": {"kind": "agent_session", "target_id": "codex"}},
-            {"slot_id": "slot_2", "route": {"kind": "api_chat", "target_id": "m2"}},
-        ],
-        "scope": [{"slot_id": "s1", "route": {"kind": "api_chat", "target_id": "m2"}}],
-        "advisory": {"enabled": False,
-                     "route": {"kind": "agent_session", "target_id": "codex"},
-                     "effort": "low"},
-    }))
+    monkeypatch.setenv("OUROBOROS_SUBAGENTS", pool_roster(
+        pool_seat("slot_1", "codex", kind="agent_session"), pool_seat("slot_2", "m2")))
     rows = triad_delivery_slots(role_hint="task acceptance")
     assert [row.route for row in rows] == [ReviewRouteKind.AGENT_SESSION, ReviewRouteKind.API_CHAT]
     assert [row.slot_id for row in rows] == ["slot_1", "slot_2"]

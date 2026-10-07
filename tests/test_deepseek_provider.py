@@ -22,7 +22,6 @@ from ouroboros.provider_models import (
     DEEPSEEK_DIRECT_DEFAULTS,
     DIRECT_PROVIDER_DEFAULTS,
     DIRECT_PROVIDER_REVIEW_ROLES,
-    DIRECT_PROVIDER_SCOPE_DEFAULTS,
     migrate_model_value,
     normalize_model_identity,
     provider_for_model,
@@ -72,7 +71,6 @@ class TestRegistry:
         assert DEEPSEEK_DIRECT_DEFAULTS["light"] == "deepseek::deepseek-v4-flash"
         assert DEEPSEEK_DIRECT_DEFAULTS["deep_self_review"] == "deepseek::deepseek-v4-pro"
         assert DIRECT_PROVIDER_REVIEW_ROLES["deepseek"] == ("main", "main", "main")
-        assert DIRECT_PROVIDER_SCOPE_DEFAULTS["deepseek"] == "deepseek::deepseek-v4-pro"
 
     def test_migrate_and_normalize_round_trip(self):
         assert migrate_model_value("deepseek", "deepseek/deepseek-v4-pro") == "deepseek::deepseek-v4-pro"
@@ -95,14 +93,19 @@ class TestSingleProviderIndependence:
         from ouroboros.config import _exclusive_direct_remote_provider_env
         assert _exclusive_direct_remote_provider_env() == "deepseek"
 
-    def test_review_and_scope_fallback_compile(self, monkeypatch):
+    def test_factory_review_pool_compiles(self, monkeypatch):
+        from ouroboros.subscription_install_presets import factory_review_rows
+
+        doc = {"DEEPSEEK_API_KEY": "sk-x", "OUROBOROS_MODEL": "deepseek::deepseek-v4-pro",
+               "OUROBOROS_MODEL_LIGHT": "deepseek::deepseek-v4-flash"}
+        # PR-3: the provider panel is minted as catalog rows, not multiplied at read time.
+        assert [row["route"]["target_id"] for row in factory_review_rows(doc)] == ["deepseek::deepseek-v4-pro"] * 3
         _clear_provider_env(monkeypatch)
-        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-x")
-        monkeypatch.setenv("OUROBOROS_MODEL", "deepseek::deepseek-v4-pro")
-        monkeypatch.setenv("OUROBOROS_MODEL_LIGHT", "deepseek::deepseek-v4-flash")
-        from ouroboros.config import get_review_models, get_scope_review_models
-        assert get_review_models() == ["deepseek::deepseek-v4-pro"] * 3
-        assert get_scope_review_models() == ["deepseek::deepseek-v4-pro"]
+        for key, value in doc.items():
+            monkeypatch.setenv(key, value)
+        monkeypatch.setenv("OUROBOROS_REVIEW_MODELS", "deepseek/deepseek-v4-pro,deepseek/deepseek-v4-flash")
+        from ouroboros.config import get_review_models
+        assert get_review_models() == ["deepseek::deepseek-v4-pro", "deepseek::deepseek-v4-flash"]
 
     def test_startup_gate_accepts_deepseek_only(self):
         from ouroboros.server_runtime import (

@@ -121,6 +121,12 @@ def model_visible_subagent_catalog(settings: Mapping[str, Any]) -> dict[str, Any
             projected["mutating_access"] = row.access
             if row.route.credential_profile_id:
                 projected["credential_profile_id"] = row.route.credential_profile_id
+        # The review pool is a mark on catalog rows: whether THIS row also
+        # reviews my changes, and — for an api row — how it receives the subject
+        # (``native``: reads with its own tools; ``packet``: the assembled brief).
+        projected["review_eligible"] = row.review_eligible
+        if row.review_eligible and not session:
+            projected["delivery"] = row.delivery or "native"
         # The owner's words, verbatim and last: bounded intent, never a title.
         projected["recommended_use"] = row.recommended_use
         rows.append(projected)
@@ -147,63 +153,128 @@ _REVIEW_RULES = {
 }
 
 
+_REVIEW_SURFACES = {
+    "commit_gate": "every pool row outside Cyber Pro; composed from the pool in Cyber Pro (reason recorded)",
+    "plan_review": "every pool row",
+    "task_acceptance": {"root": "every pool row", "child": "≤1 from the pool; with several, name one as reviewer"},
+    "preflight": "one enabled catalog row you name: commit_reviewed(preflight_reviewer=…); none → recorded as not performed",
+    "system_review": "/review: one enabled catalog row, default Main",
+}
+
+# A session seat is paid in subscription time, not route money (THESIS2 §3).
+SESSION_SEAT_COST_HINT = "uses a session seat and time"
+COST_UNKNOWN_HINT = "cost unknown"
+
+
+def _api_review_cost_hint(slot: Any) -> str:
+    """One api seat's worst-case reserve for ONE review, from the same estimator
+    the wave admission reserves with (``usage_admission.review_wave_admission`` →
+    ``pricing.estimate_cost_optional`` on the route's live tariff): the seat's
+    calibrated input cap plus its output reserve, priced from the tariff already
+    cached in this process — context assembly never waits on a tariff fetch.
+    No tariff → ``cost unknown`` (never a price table)."""
+    if bool(getattr(slot, "use_local", False)):
+        return "local route (no API tariff)"
+    try:
+        from ouroboros.pricing import estimate_cost_optional
+        from ouroboros.provider_models import infer_provider_from_model
+        from ouroboros.reviewer_window import reviewer_context_window, reviewer_window_binding, window_scaled_reserves
+        from ouroboros.tools.review_helpers import REVIEW_PROMPT_TOKEN_BUDGET, calibrated_input_token_limit
+        from ouroboros.tools.review_multi_model import _review_output_budget
+
+        model = str(getattr(slot, "model", "") or "")
+        window = reviewer_context_window(model, **reviewer_window_binding(slot))
+        output_reserve, margin = window_scaled_reserves(
+            window, output_reserve=_review_output_budget(), tokenizer_margin=50_000)
+        prompt_cap = max(0, calibrated_input_token_limit(
+            model, context_window=window, output_reserve=output_reserve,
+            tokenizer_margin=margin, budget_cap=REVIEW_PROMPT_TOKEN_BUDGET))
+        usd = estimate_cost_optional(
+            model, prompt_cap, output_reserve, allow_live_fetch=False,
+            provider=infer_provider_from_model(model))
+    except Exception:  # a hint, never a reason the context fails to assemble
+        usd = None
+    if usd is None:
+        return COST_UNKNOWN_HINT
+    return f"≈${float(usd):.2f} per review (route tariff, worst-case cap)"
+
+
+def _review_migration_facts() -> dict[str, str]:
+    """The A↔C seam: package C's ``config.review_pool_migrations_seen()`` reports
+    the slots→pool migration as ``{"error": str, "snapshot": str}`` (an empty
+    mapping, or no function at all, means no migration fact to show)."""
+    from ouroboros import config as cfg
+
+    seen = getattr(cfg, "review_pool_migrations_seen", None)
+    facts = seen() if callable(seen) else {}
+    if not isinstance(facts, Mapping):
+        return {}
+    return {key: str(facts.get(key) or "") for key in ("error", "snapshot") if facts.get(key)}
+
+
 def review_facts_block(snapshot: Optional[TaskSettingsSnapshot] = None) -> str:
-    """``## Review``: the lanes this task's settings snapshot serves, read by the resolver every review surface
-    uses, never by live settings or the last execution (``reviewer_slots_last``); ``None`` reads the bound task
-    scope. Above four triad/scope seats their rows shrink to ``{seat_id, model}`` and ``omitted`` counts them.
-    Stable for the task (cache-marked prefix); the task's recent ledger records ride separately in the
-    changing part (:func:`review_records_block`), so ids and timestamps never sit in the cached prefix."""
+    """``## Review``: the review POOL this task's settings snapshot serves — the enabled catalog rows the owner
+    marked as reviewers, read through the same builder every review surface runs (``review_pool_slots``), never
+    live settings or the last execution; ``None`` reads the bound task scope. Each seat is named by its catalog
+    handle (the same handle ``## Available subagents`` shows and ``review_change(reviewers=[…])`` accepts); its
+    ``seat_id`` is the stored row id the records carry. Above four seats the rows shrink to ``{seat_id, model}``
+    and ``omitted`` counts them. ``source`` is ``structured`` (a non-empty pool), ``empty`` (a readable catalog
+    with no marked row — a loud, configured fact, never a default panel) or ``error`` (a malformed catalog or a
+    refused migration). Stable for the task (cache-marked prefix); the task's recent ledger records ride
+    separately in the changing part (:func:`review_records_block`)."""
     from ouroboros import reviewer_slot_config as rs
     from ouroboros.config import get_review_enforcement, get_runtime_mode, runtime_settings, task_settings_scope
+    from ouroboros.configured_subagents import SUBAGENTS_SETTING, parse_configured_subagents
+    from ouroboros.review_execution import ReviewRouteKind
     from ouroboros.runtime_mode_policy import runtime_mode_at_least
-    from ouroboros.tools.claude_advisory_review import _advisory_native_model
     from ouroboros.tools.review_helpers import review_enforcement_blocks
 
     with task_settings_scope(snapshot) if snapshot is not None else contextlib.nullcontext():
-        try:
-            config, error = rs.load_reviewer_slot_config(), ""
-        except ValueError as exc:
-            config, error = None, str(exc)
         settings = effective_runtime_subagent_settings(runtime_settings())
-        roster = resolve_configured_subagents(settings).config
-
-        def seat(slot: Any, effort: str, retrieves: bool) -> dict[str, Any]:
-            # A reference row is named by its catalog handle; the stored key never becomes model-facing.
-            known = roster is not None and slot.subagent_id
-            row = resolve_roster_selector(roster, slot.subagent_id, settings)[0] if known else None
-            actor = {"subagent_id": roster_handles(roster, settings)[row.subagent_id]} if row else {"route": slot.kind}
-            delivery = "agent_session" if slot.kind == rs.ROUTE_KIND_SESSION else (
-                "native" if retrieves or slot.native_retrieval else "packet")
-            return {"seat_id": slot.slot_id, **actor, "model": slot.target_id or "route default",
-                    "effort": effort or "route default", "delivery": delivery}
-
-        panel: dict[str, Any] = {"triad": [], "scope": [], "advisory": None, "deep_review": None}
-        if config is not None:
-            advisory, deep = config.advisory, rs.deep_review_slot(config)
-            if advisory.kind == rs.ROUTE_KIND_API:
-                advisory = dataclass_replace(advisory, target_id=_advisory_native_model(advisory))
-            panel = {"triad": [seat(slot, rs.row_effort(slot, "review"), False) for slot in config.triad],
-                     "scope": [seat(slot, rs.row_effort(slot, "scope_review"), True) for slot in config.scope],
-                     "advisory": {**seat(advisory, advisory.effort, True), "enabled": advisory.enabled},
-                     "deep_review": seat(deep, rs.row_effort(deep, "deep_self_review"), True)}
+        state = rs.review_pool_state(settings.get(SUBAGENTS_SETTING))
+        source, error = state["state"], state["error"]
+        pool: list[dict[str, Any]] = []
+        if source != "error":
+            try:
+                raw = settings.get(SUBAGENTS_SETTING)
+                roster = parse_configured_subagents(raw) if str(raw or "").strip() else None
+                handles = roster_handles(roster, settings) if roster is not None else {}
+                slots = rs.review_pool_slots(settings)
+            except ValueError as exc:  # e.g. a marked session row without a concrete harness
+                source, error, slots = "error", str(exc), []
+            for slot in slots:
+                session = slot.route is ReviewRouteKind.AGENT_SESSION
+                pool.append({
+                    "seat_id": slot.slot_id,
+                    "subagent_id": handles.get(slot.subagent_id, slot.subagent_id),
+                    "model": slot.model, "effort": slot.effort,
+                    "delivery": "session" if session else ("native" if slot.native_retrieval else "packet"),
+                    "cost_hint": SESSION_SEAT_COST_HINT if session else _api_review_cost_hint(slot),
+                })
+        migration = _review_migration_facts()
+        if migration.get("error") and source != "error":
+            source, error = "error", migration["error"]
         enforcement, mode = get_review_enforcement(), get_runtime_mode()
         blocks = review_enforcement_blocks(enforcement)
-    seats = len(panel["triad"]) + len(panel["scope"])
+    seats = len(pool)
     if seats > 4:
-        for lane in ("triad", "scope"):
-            panel[lane] = [{"seat_id": row["seat_id"], "model": row["model"]} for row in panel[lane]]
-    return "## Review\n\n" + json.dumps({
-        "source": config.source if config is not None else "error", "error": error,
+        pool = [{"seat_id": row["seat_id"], "model": row["model"]} for row in pool]
+    facts: dict[str, Any] = {
+        "source": source, "error": error,
         "enforcement": enforcement, "enforcement_blocks": blocks, "mode": mode,
+        # The rule is the EXECUTION rule of the effective authority (PR-1): what a
+        # finding or a failed review does to the change. Who reviews is ``pool``
+        # and ``surfaces``, never this sentence.
         "rule": _REVIEW_RULES["cyber_pro" if runtime_mode_at_least(mode, "cyber_pro") else enforcement],
-        "panel": panel,
-        "surfaces": {"commit_gate": ["triad", "scope"], "plan_review": ["triad"], "task_acceptance": {
-            "root": "full configured triad panel",
-            "child": "≤1 triad seat; with several, name one as reviewer_slot_id"},
-            "preflight": ["advisory"], "deep_self_review": ["deep_review"]},
+        "pool": pool,
+        "pool_empty": source == "empty",
+        "surfaces": _REVIEW_SURFACES,
         "omitted": {"rows": seats if seats > 4 else 0},
-        "full_source": {"panel": "GET /api/reviewer-slots"},
-    }, ensure_ascii=False, separators=(",", ":"))
+        "full_source": {"pool": "GET /api/review-pool", "records": "## Review records"},
+    }
+    if migration.get("snapshot"):
+        facts["migration_snapshot"] = migration["snapshot"]
+    return "## Review\n\n" + json.dumps(facts, ensure_ascii=False, separators=(",", ":"))
 
 
 def review_records_block(*, drive_root: Any, task_id: str) -> str:

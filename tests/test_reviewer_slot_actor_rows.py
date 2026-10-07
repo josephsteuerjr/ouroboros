@@ -1,4 +1,8 @@
-"""Configured-subagent references on reviewer rows (generic-actor bridge).
+"""Configured-subagent references on reviewer LANE rows (generic-actor bridge).
+
+removed by package A after package C freezes the lane readers: the triad
+surfaces now read the catalog rows themselves (``tests/test_review_pool.py``);
+these tests cover the lane parser's actor reference while it still exists.
 
 A reviewer row may reference an ``OUROBOROS_SUBAGENTS`` roster row instead of
 carrying an inline route. Resolution happens once at load/admission from the
@@ -15,7 +19,6 @@ import pytest
 
 from ouroboros.reviewer_slot_config import (
     REVIEWER_SLOTS_ENV,
-    commit_triad_delivery,
     load_reviewer_slot_config,
     parse_reviewer_slots,
     project_reviewer_slots_into_env,
@@ -128,32 +131,6 @@ def test_api_rows_of_both_forms_project_their_model_ids_into_the_legacy_key(rost
     import os
 
     assert os.environ["OUROBOROS_REVIEW_MODELS"] == "openai/gpt-5.6-terra,openai/gpt-5.5"
-
-
-def test_actor_and_session_triad_reaches_acceptance_as_configured(roster_env):
-    """A triad of a native-retrieving actor and a session row IS the acceptance
-    panel (R0/R2): no API-default substitution, no disclosure of one, both
-    rows carried with their actor binding and pin."""
-    from ouroboros.reviewer_slot_config import triad_delivery_slots
-
-    roster_env.setenv(REVIEWER_SLOTS_ENV, _payload([
-        {"slot_id": "t1", "subagent_id": "api-critic"},
-        {"slot_id": "t2", "subagent_id": "session-critic"},
-    ]))
-    slots = triad_delivery_slots(role_hint="task acceptance")
-    assert [slot.slot_id for slot in slots] == ["t1", "t2"]
-    assert slots[0].native_retrieval and slots[0].subagent_id == "api-critic"
-    assert slots[1].route.value == "agent_session" and slots[1].session_profile == "profile-1"
-    assert all(slot.retrieves for slot in slots)
-
-
-def test_commit_triad_delivery_carries_actor_vector(roster_env):
-    roster_env.setenv(REVIEWER_SLOTS_ENV, _payload([
-        {"slot_id": "t1", "subagent_id": "api-critic"},
-        {"slot_id": "t2", "route": {"kind": "api_chat", "target_id": "openai/gpt-5.5"}},
-    ]))
-    plan = commit_triad_delivery()
-    assert plan["subagent_ids"] == ["api-critic", ""]
 
 
 def test_scope_actor_slot_reaches_review_slot(roster_env):

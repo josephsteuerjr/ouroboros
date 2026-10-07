@@ -821,16 +821,16 @@ def test_wrapper_settings_load_makes_the_pinned_document_the_whole_panel(tmp_pat
 # the lane it dispatches on (``" (local)"`` where ``use_local``).
 _HOST_TASK_PANEL = '''import json
 from ouroboros.model_slots import local_lane_label
-from ouroboros.review_substrate import scope_reviewer_slots
-from ouroboros.reviewer_slot_config import load_reviewer_slot_config, triad_delivery_slots
+from ouroboros.reviewer_slot_config import load_reviewer_slot_config, review_pool_slots
 from ouroboros.settings_integrity import task_settings_scope
 from ouroboros.subagent_runtime import apply_task_start_settings
 
+# The review pool under the task's pinned view (the scope lane, removed by package B,
+# is outside this comparison).
 with task_settings_scope(apply_task_start_settings()):
     source = load_reviewer_slot_config().source
-    triad, scope = ([local_lane_label(slot.model, slot.use_local) for slot in slots]
-                    for slots in (triad_delivery_slots(), scope_reviewer_slots()))
-print(json.dumps({"source": source, "triad": triad, "scope": scope}))
+    triad = [local_lane_label(slot.model, slot.use_local) for slot in review_pool_slots()]
+print(json.dumps({"source": source, "triad": triad}))
 '''
 # The wrapper's resolution in ``_prepare_review_configuration`` order, after its real
 # isolation (no proposal read, no provider probe), frozen and then delivered as the
@@ -843,25 +843,37 @@ if sys.argv[1:]:
                                 attach_host_engine=False)
 wrapper._load_settings_into_env()
 wrapper._apply_contributor_review_env()
+view = wrapper._pinned_default_panel_view(wrapper._CONTRIBUTOR_PROFILE)
 frozen = wrapper._freeze_contributor_slots(wrapper._resolved_review_config(profile=wrapper._CONTRIBUTOR_PROFILE))
 from ouroboros.model_slots import local_lane_label
-from ouroboros.review_substrate import scope_reviewer_slots
-from ouroboros.reviewer_slot_config import triad_delivery_slots
+from ouroboros.reviewer_slot_config import review_pool_slots
+from ouroboros.settings_integrity import task_settings_scope
 
-triad, scope = ([local_lane_label(slot.model, slot.use_local) for slot in slots]
-                for slots in (triad_delivery_slots(), scope_reviewer_slots()))
-print(json.dumps({"source": frozen["slot_config_source"], "triad": triad, "scope": scope,
-                  "openrouter_probe": wrapper._configured_openrouter_models(frozen)}))
+# The review pool the wrapper runs: the pinned document's catalog rows (until package D
+# freezes the pool itself, the lane freeze above carries only the scope lane).
+with task_settings_scope(view):
+    pool = review_pool_slots()
+triad = [local_lane_label(slot.model, slot.use_local) for slot in pool]
+probe = wrapper._configured_openrouter_models({"triad_slots": [
+    {"route": {"kind": slot.route.value, "target_id": slot.model}} for slot in pool if not slot.use_local]})
+print(json.dumps({"source": frozen["slot_config_source"], "triad": triad, "openrouter_probe": probe}))
 '''
 
 
-def _panel_resolver(root: pathlib.Path, document: dict):
-    """Run a panel script against a host whose settings are ``document``, and its pin."""
+def _panel_resolver(root: pathlib.Path, document: dict, pool_document: dict | None = None):
+    """Run a panel script against a host whose settings are ``document``, and its pin.
+
+    The review pool is the document's catalog: the document carries the factory rows
+    the one-time migration mints for it (``factory_review_rows``) — for the document
+    ``pool_document`` names when the minting view differs from the saved one."""
     from ouroboros.settings_defaults import RETIRED_COMMA_LIST_SETTING_KEYS, settings_env_keys
+    from ouroboros.subscription_install_presets import factory_review_rows
 
     host = root / "host-data"
     host.mkdir(parents=True)
     settings = host / "settings.json"
+    document = {**document, "OUROBOROS_SUBAGENTS": json.dumps(
+        {"enabled": False, "items": factory_review_rows(pool_document or document)})}
     settings.write_text(json.dumps(document), encoding="utf-8")
     dropped = {*settings_env_keys(), *RETIRED_COMMA_LIST_SETTING_KEYS, SETTINGS_INTEGRITY_ENV, "OUROBOROS_KEYS_FILE"}
     clean = {key: value for key, value in os.environ.items() if key not in dropped}
@@ -879,17 +891,17 @@ def _panel_resolver(root: pathlib.Path, document: dict):
 
 
 def test_a_pinned_document_without_a_panel_gets_its_hosts_default_panel(tmp_path):
-    """The default panel's model and provider inputs come from the pinned document too."""
+    """The factory pool's model and provider inputs come from the pinned document too."""
     resolve, pin = _panel_resolver(tmp_path, {"ANTHROPIC_API_KEY": _HOST_PROVIDER_VALUE,
                                               "OUROBOROS_MODEL": "anthropic::claude-opus-5"})
 
     host_panel = resolve(_HOST_TASK_PANEL, **pin)
-    assert host_panel["source"] == "default"
+    assert host_panel["source"] == "default"  # no lane setting; the pool is the document's catalog
     assert host_panel["triad"] == ["anthropic::claude-opus-5"] * 3  # the host's exclusive direct provider
     assert resolve(_WRAPPER_PANEL, str(tmp_path / "drive-clean")) == (host_panel, [])
-    # A shell exported for another configuration: an older Main.
+    # A shell exported for another configuration: an older Main. The pool is the saved
+    # catalog, so the stale export moves nothing, pinned or not.
     stale = {"OUROBOROS_MODEL": "anthropic::claude-sonnet-4-5"}
-    assert resolve(_WRAPPER_PANEL, **stale)[0] != host_panel  # unpinned, it selects another panel
     assert resolve(_WRAPPER_PANEL, str(tmp_path / "drive-stale"), **stale) == (host_panel, [])
     # Another provider's key is a credential the run's calls can use, so the panel is the one
     # the host derives with that credential available, whichever source supplies it.
@@ -904,7 +916,10 @@ def test_a_pinned_default_panel_keeps_the_credentials_its_calls_use(tmp_path):
     well as from the document (synthetic values; no provider is contacted).
     """
     credential = {"ANTHROPIC_API_KEY": _HOST_PROVIDER_VALUE}
-    resolve, pin = _panel_resolver(tmp_path, {"OUROBOROS_MODEL": "anthropic::claude-opus-5"})
+    # The pool was minted while the credential was in the document; the saved
+    # document keeps the rows, the credential now arrives from the run.
+    resolve, pin = _panel_resolver(tmp_path, {"OUROBOROS_MODEL": "anthropic::claude-opus-5"},
+                                   pool_document={"OUROBOROS_MODEL": "anthropic::claude-opus-5", **credential})
     host_panel = resolve(_HOST_TASK_PANEL, **pin, **credential)
     assert host_panel["triad"] == ["anthropic::claude-opus-5"] * 3
     keys_file = tmp_path / "keys.txt"
@@ -920,8 +935,7 @@ def test_a_frozen_default_row_dispatches_on_the_lane_it_was_resolved_on(tmp_path
     resolve, pin = _panel_resolver(tmp_path, {
         "USE_LOCAL_MAIN": True, "LOCAL_MODEL_SOURCE": "owner/local-model.gguf", "OUROBOROS_MODEL": "owner-local"})
     local_panel = resolve(_HOST_TASK_PANEL, **pin)
-    assert local_panel["triad"] == ["owner-local (local)"] * 3
-    assert local_panel["scope"] and set(local_panel["scope"]) == {"owner-local (local)"}
+    assert local_panel["triad"] == ["owner-local (local)"]  # the local-only factory pool is one row
     for name, inherited in (("clean", {}), ("stale-lane-flag", {"USE_LOCAL_MAIN": "0"}),
                             ("remote-credential", {"OPENAI_API_KEY": "isolation-fixture-second-provider-value"})):
         host = resolve(_HOST_TASK_PANEL, **pin, **inherited)

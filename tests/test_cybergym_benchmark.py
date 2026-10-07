@@ -12,7 +12,6 @@ from pathlib import Path
 
 from devtools.benchmarks.common import launcher_audit
 from ouroboros.configured_subagents import parse_configured_subagents
-from ouroboros.reviewer_slot_config import parse_reviewer_slots
 from tests._governance_docs_shared import architecture_text
 
 REPO = Path(__file__).resolve().parents[1]
@@ -31,8 +30,11 @@ def test_profile_pins_one_canonical_model_and_review_panel():
     # The template keeps the canonical actor available for review/copying; the
     # launcher turns it off in the applied cohort snapshot.
     assert configured.enabled is True
-    assert len(configured.items) == 1
-    actor = configured.items[0]
+    # The canonical actor plus the ONE packet review seat on the measured model
+    # (the review pool is the catalog's review-eligible rows).
+    assert len(configured.items) == 2
+    actor, reviewer = configured.items
+    assert not actor.review_eligible
     assert actor.subagent_id == "benchmark-model"
     assert actor.route.kind == "api_model"
     assert actor.route.credential_profile_id == ""
@@ -57,12 +59,10 @@ def test_profile_pins_one_canonical_model_and_review_panel():
     assert "OUROBOROS_MODEL_HEAVY" not in settings
     assert "USE_LOCAL_HEAVY" not in settings
 
-    reviewers = parse_reviewer_slots(settings["OUROBOROS_REVIEWER_SLOTS"])
-    assert [row.target_id for row in reviewers.triad] == [MODEL]
-    assert [row.target_id for row in reviewers.scope] == [MODEL]
-    assert all(row.effort == "max" for row in (*reviewers.triad, *reviewers.scope))
-    assert all(not row.is_session for row in (*reviewers.triad, *reviewers.scope))
-    assert reviewers.advisory.enabled is False
+    assert "OUROBOROS_REVIEWER_SLOTS" not in settings  # the lane key: retired by the pool
+    assert reviewer.review_eligible and reviewer.subagent_id == "benchmark-review-1"
+    assert (reviewer.route.kind, reviewer.route.target_id) == ("api_model", MODEL)
+    assert (reviewer.effort, reviewer.delivery) == ("max", "packet")
 
 
 def test_profile_records_safe_runtime_and_budget_defaults():

@@ -139,8 +139,9 @@ def test_wait_switch_restores_api_hint_and_later_override_defers_again(live_wait
 
 @pytest.mark.parametrize("surface", ["triad", "scope", "plan", "native_plan"])
 def test_actual_review_authors_reach_strict_raw_dispatch(setup, monkeypatch, surface):
-    from ouroboros import config, reviewer_slot_config
+    from ouroboros import config
     from ouroboros.tools import scope_review, plan_review_runtime
+    from tests.review_pool_rosters import pool_roster, pool_seat, set_review_pool
     from ouroboros.tools.review_multi_model import _query_model
     from ouroboros.tools.registry import ToolContext
 
@@ -168,9 +169,8 @@ def test_actual_review_authors_reach_strict_raw_dispatch(setup, monkeypatch, sur
             session_task="Review the staged change", session_root=str(root))
         assert not error
     else:
-        row = reviewer_slot_config.ConfiguredReviewerSlot("critic", "api_chat", MODEL, profile_id="account-a",
-                                                        subagent_id="actor" if surface == "native_plan" else "")
-        monkeypatch.setattr(reviewer_slot_config, "load_reviewer_slot_config", lambda: SimpleNamespace(triad=(row,)))
+        set_review_pool(monkeypatch, pool_roster(pool_seat(
+            "critic", MODEL, profile_id="account-a", delivery="native" if surface == "native_plan" else "packet")))
         slots = plan_review_runtime.plan_review_slots()
         assert slots[0].temperature is None and slots[0].default_temperature == 0.2
         rows = asyncio.run(plan_review_runtime.run_plan_review_slots(

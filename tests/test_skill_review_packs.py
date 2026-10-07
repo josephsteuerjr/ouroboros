@@ -29,6 +29,7 @@ from tests._skill_review_shared import (
     _pass_array_for_script_skill,
     _patch_review,
 )
+from tests.review_pool_rosters import set_review_pool
 
 
 def test_review_skill_prompt_includes_rebuttal_and_history(tmp_path, monkeypatch):
@@ -69,14 +70,7 @@ def test_review_skill_quorum_failure_on_one_responder(tmp_path, monkeypatch):
 
     skills_root = _build_skill(tmp_path)
     monkeypatch.setenv("OUROBOROS_SKILLS_REPO_PATH", str(skills_root))
-    monkeypatch.setattr(
-        "ouroboros.config.get_review_models",
-        lambda: [
-            "openai/gpt-5.5",
-            "google/gemini-3.5-flash",
-            "anthropic/claude-opus-4.6",
-        ],
-    )
+    set_review_pool(monkeypatch, ["openai/gpt-5.5", "google/gemini-3.5-flash", "anthropic/claude-opus-4.6"])
     ctx = _make_ctx(tmp_path)
     advisory_evidence = {
         "status": "completed",
@@ -159,12 +153,11 @@ def test_review_skill_missing_skill_returns_pending_with_error(tmp_path, monkeyp
 
 
 def test_review_skill_malformed_reviewer_slots_block_before_any_reviewer(tmp_path, monkeypatch):
-    """#116: a malformed OUROBOROS_REVIEWER_SLOTS keeps the skill honestly
-    PENDING with the precise parse error — the reviewer wave is never
-    dispatched on the silently projected default panel."""
+    """#116: a malformed catalog (the review pool's SSOT) keeps the skill honestly
+    PENDING with the precise parse error — the reviewer wave is never dispatched."""
     skills_root = _build_skill(tmp_path)
     monkeypatch.setenv("OUROBOROS_SKILLS_REPO_PATH", str(skills_root))
-    monkeypatch.setenv("OUROBOROS_REVIEWER_SLOTS", "{broken")
+    monkeypatch.setenv("OUROBOROS_SUBAGENTS", "{broken")
     ctx = _make_ctx(tmp_path)
 
     with patch(

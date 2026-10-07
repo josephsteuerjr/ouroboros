@@ -42,7 +42,6 @@ from devtools.benchmarks.cybergym.cybergym_adapter import (
     verify_mask_map,
 )
 from ouroboros.configured_subagents import parse_configured_subagents
-from ouroboros.reviewer_slot_config import parse_reviewer_slots
 
 
 def test_safe_ids_and_argv_are_path_safe(tmp_path):
@@ -1078,11 +1077,10 @@ def test_applied_settings_metadata_is_read_back_from_written_snapshot(tmp_path):
     assert applied["OUROBOROS_EFFORT_REVIEW"] == "max"
     assert applied["OUROBOROS_EFFORT_SCOPE_REVIEW"] == "max"
     subagents = parse_configured_subagents(applied["OUROBOROS_SUBAGENTS"])
-    assert subagents.enabled is False
-    reviewers = parse_reviewer_slots(applied["OUROBOROS_REVIEWER_SLOTS"])
-    assert len(reviewers.triad) == len(reviewers.scope) == 1
-    assert all(row.effort == "max" for row in (*reviewers.triad, *reviewers.scope))
-    assert reviewers.advisory.enabled is False
+    assert subagents.enabled is False  # delegation off; the review pool ignores that switch
+    [seat] = [row for row in subagents.items if row.review_eligible]
+    assert (seat.route.target_id, seat.effort, seat.delivery) == (OFFICIAL_MODEL, "max", "packet")
+    assert "OUROBOROS_REVIEWER_SLOTS" not in applied
 
 
 @pytest.mark.parametrize(

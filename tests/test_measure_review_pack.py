@@ -188,13 +188,16 @@ def test_headroom_is_derived_from_the_zero_diff_message(synthetic_repo, isolated
 
 
 def _plan(rows):
-    """``commit_triad_delivery()``'s aligned vectors from ``(model, route, subagent_id)`` rows."""
-    from ouroboros.review_execution import ReviewRouteKind
+    """``commit_triad_delivery()``'s aligned vectors from ``(model, route, subagent_id[, native])``
+    rows. F8: whether an api row retrieves is its own delivery fact (``native``), never its id."""
+    from ouroboros.review_execution import ReviewRouteKind, delivery_retrieves
 
+    rows = [(*row, False)[:4] for row in rows]
     return {
-        "models": [model for model, _route, _actor in rows],
-        "routes": [ReviewRouteKind(route) for _model, route, _actor in rows],
-        "subagent_ids": [actor for _model, _route, actor in rows],
+        "models": [model for model, _route, _actor, _native in rows],
+        "routes": [ReviewRouteKind(route) for _model, route, _actor, _native in rows],
+        "subagent_ids": [actor for _model, _route, actor, _native in rows],
+        "retrieves": [delivery_retrieves(ReviewRouteKind(route), native) for _model, route, _actor, native in rows],
     }
 
 
@@ -206,10 +209,9 @@ def test_direct_native_rows_use_the_resolved_delivery_vector():
 
 
 def test_saved_direct_native_panel_has_no_packet_headroom(synthetic_repo, isolated_roots, monkeypatch):
-    monkeypatch.setenv('OUROBOROS_REVIEWER_SLOTS', json.dumps({
-        'triad': [{'slot_id': 'reader', 'route': {'kind': 'api_chat', 'target_id': 'openai/native'},
-                   'delivery': 'native'}],
-        'scope': [{'slot_id': 'scope', 'route': {'kind': 'api_chat', 'target_id': 'openai/scope'}}]}))
+    from tests.review_pool_rosters import pool_roster, pool_seat
+
+    monkeypatch.setenv('OUROBOROS_SUBAGENTS', pool_roster(pool_seat('reader', 'openai/native', delivery='native')))
     monkeypatch.setattr(mrp, '_quorum_limit', lambda _models: pytest.fail('native rows cannot constrain a packet'))
     monkeypatch.setattr(mrp, '_o200k', _no_bpe)
     report = mrp.measure(synthetic_repo)
@@ -220,7 +222,7 @@ def test_saved_direct_native_panel_has_no_packet_headroom(synthetic_repo, isolat
 
 def test_only_the_rows_that_receive_the_api_pack_bound_the_headroom(synthetic_repo, isolated_roots, monkeypatch):
     """``review._prepare_unified_review`` hands ``fit_triad_prompt`` the api_chat
-    rows WITHOUT a configured-subagent binding; a session row and a subagent api
+    rows whose delivery is the packet; a session row and a native-delivery api
     row retrieve with their own tools. The headroom/quorum limit must be sized
     over exactly that filtered set — the whole delivery plan overstated a mixed
     panel's constraint by every retrieving row."""
@@ -229,7 +231,7 @@ def test_only_the_rows_that_receive_the_api_pack_bound_the_headroom(synthetic_re
     monkeypatch.setattr(rsc, "commit_triad_delivery", lambda: _plan([
         ("openai/packet", "api_chat", ""),
         ("claude=opus", "agent_session", ""),
-        ("openai/native", "api_chat", "reviewer-b"),
+        ("openai/native", "api_chat", "reviewer-b", True),
     ]))
     sized = []
 
@@ -258,7 +260,7 @@ def test_an_all_retrieving_panel_reports_no_api_pack_instead_of_a_number(
     import ouroboros.reviewer_slot_config as rsc
 
     monkeypatch.setattr(rsc, "commit_triad_delivery", lambda: _plan([
-        ("claude=opus", "agent_session", ""), ("openai/native", "api_chat", "reviewer-b")]))
+        ("claude=opus", "agent_session", ""), ("openai/native", "api_chat", "reviewer-b", True)]))
 
     def _never(models):
         raise AssertionError(f"no api row receives a pack, nothing to size: {models}")

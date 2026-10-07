@@ -865,9 +865,12 @@ def _resolved_review_config(*, profile: str = "production_commit_gate") -> dict:
     def _project(row, surface: str) -> dict:
         route = {"kind": row.kind, "target_id": local_lane_label(row.target_id, row.target_id in local),
                  **({"profile_id": row.profile_id} if row.profile_id else {})}
+        # A triad api row states its delivery explicitly (F8: the fact, never the
+        # actor id); the wire form of an actor-bound row drops it again.
+        delivery = row.delivery or ("native" if surface == "review" and row.native_retrieval else "")
         return {"slot_id": row.slot_id, "route": route, "effort": row_effort(row, surface),
                 **({"subagent_id": row.subagent_id} if row.subagent_id else {}),
-                **({"delivery": row.delivery} if row.delivery else {})}
+                **({"delivery": delivery} if delivery else {})}
 
     triad_slots = [_project(row, "review") for row in config.triad]
     scope_slots = [_project(row, "scope_review") for row in config.scope]

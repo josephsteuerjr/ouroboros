@@ -1,14 +1,15 @@
-"""Ouroboros — the reviewer model lists the API-pinned review surfaces run.
+"""Ouroboros — the reviewer-quorum rule and the env-plane reviewer model list.
 
-ABI 7.0 (ABI-10, owner 5.4=A): the comma-list SETTINGS keys are retired — the
-structured ``OUROBOROS_REVIEWER_SLOTS`` is the one configuration surface. The
-comma ENV keys survive only as the derived runtime projection
-(``reviewer_slot_config.project_reviewer_slots_into_env``) plus an operational
-env-override plane (bench launchers): these getters resolve that env plane —
-honouring a local-only Main route and rewriting the list when the install has
-exactly one direct provider credentialed — and fall back to the shipped
-``OPENROUTER_REVIEW_DEFAULTS``. Also the reviewer-quorum rule shared by every
-review family.
+The review POOL (marked rows of ``OUROBOROS_SUBAGENTS``, read by
+``reviewer_slot_config.review_pool_slots``) is the one configuration surface
+of every review family. The retired comma ENV key read below survives only as
+an operational env-override plane (the external review script's ordering) and
+falls back to the shipped ``OPENROUTER_REVIEW_DEFAULTS``; the
+install-class adaptations the lane era applied here — Main repeated N times for
+a local-only, compatible-only or exclusive-direct-provider install — are minted
+into the catalog once by ``subscription_install_presets.factory_review_rows``
+and are no longer a read-time multiplication. ``adaptive_quorum`` is shared by
+every review family.
 """
 
 from __future__ import annotations
@@ -19,7 +20,6 @@ from ouroboros.model_slots import ResolvedModelTarget, _main_model, _parse_model
 from ouroboros.provider_models import (
     _NON_COMPATIBLE_REMOTE_KEYS,
     compatible_only_main_model,
-    compute_direct_review_models_fallback,
     local_only_review_route_env,
     migrate_model_value,
     resolve_model_target,
@@ -58,6 +58,7 @@ def _exclusive_direct_remote_provider_env() -> str:
     return direct[0] if len(direct) == 1 else ""
 
 
+# removed by package B together with ``get_scope_review_models``.
 def compatible_only_review_model() -> str:
     """Main's route when the OpenAI-compatible endpoint is the only remote provider (#1116)."""
     keys = ("OPENAI_COMPATIBLE_BASE_URL", "OUROBOROS_MODEL", "GIGACHAT_USER", "GIGACHAT_PASSWORD",
@@ -65,29 +66,13 @@ def compatible_only_review_model() -> str:
     return compatible_only_main_model({key: runtime_setting(key, "") for key in keys})
 
 
+# removed by package B together with ``get_scope_review_models``.
 def _compatible_only_models(models: list[str]) -> list[str]:
     """An unreachable (non-compatible) list becomes Main repeated; an explicit compatible list stays."""
     main = compatible_only_review_model()
     if not main or (models and all(str(m).startswith("openai-compatible::") for m in models)):
         return models
     return [main] * max(1, len(models))
-
-
-def direct_provider_review_models_fallback(provider: str) -> list[str]:
-    """Return the exact review-models list a direct-provider fallback emits."""
-    if provider not in ("openai", "anthropic", "minimax", "cloudru", "gigachat", "deepseek", "zai"):
-        return []
-    main_model = str(
-        runtime_setting("OUROBOROS_MODEL", SETTINGS_DEFAULTS["OUROBOROS_MODEL"]) or ""
-    ).strip()
-    main_model = migrate_model_value(provider, main_model)
-    user_light_raw = str(runtime_setting("OUROBOROS_MODEL_LIGHT", "") or "").strip()
-    return compute_direct_review_models_fallback(
-        provider,
-        main_model,
-        user_light_raw,
-        review_runs=_DIRECT_PROVIDER_REVIEW_RUNS,
-    )
 
 
 def adaptive_quorum(n_slots: int) -> int:
@@ -100,28 +85,18 @@ def adaptive_quorum(n_slots: int) -> int:
 
 
 def get_review_models() -> list[str]:
-    """Return the effective triad model list from the derived env plane."""
+    """The env-plane triad model list: the retired comma key (else the shipped
+    OpenRouter defaults), spelled in an exclusive direct provider's own
+    form. No multiplication: the lane-era ``[main]×N`` fallbacks for a
+    local-only, compatible-only or direct-provider install are catalog rows now
+    (``factory_review_rows``), so this reader returns the list as configured."""
     default_str = ",".join(OPENROUTER_REVIEW_DEFAULTS["triad"])
     models_str = runtime_setting("OUROBOROS_REVIEW_MODELS", default_str) or default_str
     models = _parse_model_list(models_str)
-    models = [_main_model()] * max(1, len(models)) if local_only_review_route_env() else models
     provider = _exclusive_direct_remote_provider_env()
     if not provider:
-        return _compatible_only_models(models)
-
-    main_model = str(runtime_setting("OUROBOROS_MODEL", SETTINGS_DEFAULTS["OUROBOROS_MODEL"]) or "").strip()
-    main_model = migrate_model_value(provider, main_model)
-    provider_prefix = f"{provider}::"
-    if not main_model.startswith(provider_prefix):
         return models
-
-    migrated = [migrate_model_value(provider, model) for model in models]
-    if not migrated or any(not model.startswith(provider_prefix) for model in migrated):
-        # Auto-expand to the [main]*N stochastic fallback ONLY when nothing usable is
-        # configured (empty, or foreign models in an exclusive direct-provider setup). An
-        # explicit provider-matching list is honored exactly, duplicates included.
-        return direct_provider_review_models_fallback(provider)
-    return migrated
+    return [migrate_model_value(provider, model) for model in models]
 
 
 def resolved_review_model_target(model: str, *, effort: str = "") -> ResolvedModelTarget:
@@ -150,6 +125,7 @@ def get_review_targets() -> tuple[ResolvedModelTarget, ...]:
     return tuple(resolved_review_model_target(model) for model in get_review_models())
 
 
+# removed by package B (the scope lane's typed view; ``get_scope_review_models`` goes with it).
 def get_scope_review_targets() -> tuple[ResolvedModelTarget, ...]:
     """The effective scope list as typed targets (ABI-4), duplicates preserved.
 
@@ -165,6 +141,8 @@ def get_review_enforcement() -> str:
     return raw if raw in {"advisory", "blocking"} else default_val
 
 
+# removed by package B (the scope lane's model list; its last readers are
+# ``review_substrate.scope_reviewer_slots`` and ``tools/scope_review.py``).
 def get_scope_review_models() -> list[str]:
     """Return effective scope reviewer models, preserving duplicate model IDs."""
     default_str = ",".join(OPENROUTER_REVIEW_DEFAULTS["scope"])
@@ -188,5 +166,4 @@ def get_scope_review_models() -> list[str]:
     migrated_singular = migrate_model_value(provider, singular or OPENROUTER_REVIEW_DEFAULTS["scope"][0])
     if migrated_singular.startswith(provider_prefix):
         return [migrated_singular]
-    fallback = direct_provider_review_models_fallback(provider)
-    return fallback[:1] if fallback else migrated
+    return migrated
