@@ -21,14 +21,14 @@ The manifest is the SSOT of the module→domain assignment (1:1, complete over t
 | D11 | Gateway, server & Web UI | 71 | 0 |
 | D12 | Settings & configuration | 19 | 0 |
 | D13 | Safety, guards & runtime mode | 9 | 0 |
-| D14 | Skills & extensions | 56 | 0 |
+| D14 | Skills & extensions | 57 | 0 |
 | D15 | Memory, knowledge, consciousness & self-evolution | 28 | 0 |
 | D16 | Observability, usage accounting & cost | 16 | 0 |
 | D17 | Projects, workspaces & task results | 30 | 0 |
 | D18 | Launcher, packaging, platform & shared substrate | 22 | 0 |
 | D19 | Frozen contracts (ABI) | 11 | 0 |
 | D20 | Presence | 12 | 0 |
-| **total** | | **669** | **0** |
+| **total** | | **670** | **0** |
 
 ## Dependency direction matrix (strict, pinned)
 
@@ -753,6 +753,7 @@ No function body (≥ 10 normalized lines) is shared verbatim across domains. Ne
 - `ouroboros/marketplace/isolated_deps.py`
 - `ouroboros/marketplace/ouroboroshub.py`
 - `ouroboros/marketplace/provenance.py`
+- `ouroboros/skill_catalogue.py`
 - `ouroboros/skill_conflicts.py`
 - `ouroboros/skill_dependencies.py`
 - `ouroboros/skill_lifecycle_actions.py`

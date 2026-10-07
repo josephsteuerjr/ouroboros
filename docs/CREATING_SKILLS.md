@@ -165,9 +165,11 @@ automatically disabling, deleting, or moving either payload.
 model's point of view: `what_model_sees` (what the skill adds to the model's
 context — tools, sections, attachments) and `token_effect` (roughly what that
 costs and when it is loaded). A bare string is shorthand for
-`what_model_sees`. The prose travels verbatim (bounded) to the model-visible
-surfaces — the `list_skills` JSON and the "Installed Skills" context section —
-so write it for the model, not for the human reviewer. Unknown keys or
+`what_model_sees`. The prose travels to the "Installed Skills" context section
+(bounded) and `list_skills(name=..., detail=true)` (whole or an exact readable
+source). The no-argument tool now returns a compact selection index, not full
+Model Experience prose; callers of the former diagnostic default must request
+named detail. Write it for the model, not for the human reviewer. Unknown keys or
 non-string values are refused at parse time.
 
 Manifest refusals teach: every `SkillManifestError` carries the problem plus,

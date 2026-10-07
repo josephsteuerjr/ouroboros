@@ -30,6 +30,7 @@ from ouroboros.skill_loader import (
     skill_state_dir,
     summarize_skills,
 )
+from ouroboros.skill_catalogue import LIST_SKILLS_SCHEMA as _LIST_SCHEMA
 from ouroboros.skill_review import review_skill as _review_skill_impl
 from ouroboros.skill_review_status import normalize_skill_review_status
 from ouroboros.tools.registry import ToolContext, ToolEntry
@@ -564,13 +565,17 @@ def _skill_tool_preflight(
 
 
 @completed_local_read
-def _handle_list_skills(ctx: ToolContext, **_kwargs: Any) -> str:
-    err = _skill_tool_preflight(ctx)
-    if err:
-        return err
+def _handle_list_skills(ctx: ToolContext, *, name: str = "", detail: bool = False,
+                        offset: int = 0, limit: int = 100, inventory: str = "") -> str:
+    from ouroboros.skill_catalogue import render_skill_catalogue
+
     drive_root = canonical_data_root(ctx)
-    summary = summarize_skills(drive_root)
-    return json.dumps(summary, ensure_ascii=False, indent=2)
+    try:
+        return render_skill_catalogue(ctx, summarize_skills(drive_root), drive_root,
+                                      name=name, detail=detail, offset=offset,
+                                      limit=limit, inventory=inventory)
+    except ValueError as exc:
+        return f"⚠️ TOOL_ARG_ERROR (list_skills): {exc}"
 
 
 def _author_finish_existing_skill_review(
@@ -1238,18 +1243,6 @@ def _handle_skill_owner_action(
     )
     rendered = json.dumps(payload, ensure_ascii=False, indent=2)
     return "⚠️ SKILL_ACTION_BLOCKED: " + rendered if payload.get("error") else rendered
-
-_LIST_SCHEMA = {
-    "name": "list_skills",
-    "description": (
-        "List external skill packages discovered in OUROBOROS_SKILLS_REPO_PATH. "
-        "Returns counts + per-skill metadata (name, type, enabled, review_status, and "
-        "available_for_execution, which is the SCRIPT-execution flag only). Extension "
-        "rows also carry desired_live, live_loaded, live_reason, load_error and process, "
-        "which is where an extension's liveness actually lives. Read-only."
-    ),
-    "parameters": {"type": "object", "properties": {}, "required": []},
-}
 
 _REVIEW_SCHEMA = {
     "name": "skill_review",
