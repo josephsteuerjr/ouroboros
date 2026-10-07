@@ -51,6 +51,7 @@ def _run_shown(window) -> None:
 
 
 def test_force_dark_applies_attribute(monkeypatch):
+    monkeypatch.setattr(wdf, "_IS_WINDOWS", True)
     dwm = _FakeDwm()
     monkeypatch.setattr(wdf, "_dwm_api", lambda: dwm)
     window = _FakeWindow()
@@ -60,6 +61,7 @@ def test_force_dark_applies_attribute(monkeypatch):
 
 
 def test_light_system_theme_leaves_frame_untouched(monkeypatch):
+    monkeypatch.setattr(wdf, "_IS_WINDOWS", True)
     dwm = _FakeDwm()
     monkeypatch.setattr(wdf, "_dwm_api", lambda: dwm)
     monkeypatch.setattr(wdf, "is_system_dark_apps_theme", lambda: False)
@@ -70,6 +72,7 @@ def test_light_system_theme_leaves_frame_untouched(monkeypatch):
 
 
 def test_dark_system_theme_applies_attribute(monkeypatch):
+    monkeypatch.setattr(wdf, "_IS_WINDOWS", True)
     dwm = _FakeDwm()
     monkeypatch.setattr(wdf, "_dwm_api", lambda: dwm)
     monkeypatch.setattr(wdf, "is_system_dark_apps_theme", lambda: True)
@@ -80,6 +83,7 @@ def test_dark_system_theme_applies_attribute(monkeypatch):
 
 
 def test_unknown_theme_leaves_frame_untouched(monkeypatch):
+    monkeypatch.setattr(wdf, "_IS_WINDOWS", True)
     dwm = _FakeDwm()
     monkeypatch.setattr(wdf, "_dwm_api", lambda: dwm)
     monkeypatch.setattr(wdf, "is_system_dark_apps_theme", lambda: None)
@@ -90,6 +94,7 @@ def test_unknown_theme_leaves_frame_untouched(monkeypatch):
 
 
 def test_missing_native_handle_is_silent(monkeypatch):
+    monkeypatch.setattr(wdf, "_IS_WINDOWS", True)
     dwm = _FakeDwm()
     monkeypatch.setattr(wdf, "_dwm_api", lambda: dwm)
     window = _FakeWindow(with_native=False)
@@ -99,6 +104,7 @@ def test_missing_native_handle_is_silent(monkeypatch):
 
 
 def test_modern_attribute_falls_back_to_1803_id(monkeypatch):
+    monkeypatch.setattr(wdf, "_IS_WINDOWS", True)
     # First (modern) attribute refused -> the 1803 id is retried.
     dwm = _FakeDwm(results=(0x80070057, 0))
     monkeypatch.setattr(wdf, "_dwm_api", lambda: dwm)
@@ -112,6 +118,7 @@ def test_modern_attribute_falls_back_to_1803_id(monkeypatch):
 
 
 def test_all_refused_is_warning_not_error(monkeypatch):
+    monkeypatch.setattr(wdf, "_IS_WINDOWS", True)
     dwm = _FakeDwm(results=(1, 1))
     monkeypatch.setattr(wdf, "_dwm_api", lambda: dwm)
     window = _FakeWindow()
@@ -121,6 +128,8 @@ def test_all_refused_is_warning_not_error(monkeypatch):
 
 
 def test_dwm_api_raising_never_propagates(monkeypatch):
+    monkeypatch.setattr(wdf, "_IS_WINDOWS", True)
+
     def boom():
         raise OSError("no dwmapi")
 
