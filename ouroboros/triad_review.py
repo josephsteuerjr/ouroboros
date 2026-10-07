@@ -40,6 +40,12 @@ class ReviewActorRecord:
     pending_invocation_id: str = ""
     delegated_run_id: str = ""
     recovery_binding: Dict[str, Any] = field(default_factory=dict)
+    # One brief, two parts: the parts this seat was asked and its answer per part
+    # (``parse_seat_answers``); empty on a record that predates the vector.
+    parts: List[str] = field(default_factory=list)
+    answers: Dict[str, Any] = field(default_factory=dict)
+    coverage: str = ""  # observed read coverage of the required-source manifest ("" = not a retrieving seat)
+    context_manifest: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         # The durable id is the one the review substrate actually ran this row
@@ -76,6 +82,9 @@ class ReviewActorRecord:
             "pending_invocation_id": self.pending_invocation_id,
             "delegated_run_id": self.delegated_run_id,
             "recovery_binding": dict(self.recovery_binding),
+            **({"parts": list(self.parts), "answers": dict(self.answers)} if self.parts else {}),
+            **({"coverage": self.coverage} if self.coverage else {}),
+            **({"context_manifest": dict(self.context_manifest)} if self.context_manifest else {}),
         }
 
 
@@ -253,6 +262,7 @@ REVIEW_OUTPUT_SHAPES: Dict[str, str] = {
     "deep_self_review": "report",
 }
 OBJECT_VERDICT_REQUIRED_KEYS = ("verdict",)
+TWO_PART_KEYS = ("change", "change_clean", "coupling")
 
 # Default output contract per SHAPE for a retrieving delivery whose surface did
 # not hand over its own `policy["output_contract"]`: the prompt must ask for the
@@ -273,7 +283,7 @@ evidence you read; mark anything you could not verify as unverified.
 
 
 def review_output_shape(surface: str) -> str:
-    """``array`` | ``object`` | ``report`` for one review surface."""
+    """``array`` | ``object`` | ``two_part`` | ``report`` for one review surface."""
     return REVIEW_OUTPUT_SHAPES.get(str(surface or ""), "array")
 
 
@@ -283,7 +293,191 @@ def default_output_contract(shape: str) -> str:
     canonicalizer parses, so the ask and the parse can never disagree."""
     return {
         "object": REVIEW_JSON_OBJECT_CONTRACT, "report": REVIEW_REPORT_CONTRACT,
+        "two_part": REVIEW_TWO_PART_OBJECT_CONTRACT,
     }.get(str(shape or ""), REVIEW_JSON_ARRAY_CONTRACT)
+
+
+def two_part_payload(payload: Any) -> Optional[Dict[str, Any]]:
+    """The two-part answer (contract B) as ONE object, or None when the payload is
+    not one. Form only: ``coupling`` must be a list of dicts; ``change`` (when
+    present) a list of dicts; ``change_clean`` (when present) a bool. A bare
+    ARRAY is accepted as the ``change`` answer alone — the seat spoke but left the
+    coupling block out, which the gate records as ``coupling_block_missing``
+    rather than as silence."""
+    if isinstance(payload, list):
+        if not all(isinstance(item, dict) for item in payload):
+            return None
+        return {"change": list(payload), "change_clean": not payload}
+    if not isinstance(payload, dict) or not any(key in payload for key in TWO_PART_KEYS):
+        return None
+    out: Dict[str, Any] = {}
+    for key in ("change", "coupling"):
+        if key in payload:
+            if not isinstance(payload[key], list) or not all(isinstance(item, dict) for item in payload[key]):
+                return None
+            out[key] = list(payload[key])
+    if "change_clean" in payload:
+        if not isinstance(payload["change_clean"], bool):
+            return None
+        out["change_clean"] = payload["change_clean"]
+    return out
+
+
+def _whole_json(raw_text: str) -> Any:
+    """The response as ONE JSON value — bare or inside one code fence; prose around
+    the value is a non-response (the same discipline as the array contract)."""
+    text = str(raw_text or "").strip()
+    if "```" in text:
+        chunks = [chunk.strip() for chunk in text.split("```") if chunk.strip()]
+        if len(chunks) != 1:
+            return None
+        text = chunks[0]
+        tag, _, rest = text.partition("\n")
+        if rest.strip() and tag.strip().isalnum():
+            text = rest.strip()
+    try:
+        return json.loads(text)
+    except (json.JSONDecodeError, ValueError, TypeError):
+        return None
+
+
+def _change_items(entries: List[Dict[str, Any]], *, model_label: str, slot_id: str) -> List[Dict[str, Any]]:
+    items: List[Dict[str, Any]] = []
+    for entry in entries:
+        item = str(entry.get("item") or "")
+        verdict = str(entry.get("verdict") or "").upper()
+        if not item or verdict not in {"PASS", "FAIL"}:
+            continue
+        items.append({
+            "item": item, "verdict": verdict,
+            "severity": str(entry.get("severity") or "advisory").lower(),
+            "reason": str(entry.get("reason") or "").strip(),
+            "model": model_label, "slot_id": slot_id,
+            **({"obligation_id": str(entry.get("obligation_id") or "")} if entry.get("obligation_id") else {}),
+        })
+    return items
+
+
+def _change_answer(items: List[Dict[str, Any]]) -> Dict[str, Any]:
+    failed = [i for i in items if i["verdict"] == "FAIL"]
+    critical = [i for i in failed if i["severity"] == "critical"]
+    return {"status": "responded", "verdict": "FAIL" if critical else "PASS", "findings": failed,
+            "critical": len(critical), "coverage": "n/a"}
+
+
+def _unanswered(part: str, error: str = "") -> Dict[str, Any]:
+    answer = {"status": "unanswered", "verdict": "", "findings": [], "critical": 0,
+              "coverage": "n/a" if part == "change" else "missing"}
+    if error:
+        answer["error"] = error
+    return answer
+
+
+def parse_two_part_answer(raw_text: str, parts: Sequence[str], *, model_label: str = "reviewer",
+                          slot_id: str = "") -> Optional[Dict[str, Dict[str, Any]]]:
+    """Contract B → ``{part: answer}`` for the parts a seat was asked, or None when
+    the response is a non-response (no JSON value, prose around it, wrong form).
+    ``change: []`` is a clean answer only with ``change_clean: true``; a
+    ``coupling`` block that fails the required matrix (``normalize_scope_items``)
+    is ``unanswered`` with its ``error`` while ``change`` still counts; a bare
+    array from a seat asked both parts answers ``change`` and leaves ``coupling``
+    unanswered (``coupling_block_missing``). A seat asked ``coupling`` alone may
+    answer the object with only that key or the bare matrix array."""
+    asked = [p for p in ("change", "coupling") if p in tuple(parts)]
+    value = _whole_json(raw_text)
+    if value is None:
+        return None
+    if isinstance(value, list) and asked == ["coupling"]:
+        value = {"coupling": value}
+    payload = two_part_payload(value)
+    if payload is None:
+        return None
+    answers: Dict[str, Dict[str, Any]] = {}
+    if "change" in asked:
+        if "change" not in payload:
+            answers["change"] = _unanswered("change", "the change block is missing")
+        elif not payload["change"] and not payload.get("change_clean"):
+            answers["change"] = _unanswered("change", "an empty change block needs change_clean: true")
+        else:
+            answers["change"] = _change_answer(_change_items(payload["change"], model_label=model_label, slot_id=slot_id))
+    if "coupling" in asked:
+        if "coupling" not in payload:
+            answers["coupling"] = _unanswered("coupling", "coupling_block_missing")
+        else:
+            from ouroboros.tools.scope_review_contract import (
+                SCOPE_REQUIRED_ITEMS, classify_scope_findings, normalize_scope_items,
+            )
+
+            items, error = normalize_scope_items(payload["coupling"])
+            covered = {str(i.get("item") or "") for i in (items or payload["coupling"]) if isinstance(i, dict)}
+            n_required = sum(1 for item in SCOPE_REQUIRED_ITEMS if item in covered)
+            coverage = "full" if n_required == len(SCOPE_REQUIRED_ITEMS) else "partial" if n_required else "missing"
+            if error or items is None:
+                answers["coupling"] = {**_unanswered("coupling", error or "coupling matrix invalid"), "coverage": coverage}
+            else:
+                critical, advisory = classify_scope_findings(items)
+                for finding in critical + advisory:  # the projection's placeholder model → this seat
+                    finding.update(model=model_label, slot_id=slot_id)
+                answers["coupling"] = {"status": "responded", "verdict": "FAIL" if critical else "PASS",
+                                       "findings": critical + advisory, "critical": len(critical), "coverage": coverage}
+    return answers
+
+
+def parse_seat_answers(result_json: Dict[str, Any], row_parts: Dict[str, Sequence[str]]) -> ParsedTriadReview:
+    """Every seat of ONE wave → one actor record with ``parts`` and ``answers``.
+    ``row_parts`` maps slot id → the parts that seat was asked; a seat asked only
+    ``change`` answers contract A (the findings array, ``[]`` + NO_FINDINGS clean),
+    a seat asked ``coupling`` answers contract B (``parse_two_part_answer``). A
+    seat is *responsive* for quorum when at least one asked part has a usable
+    answer; ``findings`` carries every FAIL item of every responsive seat."""
+    from ouroboros.tools.scope_required_sources import coverage_state
+
+    findings: List[Dict[str, Any]] = []
+    responsive: List[str] = []
+    records: List[ReviewActorRecord] = []
+    for idx, actor in enumerate(result_json.get("results") or []):
+        if not isinstance(actor, dict):
+            continue
+        model = str(actor.get("model") or actor.get("request_model") or "").strip()
+        raw_text = str(actor.get("text") or "")
+        model_label = model or "reviewer"
+        slot_id = str(actor.get("slot_id") or "")
+        parts = [p for p in ("change", "coupling") if p in tuple(row_parts.get(slot_id) or ("change",))]
+        if str(actor.get("operation_state") or "") == "not_dispatched":
+            record = _actor_record(actor, idx=idx, model_label=model_label, status="not_dispatched", raw_text=raw_text)
+        elif str(actor.get("verdict") or "").upper() == "ERROR":
+            record = _actor_record(actor, idx=idx, model_label=model_label, status="error", raw_text=raw_text)
+        else:
+            if parts == ["change"]:
+                parsed = extract_json_array(raw_text, normalize=True)
+                if parsed is None or (not parsed and not empty_array_is_verified_clean(raw_text)):
+                    answers = None
+                else:
+                    answers = {"change": _change_answer(_change_items(
+                        [e for e in parsed if isinstance(e, dict)], model_label=model_label, slot_id=slot_id))}
+            else:
+                answers = parse_two_part_answer(raw_text, parts, model_label=model_label, slot_id=slot_id)
+            if answers is None:
+                record = _actor_record(actor, idx=idx, model_label=model_label, status="parse_failure", raw_text=raw_text)
+            else:
+                usable = [p for p in parts if answers[p]["status"] == "responded"]
+                items = [f for p in usable for f in answers[p]["findings"]]
+                record = _actor_record(actor, idx=idx, model_label=model_label,
+                                       status="responded" if usable else "parse_failure", raw_text=raw_text,
+                                       parsed_items=items)
+                record.answers = answers
+                if usable:
+                    findings.extend(items)
+                    responsive.append(f"{model_label} [{slot_id}]" if slot_id else f"{model_label}#{idx + 1}")
+        record.parts = parts
+        if "coupling" in parts:
+            fact = actor.get("native_read_coverage")
+            record.coverage = coverage_state(fact)
+            if isinstance(fact, dict):
+                record.context_manifest = {"native_read_coverage": fact,
+                                           "read_provenance": str(actor.get("read_provenance") or "")}
+        records.append(record)
+    return ParsedTriadReview(findings=findings, responsive_models=responsive, actor_records=records)
 
 
 def object_verdict_payload(payload: Any) -> Optional[Dict[str, Any]]:
@@ -370,6 +564,52 @@ Return ONLY a JSON array with one entry per required checklist item. Each elemen
 There is no all-clear shortcut in this mode: an empty array is a non-response.
 Report PASS explicitly for every item you reviewed and found clean.
 """
+
+# Contract B — the two-part brief's answer (one brief, two parts): the change
+# findings array of contract A under ``change`` plus the required coupling
+# matrix under ``coupling``, in ONE object. ``change_clean`` replaces the
+# NO_FINDINGS sentinel inside the object.
+REVIEW_TWO_PART_OBJECT_CONTRACT = f"""\
+Return ONLY one JSON object with exactly these keys:
+{{
+  "change": [<Part 1 findings — each element as below>],
+  "change_clean": true | false,
+  "coupling": [<Part 2 — one entry per required coupling question, each element as below>]
+}}
+Each element of "change" and "coupling":
+{_REVIEW_JSON_ELEMENT_SCHEMA}
+"change" lists what you found reviewing the change itself; an empty "change"
+array is a clean answer ONLY together with "change_clean": true. "coupling"
+must carry one PASS or FAIL entry for EVERY required coupling question named in
+Part 2 (a PASS reason states what you checked, at least four words; there is no
+all-clear shortcut and no empty "coupling"). A seat asked only Part 2 returns
+the object with the "coupling" key alone. Prose around the object, a missing
+"coupling" block or a malformed matrix is recorded against that part; anything
+that is not the object is a non-response excluded from quorum.
+"""
+
+_TWO_PART_ELEMENT_JSON_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "item": {"type": "string"},
+        "verdict": {"type": "string", "enum": ["PASS", "FAIL"]},
+        "severity": {"type": "string", "enum": ["critical", "advisory"]},
+        "reason": {"type": "string"},
+    },
+    "required": ["item", "verdict", "reason"],
+}
+# The session output schema for the ``two_part`` shape: ``coupling`` is the key a
+# retrieving seat always owes; ``change`` is owed by the seats asked Part 1 and is
+# enforced per seat by the parser, since one surface shares one schema.
+TWO_PART_SESSION_OUTPUT_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "change": {"type": "array", "items": _TWO_PART_ELEMENT_JSON_SCHEMA},
+        "change_clean": {"type": "boolean"},
+        "coupling": {"type": "array", "items": _TWO_PART_ELEMENT_JSON_SCHEMA, "minItems": 1},
+    },
+    "required": ["coupling"],
+}
 
 
 # The sentinel is optional whitespace-separated trailer, not a stricter shape than

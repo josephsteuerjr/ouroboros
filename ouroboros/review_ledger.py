@@ -849,7 +849,24 @@ def build_commit_gate_record(facts: Dict[str, Any], *, record_id: str = "", driv
     return build_wave_record(facts, surface="commit_gate", record_id=record_id, drive_root=drive_root)
 
 
+
+def seat_parts(slot: Any, *, coupling_only: bool = False) -> tuple:
+    """The parts one seat is asked, from the one fact that decides it: a seat that
+    RETRIEVES (``ReviewSlot.retrieves`` / a plan row's ``retrieves``) reads the
+    repository itself and is asked both questions; a packet seat reads only the
+    assembled change and is asked ``change``; a ``coupling_only`` seat answers
+    ``coupling`` alone (the contract's §4.11)."""
+    if coupling_only:
+        return (PART_COUPLING,)
+    retrieves = slot.get("retrieves") if isinstance(slot, dict) else getattr(slot, "retrieves", None)
+    if retrieves is None and not isinstance(slot, dict):
+        from ouroboros.review_execution import delivery_retrieves
+
+        retrieves = delivery_retrieves(getattr(slot, "route", None), str(getattr(slot, "subagent_id", "") or ""))
+    return PARTS if retrieves else (PART_CHANGE,)
+
 __all__ = [
+    "seat_parts",
     "REVIEW_LEDGER_SCHEMA_VERSION", "ReviewLedgerRecord", "build_commit_gate_record", "build_rows", "build_wave_record",
     "distinct_model_facts", "find_reusable", "index_path", "index_row", "ledger_dir", "ledger_root", "load_record",
     "new_record_id", "normalize_model_name", "note_author_decision", "panel_facts", "read_source", "recent_records",

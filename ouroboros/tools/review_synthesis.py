@@ -504,3 +504,82 @@ def build_plan_review_messages(
             ),
         },
     ]
+
+
+COUPLING_QUESTION_IDS = (
+    "intent_alignment",
+    "forgotten_touchpoints",
+    "cross_surface_consistency",
+    "regression_surface",
+    "prompt_doc_sync",
+    "architecture_fit",
+    "cross_module_bugs",
+    "implicit_contracts",
+)
+
+
+def build_coupling_part(
+    *,
+    coupling_checklist: str,
+    required_sources_section: str,
+    repository_index: str,
+    history_block: str,
+    layer: str = "body",
+) -> str:
+    """``## Part 2 — Coupling questions`` of the two-part brief: the whole-repository
+    reviewer's role frame (the former scope reviewer's), the eight coupling
+    questions, the required-source manifest the seat is OWED, the repository
+    index it navigates with, and the coupling history of this subject. No
+    preamble, calibration, anti-pattern guard, intent, diff or answer format
+    here — Part 1 carries each exactly once, and ``## Answer format`` closes the
+    brief. ``layer`` is the checklist layer (``review_body_fact.layer_for``).
+    """
+    questions = "\n".join(f"{i}. {item}" for i, item in enumerate(COUPLING_QUESTION_IDS, start=1))
+    body_note = (
+        "Apply the `Critical surface whitelist` in `docs/CHECKLISTS.md` for prose-vs-code\n"
+        "mismatches." if layer == "body" else
+        "The subject is not the Ouroboros body: judge prose-vs-code mismatches against the\n"
+        "subject's own documents, which the index below names."
+    )
+    return f"""\
+## Part 2 — Coupling questions
+
+### Your role in this part
+
+You are the whole-repository reviewer, and you REACH the repository with your own
+read-only tools. Part 1 covers the change itself line by line; this part covers
+what the change is COUPLED to: cross-module contracts, forgotten touchpoints,
+hidden regressions, prompt/doc sync, architecture fit, and end-to-end intent
+completeness. For each finding name the exact file, symbol, test, prompt, doc,
+config, or sibling flow that proves it. Vague concerns without a concrete artifact
+reference are advisory, not critical.
+
+### The eight coupling questions
+
+Answer EVERY question below with one entry in the "coupling" block of your answer;
+the "item" field carries the identifier verbatim (case-sensitive, no substitutions).
+A missing entry means the question was not reviewed.
+
+{questions}
+
+- For FAIL: concrete artifact (file/symbol/line/contract) + what is wrong + how to fix;
+  one FAIL entry per distinct root cause, never a compressed summary.
+- For PASS: 1–2 sentences stating WHY it passes, naming a concrete artifact or code
+  path you checked. A bare "PASS" or a single-word reason is a reviewer failure.
+- Do not return duplicate PASS entries, and never PASS a question that also has a
+  FAIL — the concrete FAIL is authoritative.
+- Severity: critical requires a concrete current artifact and a required change to
+  this diff; otherwise advisory. Coupling affects only unchanged code outside the
+  diff. {body_note}
+- If an open obligation in the coupling history below already names an
+  `obligation_id` for a root cause, reuse that exact id; never invent a new id for
+  the same root cause.
+
+{coupling_checklist}
+
+{required_sources_section}
+
+{repository_index}
+
+{history_block}
+"""

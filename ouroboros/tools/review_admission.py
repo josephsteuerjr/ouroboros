@@ -44,10 +44,11 @@ orchestrator (``parallel_review._await_scope_reservation``).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import pathlib
-from typing import Any, Optional, Tuple
+from typing import Any, Optional, Sequence, Tuple
 
 log = logging.getLogger(__name__)
 
@@ -727,3 +728,308 @@ def admit_commit_gate_wave(ctx, seats) -> str | None:
         + f") does not fit {fence}. No reviewer seat was dispatched (scope and triad alike): wait for "
         f"in-flight attempts to settle or {remedy}, then retry the same commit."
     )
+
+
+# ---------------------------------------------------------------------------
+# One brief, two parts (PR-3 B): the packet seat's prompt and the retrieving
+# seat's brief are assembled here, one builder each, and ``build_two_part_brief``
+# is the pure entry over a frozen subject that an operator can call outside the
+# gate (step R: build the brief of an old subject and hand it to sessions).
+# ---------------------------------------------------------------------------
+
+# The packet prompt is assembled STABLE-FIRST for provider prompt caching: fixed
+# instructions plus the tier-1 governance rules (the layered Change Review
+# Checklist, the standing disclosures, and BIBLE.md through the constitutional
+# head) form a byte-stable prefix reused across review rounds AND across commits
+# (marked with a cache breakpoint at dispatch). The change-class governance
+# selection (`tools/governance_context.py` tiers 2 and 3) and the navigation maps
+# open the dynamic tail, ahead of goal/scope/files/diff/history.
+PACKET_TEMPLATE_STABLE = """\
+{preamble}
+
+## Part 1 — The change
+
+Read the staged diff and the supplied post-change file context (both appear
+AFTER the governance documents below). On very large changes, the fit note may
+replace duplicated full-file snapshots with a path manifest; in that case the
+complete added/deleted lines remain in the staged diff. Review every checklist
+item, report every distinct current problem, and make every FAIL actionable
+with file/symbol evidence and a concrete remedy — deleting a mechanism or
+disclosing a residual are remedies too.
+
+{critical_calibration}
+
+## Answer format
+
+{json_contract}
+
+If an open obligation record below already names an `obligation_id` for this root cause,
+reuse that exact `obligation_id`. Do NOT invent a new id when the same root cause persists.
+
+## Anti pattern-lock guard
+
+Run the shared semantic-breadth guard before returning:
+{anti_pattern_lock_guard}
+
+{checklist_section}
+
+- Output ONLY a valid JSON array.  No markdown fences, no text outside the JSON.
+
+The governance documents this change activates follow below, then its evidence.
+Navigation maps identify sources not delivered to this tool-free packet row;
+state uncertainty where the supplied evidence cannot establish a rule.
+"""
+
+PACKET_TEMPLATE_DYNAMIC = """\
+{goal_section}
+
+{scope_section}
+
+## Current touched files (full content)
+
+{current_files_section}
+
+## Staged diff
+
+{diff_text}
+
+## Changed files
+
+{changed_files}
+
+{rebuttal_section}{review_history_section}
+{task_evidence_section}
+"""
+
+
+def assemble_packet_prompt(*, layer: str, checklist_section: str, governance: Any, goal_section: str,
+                           scope_section: str, files_section: str, diff_text: str, changed_files: str,
+                           rebuttal_section: str = "", review_history_section: str = "",
+                           task_evidence_section: str = "") -> Tuple[str, int]:
+    """The packet seat's Part-1 prompt: ``(prompt, stable_prefix_len)``. The stable
+    governance prefix is byte-identical across rounds and becomes the cache-marked
+    block; the change-class governance block opens the dynamic half."""
+    from ouroboros.tools.review_helpers import CRITICAL_FINDING_CALIBRATION, anti_pattern_lock_guard, review_preamble
+    from ouroboros.triad_review import REVIEW_JSON_ARRAY_CONTRACT
+
+    stable_inline = str(getattr(governance, "stable_inline", "") or "")
+    tail = "\n\n".join(part for part in (str(getattr(governance, "selected_inline", "") or ""),
+                                          str(getattr(governance, "navigation", "") or "")) if part.strip())
+    stable = PACKET_TEMPLATE_STABLE.format(
+        preamble=review_preamble(layer), critical_calibration=CRITICAL_FINDING_CALIBRATION,
+        json_contract=REVIEW_JSON_ARRAY_CONTRACT, anti_pattern_lock_guard=anti_pattern_lock_guard(layer),
+        checklist_section=checklist_section,
+    ) + (f"\n{stable_inline}\n" if stable_inline.strip() else "")
+    dynamic = (f"{tail}\n\n" if tail else "") + PACKET_TEMPLATE_DYNAMIC.format(
+        goal_section=goal_section, scope_section=scope_section, current_files_section=files_section,
+        rebuttal_section=rebuttal_section, review_history_section=review_history_section,
+        diff_text=diff_text, changed_files=changed_files, task_evidence_section=task_evidence_section,
+    )
+    return stable + "\n" + dynamic, len(stable) + 1
+
+
+def source_root_for(ctx: Any, task_evidence: dict) -> str:
+    """The data root a paged brief source is stored under, or ``""``.
+
+    It is the root the seat's OWN reader resolves: the canonical task data root,
+    which is what the commit-review evidence view already records and what a
+    native episode reads as ``policy["native_data_root"]``. A context with no
+    resolvable data plane has nowhere to page to, and the brief inlines instead.
+    """
+    recorded = str((task_evidence or {}).get("data_root") or "").strip()
+    if recorded:
+        return recorded
+    try:
+        from ouroboros.tool_access import canonical_data_root
+
+        return str(canonical_data_root(ctx))
+    except (AttributeError, OSError, TypeError, ValueError):
+        return ""
+
+
+def seat_vectors(row_plan: dict) -> dict:
+    """The plan with its ``parts`` vector complete: a row without one is asked by
+    ``review_ledger.seat_parts`` (retrieving → both parts, packet → ``change``)."""
+    from ouroboros.review_ledger import seat_parts
+    from ouroboros.reviewer_slot_config import row_plan_retrieves
+
+    plan = dict(row_plan)
+    parts = list(plan.get("parts") or [])
+    for index in range(len(plan.get("models") or [])):
+        if index >= len(parts) or not parts[index]:
+            while len(parts) <= index:
+                parts.append(())
+            parts[index] = seat_parts({"retrieves": row_plan_retrieves(plan, index)})
+    plan["parts"] = [tuple(p) for p in parts]
+    return plan
+
+
+def fold_coupling_only_seats(row_plan: dict) -> dict:
+    """TRANSITIONAL (until packet A retires ``config.scope``): the rows an owner
+    still configures under the old scope role join the ONE wave as coupling-only
+    seats — same brief, ``parts=("coupling",)``, their own route and identity.
+    The read is explicit (``commit_scope_rows``), never a fail-open import trap:
+    a malformed configuration surfaces as the gate's infra block."""
+    from ouroboros.review_execution import ReviewRouteKind
+    from ouroboros.reviewer_slot_config import commit_scope_rows
+
+    plan = seat_vectors(row_plan)
+    seen = set(str(s) for s in plan.get("slot_ids") or [])
+    blanks = {"retrieves": False, "use_local": None, "parts": ()}
+    for slot in commit_scope_rows():
+        slot_id = str(slot.slot_id or "")
+        if not slot_id or slot_id in seen:
+            continue
+        seen.add(slot_id)
+        width = len(plan.get("models") or [])
+        for key, value in (("routes", getattr(slot, "route", None) or ReviewRouteKind.API_CHAT),
+                           ("efforts", str(getattr(slot, "effort", "") or "")),
+                           ("session_targets", str(getattr(slot, "session_target", "") or "")),
+                           ("session_profiles", str(getattr(slot, "session_profile", "") or "")),
+                           ("slot_ids", slot_id), ("subagent_ids", str(getattr(slot, "subagent_id", "") or "")),
+                           ("retrieves", True), ("use_local", getattr(slot, "use_local", None)),
+                           ("parts", ("coupling",)), ("models", str(slot.model or ""))):
+            rows = list(plan.get(key) or [])
+            rows += [blanks.get(key, "")] * (width - len(rows))
+            plan[key] = [*rows, value]
+    return plan
+
+
+def retrieving_brief_for_seat(*, review_root: Any, governance_root: Any, path_subject: Any, managed_subject: Any,
+                              diff_text: Optional[str], layer: str, checklist_section: str, commit_message: str,
+                              intent: Any, parts: Sequence[str], delegated: bool, model: str, slot_id: str,
+                              session_profile: str = "", use_local: Optional[bool] = None,
+                              task_evidence_section: str = "", drive_root: Any = None, task_id: str = "",
+                              source_root: str = "") -> Tuple[str, dict]:
+    """ONE retrieving seat's two-part brief and its manifest, from the subject's
+    frozen trees: the touched paths, the candidate tree identity and the
+    change-relative required-source manifest are computed here, the text by
+    ``review_brief_coupling.build_retrieving_brief``."""
+    from ouroboros.tools.review_brief_coupling import BriefInputs, build_retrieving_brief
+    from ouroboros.tools.scope_required_sources import (
+        required_sources_ref, scope_required_sources, staged_tree_identity, staged_touched_paths, touched_manifest,
+    )
+
+    repo_dir = pathlib.Path(review_root)
+    touched = staged_touched_paths(repo_dir, path_subject)
+    tree_sha = staged_tree_identity(repo_dir, path_subject)
+    rows = scope_required_sources(repo_dir, touched, staged_tree_sha=tree_sha, subject=path_subject, layer=layer)
+    return build_retrieving_brief(repo_dir, BriefInputs(
+        commit_message=commit_message, intent=intent,
+        drive_root=pathlib.Path(drive_root) if drive_root else None,
+        governance_repo_dir=pathlib.Path(governance_root) if governance_root else None,
+        managed_subject=managed_subject, diff_text=diff_text, task_evidence_section=task_evidence_section,
+        required_sources=rows, required_sources_ref=required_sources_ref(rows, staged_tree_sha=tree_sha),
+        touched_manifest=touched_manifest(repo_dir, touched), touched_paths=tuple(path for _s, path in touched),
+        layer=layer, checklist_section=checklist_section, parts=tuple(parts), delegated=delegated, model=model,
+        slot_id=slot_id, session_profile=session_profile, use_local=use_local, task_id=task_id, source_root=source_root,
+    ))
+
+
+def build_two_part_brief(frozen_subject: Any, seat: Any, *, layer: Optional[str] = None, goal: str = "",
+                         scope: str = "", author_questions: Sequence[str] = (), commit_message: str = "",
+                         review_rebuttal: str = "", review_history: Sequence[dict] = (),
+                         coupling_history: Sequence[dict] = (), owner_words: str = "",
+                         task_evidence_section: str = "", drive_root: Any = None, task_id: str = "",
+                         source_root: str = "", coupling_only: bool = False) -> dict:
+    """The brief ONE seat would receive for a frozen subject — pure over the
+    subject, callable outside the gate (step R).
+
+    ``frozen_subject`` is a ``review_subject.FrozenSubject`` (its ``review_root``
+    is read, its ``spec.governance_root`` governs, its ``diff_text`` is the
+    change); ``seat`` is a ``ReviewSlot``/``ReviewerSlotConfig``-like object or a
+    row dict (``slot_id``, ``model``, ``route``, ``retrieves``, ``subagent_id``,
+    ``session_profile``, ``use_local``). ``author_questions`` ride the goal
+    section as the author's own questions to the panel. Returns ``{"system",
+    "user", "parts", "sha", "delivery", "manifest", "stable_prefix_len"}``:
+    ``system`` is the whole brief text a seat is sent (the packet prompt behind
+    the constitutional head for a packet seat, the two-part brief for a
+    retrieving seat), ``user`` the one user turn every seat opens with, ``sha``
+    = ``{"brief", "change_prompt_sha", "coupling_brief_sha"}``.
+    """
+    from ouroboros.review_ledger import seat_parts
+    from ouroboros.tools import review as _rv
+    from ouroboros.tools.review_brief_coupling import BriefIntent
+    from ouroboros.tools.review_helpers import (
+        build_goal_section, build_rebuttal_section, build_review_history_section, build_scope_section,
+    )
+    from ouroboros.tools.review_multi_model import TRIAD_USER_TURN, triad_api_messages
+    from ouroboros.review_records import ReviewSlot
+
+    def _field(name: str, default: Any = "") -> Any:
+        if isinstance(seat, dict):
+            return seat.get(name, default)
+        return getattr(seat, name, default)
+
+    layer = str(layer or getattr(frozen_subject.spec, "layer", "") or "body")
+    review_root = pathlib.Path(frozen_subject.review_root)
+    governance_root = pathlib.Path(frozen_subject.spec.governance_root or review_root)
+    parts = tuple(seat_parts(seat, coupling_only=coupling_only))
+    checklist_section = _rv._load_checklist_section(layer)
+    questions = [str(q).strip() for q in author_questions if str(q or "").strip()]
+    goal_text = goal + ("\n\nAuthor's questions to the panel:\n" + "\n".join(f"- {q}" for q in questions) if questions else "")
+    goal_section = build_goal_section(goal_text, scope, commit_message, owner_words)
+    scope_section = build_scope_section(scope)
+    rebuttal_section = build_rebuttal_section(review_rebuttal)
+    history_section = build_review_history_section(list(review_history or []))
+    model, slot_id = str(_field("model") or ""), str(_field("slot_id") or "")
+    route = _field("route", None)
+    delegated = str(getattr(route, "value", route) or "") == "agent_session"
+    path_subject = frozen_subject.managed if frozen_subject.managed is not None else (
+        frozen_subject if frozen_subject.spec.kind != "index" else None)
+    intent = BriefIntent(goal=goal_text, scope=scope, review_rebuttal=review_rebuttal, review_history=list(review_history or []),
+                         coupling_history=list(coupling_history or []), owner_words=owner_words)
+    if "coupling" in parts:
+        text, manifest = retrieving_brief_for_seat(
+            review_root=review_root, governance_root=governance_root, path_subject=path_subject,
+            managed_subject=frozen_subject.managed, diff_text=frozen_subject.diff_text, layer=layer,
+            checklist_section=checklist_section, commit_message=commit_message, intent=intent, parts=parts,
+            delegated=delegated, model=model, slot_id=slot_id, session_profile=str(_field("session_profile") or ""),
+            use_local=_field("use_local", None), task_evidence_section=task_evidence_section, drive_root=drive_root,
+            task_id=task_id, source_root=source_root)
+        return {"system": text, "user": TRIAD_USER_TURN, "parts": list(parts), "sha": manifest["sha"],
+                "delivery": "retrieving", "manifest": manifest, "stable_prefix_len": 0}
+    # A packet seat: the assembled change evidence, fit to the seat's window.
+    from ouroboros.tools.review_file_pack import build_touched_file_pack, triad_pack_exclusions
+
+    touched_paths = [path for _status, path in frozen_subject.name_status] if frozen_subject.name_status else [
+        p.strip() for p in str(_rv.run_cmd(["git", "diff", "--cached", "--name-only"], cwd=review_root) or "").splitlines() if p.strip()]
+    slot = ReviewSlot(slot_id=slot_id, model=model, session_profile=str(_field("session_profile") or ""),
+                      use_local=_field("use_local", None))
+    governance = _rv._triad_governance_context(
+        None, touched_paths, checklist_section, [model], [slot], governance_root=governance_root, layer=layer,
+        subject_root=review_root if layer != "body" else None)
+    managed = frozen_subject.managed
+    exclude_paths, exclusion_note = (set(), "") if managed is not None else triad_pack_exclusions(
+        review_root, touched_paths, prefix_texts=dict(governance.inline_whole_documents))
+    files_section, omitted = build_touched_file_pack(
+        review_root, touched_paths, represent_binary=managed is not None,
+        m0_tree=getattr(managed, "m0_tree", "") or "", staged_tree=getattr(managed, "staged_tree", "") or "",
+        exclude_paths=exclude_paths)
+    if omitted:
+        files_section += f"\n\n⚠️ OMISSION NOTE: {len(omitted)} file(s) omitted from direct context: {', '.join(omitted)}"
+    if exclusion_note:
+        files_section += f"\n\n{exclusion_note}"
+    changed = "\n".join(touched_paths)
+
+    def _assemble(files: str, diff: str) -> Tuple[str, int]:
+        return assemble_packet_prompt(
+            layer=layer, checklist_section=checklist_section, governance=governance, goal_section=goal_section,
+            scope_section=scope_section, files_section=files or "(no touched files could be read)", diff_text=diff,
+            changed_files=changed, rebuttal_section=rebuttal_section, review_history_section=history_section,
+            task_evidence_section=task_evidence_section)
+
+    prompt, stable_len, fit_error = fit_triad_prompt(
+        [model], _assemble, files_section, frozen_subject.diff_text, changed, str(review_root), ctx=None,
+        subject=managed, slots=[slot],
+        compact_diff=(lambda: frozen_subject.render_prompt_diff(0)) if not frozen_subject.is_system_index else None)
+    if fit_error:
+        raise ValueError(fit_error)
+    messages, _bible = triad_api_messages(prompt, stable_len, TRIAD_USER_TURN, layer=layer)
+    system = "".join(str(block.get("text") or "") if isinstance(block, dict) else str(block)
+                     for block in (messages[0]["content"] if isinstance(messages[0]["content"], list) else [messages[0]["content"]]))
+    sha = hashlib.sha256(system.encode("utf-8")).hexdigest()
+    return {"system": system, "user": TRIAD_USER_TURN, "parts": list(parts),
+            "sha": {"brief": sha, "change_prompt_sha": sha, "coupling_brief_sha": ""},
+            "delivery": "packet", "manifest": {"governance_manifest": list(governance.manifest), "prompt_chars": len(prompt)},
+            "stable_prefix_len": stable_len}

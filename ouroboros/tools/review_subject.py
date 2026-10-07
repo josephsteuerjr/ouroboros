@@ -564,13 +564,16 @@ def build_triad_session_task(*, goal_section: str, scope_section: str,
                              governance: Optional[Any] = None,
                              subject: Optional[ManagedReviewSubject] = None,
                              layer: str = "body",
-                             subject_root: Optional[Any] = None) -> str:
+                             subject_root: Optional[Any] = None,
+                             subject_section: Optional[str] = None) -> str:
     """The commit-triad task in SESSION delivery (5.2/5.3): the SAME preamble,
     calibration, checklist and goal/scope/history the api pack carries — but no
     assembled evidence. The subject is a pointer (the session takes the staged
     diff itself) — except for a managed resolution, whose authoritative delta
-    artifact is inlined. Governance uses the same inline rules and navigation
-    tiers as the other review deliveries. ``layer`` is the checklist layer
+    artifact is inlined — unless the caller renders the subject slot itself
+    (``subject_section``: the two-part brief inlines or pages the change there).
+    Governance uses the same inline rules and navigation tiers as the other
+    review deliveries. ``layer`` is the checklist layer
     (`review_body_fact.layer_for`): the core layer carries no Ouroboros
     constitution, handbook or book maps — the subject (``subject_root``) is
     not the body."""
@@ -640,7 +643,7 @@ def build_triad_session_task(*, goal_section: str, scope_section: str,
         scope_section,
         rebuttal_section,
         review_history_section,
-        _session_subject_section(subject),
+        _session_subject_section(subject) if subject_section is None else subject_section,
         governance_fallback,
         *nav_maps,
     ] if str(part or "").strip())
