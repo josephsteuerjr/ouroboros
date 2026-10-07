@@ -243,7 +243,7 @@ def test_yaml_extra_values_do_not_break_named_detail(registry, padding):
     folder = _seed(registry, "yaml-extra", body=body)
     manifest = folder / "SKILL.md"
     text = manifest.read_text()
-    manifest.write_text(text.replace("\n---\n", "\npublished: 2026-10-08\nlabels: !!set {alpha: null, beta: null}\nindexes: {1: alpha, text: beta}\nshared: &self {back: *self}\n---\n", 1))
+    manifest.write_text(text.replace("\n---\n", "\npublished: 2026-10-08\nlabels: !!set {alpha: null, beta: null}\nindexes: {1: alpha, text: beta}\nnumeric: {1: alpha, 2: beta}\nfloats: [.nan, .inf]\nshared: &self {back: *self}\n---\n", 1))
     row = _consumer(registry, {"name": "yaml-extra", "detail": True})["skills"][0]
     if padding:
         ref = row["source_ref"]
@@ -258,5 +258,9 @@ def test_yaml_extra_values_do_not_break_named_detail(registry, padding):
     assert complete["raw_extra"]["published"] == datetime.date(2026, 10, 8)
     assert complete["raw_extra"]["labels"] == {"alpha", "beta"}
     assert complete["raw_extra"]["indexes"] == {1: "alpha", "text": "beta"}
+    assert complete["raw_extra"]["numeric"] == {1: "alpha", 2: "beta"}
+    import math
+    assert math.isnan(complete["raw_extra"]["floats"][0])
+    assert complete["raw_extra"]["floats"][1] == math.inf
     shared = complete["raw_extra"]["shared"]
     assert shared["back"] is shared

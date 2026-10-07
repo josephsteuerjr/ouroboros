@@ -89,14 +89,12 @@ def _detail(ctx: Any, row: dict, drive_root: Any) -> dict:
                    for tool in _tools.values() if tool.get("skill") == selected.name]
     manifest = {field.name: getattr(selected.manifest, field.name)
                 for field in fields(selected.manifest)}
-    try:
-        _encode(manifest)
-    except (TypeError, ValueError):
-        # The tolerant parser accepts YAML dates, sets and aliases. Keep their
-        # meaning in YAML rather than silently stringifying/dropping extras.
-        import yaml
-        manifest = {"body": selected.manifest.body, "representation": "yaml",
-                    "yaml": yaml.safe_dump(manifest, allow_unicode=True, sort_keys=False)}
+    # The parser accepts YAML types, numeric keys and non-finite floats.
+    # Use one lossless representation, not a JSON-compatibility classifier:
+    # json.dumps can silently coerce keys even when it raises no exception.
+    import yaml
+    manifest = {"body": selected.manifest.body, "representation": "yaml",
+                "yaml": yaml.safe_dump(manifest, allow_unicode=True, sort_keys=False)}
     return {**row, "manifest": manifest, "tool_schemas": schemas}
 
 
