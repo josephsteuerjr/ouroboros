@@ -226,11 +226,13 @@ def _verify_shared_external_workspace(
         return False, [], str(exc)
     if not patch_path.is_file() or not patch_path.stat().st_size:
         return (True, [], "") if file_rows else (False, [], "workspace patch and file outputs are absent")
+    from ouroboros.subagent_worktrees import isolated_git_env
     proc = subprocess.run(
         ["git", "apply", "--check", "--reverse", str(patch_path)],
         cwd=str(target),
         capture_output=True,
         text=True,
+        env={**isolated_git_env(), "GIT_CEILING_DIRECTORIES": str(resolved_target.parent)},
     )
     if proc.returncode != 0:
         detail = (proc.stderr or proc.stdout or "").strip()
@@ -510,8 +512,11 @@ def _handle_external_workspace_integration(
         return _verify_directory_direct_result(
             ctx, child_task_id, reason, target, manifest, patch_path.parent,
         )
-    # Parse captured bytes outside B; only the later reverse check reads B files.
-    patch_touched, parse_error = (_patch_touched_paths(patch_path, patch_path.parent)
+    # Parse all captured paths without an ancestor repo's subdirectory prefix.
+    # Git searches the ceiling itself, so stop at the artifact folder's parent.
+    from ouroboros.subagent_worktrees import isolated_git_env
+    parse_env = {**isolated_git_env(), "GIT_CEILING_DIRECTORIES": str(patch_path.parent.resolve().parent)}
+    patch_touched, parse_error = (_patch_touched_paths(patch_path, patch_path.parent, env=parse_env)
                                   if patch_path.is_file() and patch_path.stat().st_size else (set(), ""))
     if parse_error:
         return f"⚠️ INTEGRATE_PATCH_UNREADABLE: cannot parse {child_task_id} workspace.patch: {parse_error[:300]}"
@@ -546,9 +551,11 @@ def _handle_external_workspace_integration(
         return (f"{prefix}{len(authoritative_touched)} file(s) verified in {target}. "
                 f"No patch was re-applied or transferred to the parent's folder.{checkpoint} "
                 f"Verdict: {verdict or '(unwritten)'}.{_format_patch_exclusions(manifest)}{warning}")
-    code = "INTEGRATE_EXTERNAL_WORKSPACE_MISSING" if missing else "INTEGRATE_EXTERNAL_WORKSPACE_MISMATCH"
-    return (f"⚠️ {code}: child {child_task_id} result does not verify in {target}: "
-            f"{missing or detail}. Verdict: {verdict or '(unwritten)'}. Captured result retained.")
+    if missing:
+        return (f"⚠️ INTEGRATE_EXTERNAL_WORKSPACE_MISSING: child {child_task_id} result does not verify in {target}: "
+                f"{missing}. Verdict: {verdict or '(unwritten)'}. Captured result retained.")
+    return (f"⚠️ INTEGRATE_EXTERNAL_WORKSPACE_MISMATCH: child {child_task_id} result does not verify in {target}: "
+            f"{detail}. Verdict: {verdict or '(unwritten)'}. Captured result retained.")
 
 
 def _integrate_subagent_patch(

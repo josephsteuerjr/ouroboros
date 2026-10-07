@@ -326,3 +326,41 @@ def test_symlink_path_escape_is_rejected_without_reading_destination(env, monkey
     assert outside.read_bytes() == b"private sentinel\n"
     assert (art / "workspace.patch").is_file()
     assert_unabsorbed(drive)
+
+
+def test_capture_under_ancestor_repo_cannot_hide_patch_paths_from_policy(env):
+    parent, _, b, drive = env
+    art = capture(parent, b, drive)
+    ancestor = drive.parent
+    git(ancestor, "init", "-q")
+    git(ancestor, "config", "user.name", "Fixture")
+    git(ancestor, "config", "user.email", "fixture@example.invalid")
+    (ancestor / "sentinel.txt").write_bytes(b"ancestor\n")
+    git(ancestor, "add", "sentinel.txt")
+    git(ancestor, "commit", "-qm", "ancestor")
+    manifest_path = art / "workspace_patch.json"
+    manifest = json.loads(manifest_path.read_text())
+    # Path admission derives from captured patch bytes, not these hints.
+    manifest["tracked_changed"] = []
+    manifest["untracked_included"] = []
+    manifest_path.write_text(json.dumps(manifest))
+    parent.task_contract = {"resource_policy": {"protected_artifacts": [{
+        "id": "reference", "paths": [str(b / "a.txt")], "deny": ["read_bytes"]}]}}
+    before = snapshot(b), (art / "workspace.patch").read_bytes()
+    assert "INTEGRATE_TARGET_FORBIDDEN" in invoke(parent)
+    assert (snapshot(b), (art / "workspace.patch").read_bytes()) == before
+    assert_unabsorbed(drive)
+
+
+def test_ambient_git_locations_cannot_redirect_b_verification(env, monkeypatch):
+    parent, a, b, drive = env
+    capture(parent, b, drive)
+    before = snapshot(a), snapshot(b)
+    monkeypatch.setenv("GIT_DIR", str(a / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(a))
+    monkeypatch.setenv("GIT_INDEX_FILE", str(a / ".git" / "index"))
+    assert "Verified external_workspace child" in invoke(parent)
+    # Observe actual trees outside the deliberately contaminated environment.
+    for key in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
+        monkeypatch.delenv(key)
+    assert (snapshot(a), snapshot(b)) == before
