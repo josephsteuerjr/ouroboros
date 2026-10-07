@@ -1,0 +1,328 @@
+"""Public consumer: admitted child B → real capture → parent verifies B, never A."""
+from hashlib import sha256
+import json
+from pathlib import Path
+import subprocess
+from types import SimpleNamespace
+
+import pytest
+
+from ouroboros.artifacts import task_artifact_dir_path, copy_directory_to_task_artifacts
+from ouroboros.headless import finalize_task_artifacts
+from ouroboros.task_results import load_task_result, write_task_result
+from ouroboros.task_status import load_effective_task_result
+from ouroboros.tools.registry import ToolContext, ToolRegistry
+from ouroboros.workspace_patch_capture import write_workspace_patch_artifacts
+from supervisor.events_subagent_admission import _resolve_subagent_constraint
+
+
+def git(root, *args):
+    return subprocess.run(["git", *args], cwd=root, capture_output=True, check=True).stdout
+
+
+def init(root):
+    root.mkdir()
+    git(root, "init", "-q")
+    git(root, "config", "user.name", "Fixture")
+    git(root, "config", "user.email", "fixture@example.invalid")
+    (root / "a.txt").write_bytes(b"one\ntwo\nthree\n")
+    git(root, "add", "a.txt")
+    git(root, "commit", "-qm", "base")
+
+
+@pytest.fixture
+def env(tmp_path, monkeypatch):
+    system, a, b, drive = [tmp_path / n for n in ("system", "a", "b", "state")]
+    for root in (system, a, b):
+        init(root)
+    drive.mkdir()
+    monkeypatch.setenv("OUROBOROS_RUNTIME_MODE", "advanced")
+    monkeypatch.setenv("OUROBOROS_ALLOW_MUTATIVE_SUBAGENTS", "true")
+    monkeypatch.setenv("OUROBOROS_SAFETY_MODE", "off")
+    monkeypatch.setattr("ouroboros.tool_access._user_files_root", lambda: tmp_path)
+    parent = ToolContext(repo_dir=system, drive_root=drive, task_id="parent",
+                         workspace_root=a, workspace_mode="external")
+    return parent, a, b, drive
+
+
+def capture(parent, b, drive, *, direct=False, edit=None):
+    constraint, root, mode, error = _resolve_subagent_constraint(
+        SimpleNamespace(REPO_DIR=parent.repo_dir, DRIVE_ROOT=drive), tid="child",
+        requested_constraint={"mode": "acting_subagent", "surface": "external_workspace", "write_root": str(b)},
+        workspace_root=str(b), workspace_mode="external", base_sha="", parent_task_id="parent")
+    assert not error
+    task = {"id": "child", "workspace_root": root, "workspace_mode": mode, "task_constraint": constraint}
+    if edit:
+        edit()
+    else:
+        (b / "a.txt").write_bytes(b"one\nchanged\nthree\n")
+    write_task_result(drive, "child", "completed", result="Files written in assigned B",
+                      parent_task_id="parent", root_task_id="parent", delegation_role="subagent",
+                      workspace_root=root, task_constraint=constraint)
+    art = task_artifact_dir_path(drive, "child", create=True)
+    if direct:
+        child = ToolContext(repo_dir=parent.repo_dir, drive_root=drive, task_id="child",
+                            workspace_root=b, workspace_mode="external")
+        copy_directory_to_task_artifacts(child, b / "rendered")
+        finalize_task_artifacts(drive, task)
+    else:
+        _, manifest = write_workspace_patch_artifacts(b, art, task=task)
+        assert manifest["status"] == "ready_with_changes", manifest
+    return art
+
+
+def invoke(parent, **args):
+    registry = ToolRegistry(repo_dir=parent.repo_dir, drive_root=parent.drive_root)
+    registry.set_context(parent)
+    return registry.execute_result("integrate_subagent_patch", {"task_id": "child", **args}).text
+
+
+def snapshot(root):
+    files = {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*")
+             if p.is_file() and ".git" not in p.relative_to(root).parts}
+    if (root / ".git").exists():
+        index = Path(git(root, "rev-parse", "--git-path", "index").decode().strip())
+        if not index.is_absolute():
+            index = root / index
+        return files, git(root, "rev-parse", "HEAD"), index.read_bytes()
+    return files, None, None
+
+
+def verdict(drive):
+    path = task_artifact_dir_path(drive, "parent") / "subagent_patch_verdict_child.json"
+    return json.loads(path.read_text())
+
+
+def assert_unabsorbed(drive):
+    assert not load_effective_task_result(drive, "child").get("child_result_disposition")
+
+
+@pytest.mark.parametrize("kind", ["different_repo", "linked", "no_external", "unavailable_a", "same_root"])
+def test_public_verifies_at_b_without_transfer(env, monkeypatch, kind):
+    parent, a, b, drive = env
+    if kind == "linked":
+        subprocess.run(["git", "worktree", "add", "-q", "-b", "child-branch", str(b.parent / "linked")], cwd=a, check=True)
+        b = b.parent / "linked"
+    elif kind == "same_root":
+        b = a
+    elif kind == "no_external":
+        parent.workspace_root = None
+        parent.workspace_mode = ""
+    elif kind == "unavailable_a":
+        parent.workspace_root = a.parent / "missing"
+    art = capture(parent, b, drive)
+    before = snapshot(a), snapshot(b), (art / "workspace.patch").read_bytes()
+    for target_args in ({}, {"target_root": str(b)}):
+        out = invoke(parent, **target_args)
+        assert "Verified external_workspace child" in out, out
+        assert "transferred to the parent's folder" in out
+        assert verdict(drive)["target_root"] == str(b.resolve())
+        assert verdict(drive)["applied"] is False
+        assert (snapshot(a), snapshot(b), (art / "workspace.patch").read_bytes()) == before
+    assert load_effective_task_result(drive, "child")["child_result_disposition"] == "integrated"
+
+
+@pytest.mark.parametrize("change", ["wrong_target", "capture_root", "result_root", "base", "missing_assignment"])
+def test_identity_refusals_precede_b_verification(env, monkeypatch, change):
+    parent, a, b, drive = env
+    art = capture(parent, b, drive)
+    manifest = json.loads((art / "workspace_patch.json").read_text())
+    args = {}
+    if change == "wrong_target":
+        args["target_root"] = str(a)
+    elif change == "capture_root":
+        manifest["workspace_root"] = str(a)
+    elif change == "base":
+        manifest["base_head"] = "0" * 40
+    else:
+        row_path = drive / "task_results" / "child.json"
+        row = json.loads(row_path.read_text())
+        if change == "result_root":
+            row["workspace_root"] = str(a)
+        else:
+            row.pop("workspace_root")
+            row["task_constraint"].pop("write_root")
+        row_path.write_text(json.dumps(row))
+    (art / "workspace_patch.json").write_text(json.dumps(manifest))
+    monkeypatch.setattr("ouroboros.tools.subagent_integration._verify_shared_external_workspace",
+                        lambda *a, **k: pytest.fail("B was verified before identity admission"))
+    before = snapshot(a), snapshot(b), (art / "workspace.patch").read_bytes()
+    assert "TARGET_MISMATCH" in invoke(parent, **args)
+    assert (snapshot(a), snapshot(b), (art / "workspace.patch").read_bytes()) == before
+    assert_unabsorbed(drive)
+
+
+def ceiling(parent, root, prefix):
+    from ouroboros.presence_authority import (PresenceCapabilityCeiling, PresenceToolGrant,
+                                             PresenceResourceGrant, presence_ceiling_payload)
+    parent.task_contract = {"capability_ceiling": presence_ceiling_payload(PresenceCapabilityCeiling(
+        skill_name="fixture", skill_content_hash="a" * 64, profile_fingerprint="b" * 64,
+        state_fingerprint="c" * 64, selection_fingerprint="d" * 64, model_slot="main", inline_max_rounds=10,
+        tool_grants=(PresenceToolGrant("integrate_subagent_patch"),),
+        resource_grants=(PresenceResourceGrant(root=root, operations=("read",), path_prefix=prefix),), digest="e" * 64))}
+
+
+@pytest.mark.parametrize("restriction", ["off_home", "presence", "protected_read"])
+def test_read_admission_precedes_source_checks(env, monkeypatch, restriction):
+    parent, a, b, drive = env
+    art = capture(parent, b, drive)
+    if restriction == "off_home":
+        parent.workspace_root = None
+        parent.workspace_mode = ""
+        monkeypatch.setattr("ouroboros.tool_access._user_files_root", lambda: b.parent / "other-home")
+    elif restriction == "presence":
+        ceiling(parent, "active_workspace", ".")
+    else:
+        parent.task_contract = {"resource_policy": {"protected_artifacts": [{
+            "id": "black-box", "paths": [str(b / "a.txt")], "deny": ["read_bytes"]}]}}
+    monkeypatch.setattr("ouroboros.tools.subagent_integration._verify_shared_external_workspace",
+                        lambda *a, **k: pytest.fail("B content verification bypassed read authority"))
+    out = invoke(parent)
+    assert "INTEGRATE_TARGET_FORBIDDEN" in out, out
+    assert_unabsorbed(drive)
+    assert (art / "workspace.patch").is_file()
+
+
+def test_presence_read_grant_allows_b(env):
+    parent, _, b, drive = env
+    capture(parent, b, drive)
+    ceiling(parent, "user_files", b.name)
+    assert "Verified external_workspace child" in invoke(parent)
+
+
+def test_cyber_no_external_parent_keeps_existing_off_home_read(env, monkeypatch):
+    parent, _, b, drive = env
+    capture(parent, b, drive)
+    parent.workspace_root, parent.workspace_mode = None, ""
+    monkeypatch.setenv("OUROBOROS_RUNTIME_MODE", "cyber_pro")
+    monkeypatch.setattr("ouroboros.tool_access._user_files_root", lambda: b.parent / "other-home")
+    assert "Verified external_workspace child" in invoke(parent)
+
+
+@pytest.mark.parametrize("drift", ["patch_bytes", "content", "legacy_fields", "live_head"])
+def test_capture_integrity_legacy_and_shared_head_movement(env, drift):
+    parent, a, b, drive = env
+    art = capture(parent, b, drive)
+    if drift == "patch_bytes":
+        with (art / "workspace.patch").open("ab") as stream:
+            stream.write(b"corruption")
+    elif drift == "content":
+        (b / "a.txt").write_bytes(b"later\n")
+    elif drift == "live_head":
+        git(b, "add", "a.txt")
+        git(b, "commit", "-qm", "shared parent commit")
+    else:
+        p = art / "workspace_patch.json"
+        m = json.loads(p.read_text())
+        m.pop("workspace_root"); m.pop("base_head")
+        p.write_text(json.dumps(m))
+    before = snapshot(a), snapshot(b)
+    out = invoke(parent)
+    assert (snapshot(a), snapshot(b)) == before
+    if drift in {"patch_bytes", "content"}:
+        assert "CORRUPT" in out if drift == "patch_bytes" else "WORKSPACE_MISMATCH" in out
+        assert_unabsorbed(drive)
+    else:
+        assert "Verified external_workspace child" in out, out
+
+
+@pytest.mark.parametrize("kind", ["delete", "rename", "binary"])
+def test_git_path_variants_are_verified_not_applied(env, kind):
+    parent, a, b, drive = env
+    def edit():
+        if kind == "delete":
+            (b / "a.txt").unlink()
+        elif kind == "rename":
+            git(b, "mv", "a.txt", "renamed.txt")
+            (b / "renamed.txt").write_bytes(b"one\nchanged\nthree\n")
+        else:
+            (b / "a.txt").write_bytes(b"binary\x00\xff")
+    capture(parent, b, drive, edit=edit)
+    before = snapshot(a), snapshot(b)
+    assert "Verified external_workspace child" in invoke(parent)
+    assert (snapshot(a), snapshot(b)) == before
+    assert not verdict(drive)["applied"]
+
+
+@pytest.mark.parametrize("deny_member", [False, True])
+def test_directory_registered_members_at_b_and_operation_specific_denial(env, monkeypatch, deny_member):
+    parent, a, b, drive = env
+    # Admission chooses an ordinary non-Git B, not a second Git mechanism.
+    b = b.parent / "plain"
+    b.mkdir()
+    def edit():
+        (b / "rendered").mkdir()
+        (b / "rendered" / "frame.bin").write_bytes(b"image\x00")
+    art = capture(parent, b, drive, direct=True, edit=edit)
+    if deny_member:
+        parent.task_contract = {"resource_policy": {"protected_artifacts": [{
+            "id": "black-box", "paths": [str(b / "rendered" / "frame.bin")], "deny": ["hash"]}]}}
+    before = snapshot(a), snapshot(b)
+    out = invoke(parent)
+    assert (snapshot(a), snapshot(b)) == before
+    if deny_member:
+        assert "RESOURCE_POLICY_BLOCKED" in out, out
+        assert_unabsorbed(drive)
+    else:
+        assert "Verified 1 registered file postimage(s)" in out, out
+        assert verdict(drive)["outcome"] == "verified_registered_outputs"
+        assert not verdict(drive)["applied"]
+    assert (art / "workspace_patch.json").is_file()
+
+
+def test_cooperative_target_and_wrong_explicit_target_use_common_admission(env, monkeypatch):
+    parent, a, b, drive = env
+    monkeypatch.setenv("OUROBOROS_SUBAGENT_PROJECTS_ROOT", str(b.parent))
+    capture(parent, b, drive)
+    assert "TARGET_MISMATCH" in invoke(parent, target_root=str(a))
+    assert_unabsorbed(drive)
+    out = invoke(parent)
+    assert out.startswith("OK: cooperative no-op"), out
+    assert verdict(drive)["outcome"] == "coop_already_in_tree"
+
+
+def test_file_reference_postimage_hash_policy_is_checked_before_verification(env, monkeypatch):
+    parent, a, b, drive = env
+    monkeypatch.setattr("ouroboros.workspace_patch_capture._PATCH_FILE_REFERENCE_BYTES", 1)
+    art = capture(parent, b, drive)
+    manifest = json.loads((art / "workspace_patch.json").read_text())
+    assert manifest["file_output_changes"]
+    parent.task_contract = {"resource_policy": {"protected_artifacts": [{
+        "id": "hash-only", "paths": [str(b / "a.txt")], "deny": ["hash"]}]}}
+    monkeypatch.setattr("ouroboros.tools.subagent_integration._verify_shared_external_workspace",
+                        lambda *a, **k: pytest.fail("postimage hashing bypassed task policy"))
+    assert "RESOURCE_POLICY_BLOCKED" in invoke(parent)
+    assert_unabsorbed(drive)
+
+
+def test_relative_task_policy_is_not_reinterpreted_at_child_b(env):
+    parent, a, b, drive = env
+    capture(parent, b, drive)
+    # Relative policy refers to A/a.txt, not every same-named file in B.
+    parent.task_contract = {"resource_policy": {"protected_artifacts": [{
+        "id": "parent-only", "paths": ["a.txt"], "deny": ["read_bytes", "hash"]}]}}
+    assert "Verified external_workspace child" in invoke(parent)
+
+
+def test_task_disabled_tool_cannot_gain_authority_from_child_assignment(env):
+    parent, _, b, drive = env
+    capture(parent, b, drive)
+    parent.task_contract = {"disabled_tools": ["integrate_subagent_patch"]}
+    out = invoke(parent)
+    assert "Verified external_workspace child" not in out
+    assert_unabsorbed(drive)
+
+
+def test_symlink_path_escape_is_rejected_without_reading_destination(env, monkeypatch):
+    parent, _, b, drive = env
+    art = capture(parent, b, drive)
+    outside = b.parent / "outside.txt"
+    outside.write_bytes(b"private sentinel\n")
+    (b / "a.txt").unlink()
+    (b / "a.txt").symlink_to(outside)
+    monkeypatch.setattr("ouroboros.tools.subagent_integration._verify_shared_external_workspace",
+                        lambda *a, **k: pytest.fail("escaped source was read"))
+    assert "WORKSPACE_MISSING" in invoke(parent)
+    assert outside.read_bytes() == b"private sentinel\n"
+    assert (art / "workspace.patch").is_file()
+    assert_unabsorbed(drive)
