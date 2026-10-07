@@ -15,6 +15,7 @@ from ouroboros.config import (
     load_settings,
 )
 from ouroboros.server_runtime import apply_runtime_provider_defaults, has_startup_ready_provider
+from ouroboros.win_dark_frame import apply_dark_titlebar
 
 # The launcher's own logger: these lines belong in launcher.log next to the
 # startup sequence they are part of.
@@ -115,7 +116,7 @@ def present_first_run_onboarding(
                 window.destroy()
             return "ok"
 
-    webview.create_window(
+    setup_window = webview.create_window(
         "Ouroboros — Setup",
         url=f"http://127.0.0.1:{port}/onboarding",
         js_api=OnboardingHostApi(),
@@ -123,6 +124,7 @@ def present_first_run_onboarding(
         height=780,
         min_size=(840, 640),
     )
+    apply_dark_titlebar(setup_window)  # follows the OS apps theme, like the main window (#1417)
     # Share persistent local UI storage with the same-origin main window.
     # This includes cookies and website data, not only the appearance choice.
     webview.start(private_mode=False)

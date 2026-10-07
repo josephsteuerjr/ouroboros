@@ -64,6 +64,7 @@ from ouroboros.launcher_background import (Background, activate_running_instance
 from ouroboros.launcher_server_reaper import (
     reap_same_install_strays as _reap_same_install_strays_impl,
 )
+from ouroboros.win_dark_frame import apply_dark_titlebar
 from ouroboros.launcher_windows_runtime import (  # noqa: F401  (re-exported: same objects, prior launcher surface)
     _prepare_windows_webview_runtime,
     _show_windows_message,
@@ -1205,10 +1206,7 @@ def main(argv=()):
                 time.sleep(0.5)
                 port = _read_port_file()
             existing_url = f"http://127.0.0.1:{port}"
-            print(
-                f"Ouroboros is already running at {existing_url}",
-                file=sys.stderr,
-            )
+            print(f"Ouroboros is already running at {existing_url}", file=sys.stderr)
             # Desktop-icon launches have no visible stderr, so the notice
             # alone reads as "Open does nothing". Surface the running
             # instance the same way a fresh headless boot would — open the
@@ -1218,13 +1216,14 @@ def main(argv=()):
             if not _external_ui:
                 _open_browser_detached(existing_url).join(timeout=5.0)
             return
-        webview.create_window(
+        already_window = webview.create_window(
             "Ouroboros",
             html="<html><body style='background:#1a1a2e;color:white;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0'>"
             "<div style='text-align:center'><h2>Ouroboros is already running</h2><p>Only one instance can run at a time.</p></div></body></html>",
             width=420,
             height=200,
         )
+        apply_dark_titlebar(already_window, force_dark=True)
         webview.start(private_mode=False)
         return
 
@@ -1313,6 +1312,7 @@ def main(argv=()):
             width=520,
             height=300,
         )
+        apply_dark_titlebar(git_window, force_dark=True)
         webview.start(func=_git_page, args=[git_window], private_mode=False)
         if not check_git():
             sys.exit(1)
@@ -1391,15 +1391,13 @@ def main(argv=()):
         lifecycle_thread.join(timeout=5)
         if _headless:
             _kill_orphaned_children(actual_port, reason="startup_failure")
-            print(
-                "Ouroboros failed to start: the local agent server did not "
-                "become ready.\n"
-                f"See {_log_dir / 'launcher.log'} and "
-                f"{_log_dir / 'agent_stdout.log'} for details.",
-                file=sys.stderr,
+            _failed_msg = (
+                f"Ouroboros failed to start: the local agent server did not become ready.\n"
+                f"See {_log_dir / 'launcher.log'} and {_log_dir / 'agent_stdout.log'} for details."
             )
+            print(_failed_msg, file=sys.stderr)
             sys.exit(1)
-        webview.create_window(
+        failed_window = webview.create_window(
             "Ouroboros — Startup Failed",
             html=(
                 "<html><body style='background:#1a1a2e;color:white;font-family:system-ui;"
@@ -1415,6 +1413,7 @@ def main(argv=()):
             width=520,
             height=260,
         )
+        apply_dark_titlebar(failed_window, force_dark=True)
         webview.start(private_mode=False)
         return
 
@@ -1576,6 +1575,7 @@ def main(argv=()):
         background_color="#0d0b0f",
         text_select=True, hidden=background.start_hidden(options.launch_intent),
     )
+    apply_dark_titlebar(window)  # OS-dark => dark frame; the UI follows the OS apps theme (#1417)
     _webview_window = background.attach(window)  # Persist cookies and website data (ouroboros.theme); rebuild/limits: ARCHITECTURE §3.
     webview.start(func=background.run, debug=False, private_mode=False)
 

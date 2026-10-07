@@ -323,6 +323,7 @@ server.py (Starlette+uvicorn) ← HTTP + WebSocket on configurable host:port (de
       ├── launcher_onboarding.py ← First-run onboarding as the desktop launcher presents it (serves the gateway /onboarding page; §2)
       ├── launcher_server_reaper.py ← POSIX same-install server discovery, pre-signal descendant capture, root-first termination, live identity revalidation; PID-lock-owning launcher only (Runtime topology below)
       ├── launcher_windows_runtime.py ← Windows-only pythonnet/pywebview runtime preparation
+      ├── win_dark_frame.py ← DWMWA_USE_IMMERSIVE_DARK_MODE for the pinned pywebview 5.4 WinForms shell (#1417): one best-effort attribute per window, sampled at show time
       ├── launcher_background.py ← Desktop background mode: close vs quit, the one consent question, quiet start, the way back, second-launch activation (§9)
       ├── launcher_tray.py, launcher_tray_macos.py ← Its indicators: Windows notification-area icon on an STA thread (FormClosing sees the close reason); macOS menu-bar item, Dock reopen, quit marking (§9)
       ├── desktop_autostart.py, windows_autostart.py ← Host sign-in adapter table; packaged-launcher gate, Windows registry, macOS LaunchAgent and Linux systemd/XDG state (Runtime topology below)
