@@ -1,7 +1,9 @@
 /** Post-setup field guide. All actions prepare a draft or open an existing page; none sends.
- *  Chrome is authored in English and translated by the install's i18n overlay; template
- *  drafts and runtime feedback live in textareas/status text the overlay excludes, so they
- *  go through tr() at this producer. */
+ *  Chrome is authored in English and translated by the install's i18n overlay; the overlay
+ *  skips textareas and this module opts the feedback line out (data-i18n-skip), so template
+ *  drafts and runtime feedback are translated here at the producer through tr(). The boot
+ *  dictionary read can land after this page mounts, so the template textareas repaint on
+ *  ouro:language-changed — leaving any textarea the owner already edited untouched. */
 import { renderPageHeader } from './page_header.js';
 import { PAGE_ICONS } from './page_icons.js';
 import { tr } from './i18n.js';
@@ -20,6 +22,13 @@ const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (char) => ({ '&'
 export function appendToDraft(existing, suggestion) {
     const old = String(existing || '');
     return old ? `${old}\n\n${suggestion}` : suggestion;
+}
+
+/** Whether a template textarea may be repainted with a fresh translation: yes while it still
+ *  holds exactly what we last wrote (or has never been painted); no once the owner's own edit
+ *  made the draft theirs. Pure so the draft-safety contract is unit-tested. */
+export function shouldRepaintTemplate(lastWritten, currentValue) {
+    return lastWritten === undefined || currentValue === lastWritten;
 }
 
 export function initLearn({ showPage, openSettingsTab, openDashboardTab }) {
@@ -46,7 +55,7 @@ export function initLearn({ showPage, openSettingsTab, openDashboardTab }) {
                 <li><strong>Check the result.</strong> Open the task card and the files. Status, answer, tests, review and the delivered result are different facts.</li></ol></section>
             <section id="learn-work" class="learn-section"><h3>What to ask</h3><p>Fill the frame with your own words. The button appends it to the Main Chat draft but never sends anything and never erases text you have already typed.</p>
                 <div class="learn-templates">${starters.map((item, index) => `<article class="learn-template"><h4>${escapeHtml(item.title)}</h4><label for="learn-template-${index}">Task text</label><textarea id="learn-template-${index}" rows="4">${escapeHtml(item.text())}</textarea><button type="button" data-template="${index}" class="btn btn-secondary">Add to draft &rarr;</button></article>`).join('')}</div>
-                <p class="learn-feedback" role="status" aria-live="polite"></p></section>
+                <p class="learn-feedback" role="status" aria-live="polite" data-i18n-skip></p></section>
             <section id="learn-money" class="learn-section"><h3>Spending wisely means steering the route</h3><div class="learn-grid">
                 <article><h4>Start with what you have</h4><p>A subscription spends quota; an API key may be billed per token. An empty price in the interface does not mean a free call. In Accounts check the connection, in Models the Main and Light assignments.</p></article>
                 <article><h4>Limit the risk</h4><p>In Settings &rarr; Behavior check context and background tasks, in Dashboard &rarr; Costs the spend accounting. Nano shrinks the working window but does not cancel review. A budget cap and visible estimates do not guarantee an exact external provider bill.</p></article>
@@ -66,6 +75,25 @@ export function initLearn({ showPage, openSettingsTab, openDashboardTab }) {
                 <article><h4>Images and screens</h4><p>A text model may receive a description instead of pixels. Visual verification needs an available sighted route and a look at the real result; a screenshot by itself is not a check.</p></article></div></section>
         </div>`;
     document.getElementById('content').appendChild(page);
+    // The boot dictionary read resolves after this synchronous mount, and the overlay never
+    // rewrites textareas: tr() at mount time would bake the English fallback in forever.
+    // Repaint from the same tr() seam whenever the applied language changes, but keep any
+    // textarea the owner has already edited — once their words differ from what we wrote,
+    // the draft is theirs. The page lives for the whole session, like its click listeners.
+    const templateAreas = new Map();
+    const paintTemplates = () => {
+        starters.forEach((item, index) => {
+            const area = page.querySelector(`#learn-template-${index}`);
+            if (!area) return;
+            const previous = templateAreas.get(area);
+            if (!shouldRepaintTemplate(previous, area.value)) return;
+            const text = item.text();
+            templateAreas.set(area, text);
+            area.value = text;
+        });
+    };
+    paintTemplates();
+    if (typeof window !== 'undefined') window.addEventListener('ouro:language-changed', paintTemplates);
     page.addEventListener('click', async (event) => {
         const button = event.target.closest('button');
         if (!button || !page.contains(button)) return;
@@ -88,6 +116,6 @@ export function initLearn({ showPage, openSettingsTab, openDashboardTab }) {
     // In-page links must not mutate the application's one-shot #page route.
     page.querySelectorAll('.learn-contents a').forEach((link) => link.addEventListener('click', (event) => {
         event.preventDefault();
-        page.querySelector(link.getAttribute('href'))?.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+        page.querySelector(link.getAttribute('href'))?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
     }));
 }
