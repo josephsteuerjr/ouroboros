@@ -14,8 +14,9 @@ import logging
 from typing import Any
 
 from ouroboros.artifacts import store_actor_source_bytes, task_id_for_artifacts
-from ouroboros.skill_loader import discover_selected_skill_candidates
+from ouroboros.skill_loader import discover_skill_identity
 from ouroboros.tool_capabilities import tool_result_limit
+from ouroboros.tool_access import canonical_data_root
 
 log = logging.getLogger(__name__)
 
@@ -28,7 +29,7 @@ LIST_SKILLS_SCHEMA = {
         "with inventory from this response; changed membership asks you to restart at 0. "
         "Each call freshly reads readiness, not a state snapshot. available_for_execution "
         "is SCRIPT-only; extension desired_live/live_loaded/process/load_error are separate. "
-        "No-arg calls now return the compact index, not the old full diagnostic summary."
+        "Read-only; no-argument calls return the compact index."
     ),
     "parameters": {
         "type": "object",
@@ -74,10 +75,12 @@ def _compact(row: dict) -> dict:
 
 def _detail(ctx: Any, row: dict, drive_root: Any) -> dict:
     """Use canonical selected discovery; never select a colliding location."""
-    candidates = discover_selected_skill_candidates(drive_root, str(row["name"]))
+    candidates = discover_skill_identity(drive_root, str(row["name"]))
     if len(candidates) != 1 or candidates[0].identity_collision:
         return {**_compact(row), "detail_error": "identity_collision_or_unavailable"}
     selected = candidates[0]
+    if selected.load_error or not selected.content_hash:
+        return {**_compact(row), "detail_error": "manifest_unreadable"}
     if selected.content_hash != row.get("content_hash"):
         return {**_compact(row), "detail_error": "payload_changed_during_read"}
     # Manifest has the complete body, scripts, permissions and constraints; the
@@ -105,10 +108,13 @@ def _source_record(ctx: Any, row: dict) -> dict:
     out = {**identity, "oversized": True, "complete_chars": len(data.decode("utf-8")),
            "source_status": "unavailable"}
     try:
-        ref = store_actor_source_bytes(
-            ctx.drive_root, task_id_for_artifacts(ctx), category="tool_results",
-            source_id="skill-detail", data=data, extension="json",
-        )
+        # Nested producer JSON is not a trusted copyback carrier. The lifetime
+        # owner gets the bytes first; a fork gets a mirror for its current reader.
+        for root in dict.fromkeys((canonical_data_root(ctx), ctx.drive_root)):
+            ref = store_actor_source_bytes(
+                root, task_id_for_artifacts(ctx), category="tool_results",
+                source_id="skill-detail", data=data, extension="json",
+            )
         out.update(source_status="available", source_ref=ref)
     except Exception:
         log.warning("Skill catalogue source persistence unavailable", exc_info=True)

@@ -44,12 +44,14 @@ def _seed(registry, name, *, description=None, body="Instructions: select this s
 
 
 def _consumer(registry, args):
-    text = registry.execute("list_skills", args)
+    typed = registry.execute_result("list_skills", args)
+    text = typed.text
     messages = []
     trace = {"tool_calls": []}
     process_tool_results([{"fn_name": "list_skills", "tool_call_id": "catalogue-call",
-        "result": text, "is_error": False, "tool_args": args, "args_for_log": args,
-        "result_meta": {"status": "ok"}}], messages, trace,
+        "result": text, "tool_result": typed, "is_error": typed.status == "error",
+        "tool_args": args, "args_for_log": args,
+        "result_meta": {"status": typed.status}}], messages, trace,
         emit_progress=lambda _message, **_kw: None, tools=registry)
     assert len(messages[0]["content"]) < tool_result_limit("list_skills")
     assert "FULL_RESULT_SOURCE_UNAVAILABLE" not in messages[0]["content"]
@@ -264,3 +266,45 @@ def test_yaml_extra_values_do_not_break_named_detail(registry, padding):
     assert complete["raw_extra"]["floats"][1] == math.inf
     shared = complete["raw_extra"]["shared"]
     assert shared["back"] is shared
+
+
+def test_oversized_source_survives_forked_execution_store_retirement(registry, tmp_path):
+    _seed(registry, "tail", body="x" * 24000 + "\nCANONICAL_INSTRUCTIONS_END")
+    canonical = tmp_path / "canonical"
+    canonical.mkdir()
+    (registry._ctx.drive_root / "skills").rename(canonical / "skills")
+    registry._ctx.task_metadata = {"budget_drive_root": str(canonical)}
+    page = _consumer(registry, {"name": "tail", "detail": True})
+    ref = page["skills"][0]["source_ref"]
+    # The JSON ref is producer data, not a trusted observability closure carrier.
+    # Retire the execution store without pretending generic copyback adopts it.
+    artifact_dir = registry._ctx.drive_root / "task_results" / "artifacts" / "catalogue-consumer"
+    artifact_dir.rename(tmp_path / "retired-execution-artifacts")
+    canonical_actor = ToolRegistry(repo_dir=registry._ctx.repo_dir, drive_root=canonical)
+    canonical_actor._ctx.task_id = "catalogue-consumer"
+    read = canonical_actor.execute(ref["read"]["tool"],
+        {**ref["read"]["arguments"], "start_char": 22000})
+    assert "CANONICAL_INSTRUCTIONS_END" in read
+    from ouroboros.artifacts import read_actor_source_bytes
+    exact = json.loads(read_actor_source_bytes(canonical, "catalogue-consumer", ref))
+    assert exact["manifest"]["body"].endswith("CANONICAL_INSTRUCTIONS_END")
+
+
+def test_named_detail_uses_the_same_manifest_inventory_as_index(registry):
+    _seed(registry, "unique", body="Real instructions")
+    ghost = registry._ctx.drive_root / "skills" / "clawhub" / "unique"
+    ghost.mkdir(parents=True)  # not a manifest-bearing skill in passive discovery
+    page = _consumer(registry, {"name": "unique", "detail": True})
+    assert page["total"] == 1
+    assert page["skills"][0]["manifest"]["body"] == "Real instructions"
+
+
+@pytest.mark.parametrize("bad_bytes", [b"\xff", b"---\nname: [unterminated\n---\n"])
+def test_broken_manifest_detail_never_presents_placeholder_as_instructions(registry, bad_bytes):
+    folder = _seed(registry, "broken")
+    (folder / "SKILL.md").write_bytes(bad_bytes)
+    page = _consumer(registry, {"name": "broken", "detail": True})
+    assert page["ok"] is False
+    row = page["skills"][0]
+    assert row["detail_error"] == "manifest_unreadable"
+    assert "manifest" not in row and row["load_error"]
