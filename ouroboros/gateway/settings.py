@@ -650,11 +650,9 @@ def _candidate_pool_api_models(settings: Dict[str, Any]) -> list:
 
 
 def review_pool_save_judgement(raw: Any, stored: Dict[str, Any], *, allow_empty: bool) -> str:
-    """The empty-pool rule of a catalog save ('' = acceptable). Like the twin rule it
-    judges only a save that CHANGES the catalog (every Settings save re-posts it) or
-    one that retires review lanes still stored, so no pool empties silently. The
-    owner's ``allow_empty_review_pool`` confirms an empty pool, and the catalog has
-    already parsed by then, so a confirmed save has nothing left to judge."""
+    """The empty-pool rule of a catalog save ('' = acceptable). Like the twin rule it judges
+    only a save that CHANGES the catalog (every Settings save re-posts it) or retires stored
+    review lanes, so no pool empties silently; ``allow_empty_review_pool`` confirms one."""
     if allow_empty:
         return ""
     from ouroboros.configured_subagents import SUBAGENTS_SETTING, normalize_configured_subagents
@@ -737,8 +735,7 @@ def review_pool_rows(items: list, slots: list, handles: Dict[str, str],
             "access": str(item.get("access") or ("full" if session else "")),
             "enabled": item.get("enabled") is not False, "review_eligible": True,
             "minted_from": str(item.get("minted_from") or ""), "coupling_focus": item.get("coupling_focus") is True,
-            "cost": costs.get(row_id) or {"usd_per_review": None, "basis": "unknown"},
-            "last_execution": last_executions.get(row_id),
+            "cost": costs.get(row_id) or {"usd_per_review": None, "basis": "unknown"}, "last_execution": last_executions.get(row_id),
         })
     pooled = {row["subagent_id"] for row in pool}
     excluded = [{"subagent_id": row_id, "reason": "row_disabled"} for row_id, item in by_id.items()
@@ -750,9 +747,7 @@ def review_pool_payload(snapshot: Optional[Dict[str, Any]] = None) -> Dict[str, 
     """The body of ``GET /api/review-pool`` (contract §1.4) for one settings snapshot;
     ``row_costs`` prices every catalog row so an unmarked row shows its price too, and
     ``migration`` is the newest lanes-to-pool record the supervisor boot wrote."""
-    from ouroboros.configured_subagents import (
-        MAX_CONFIGURED_SUBAGENTS, SUBAGENTS_SETTING, parse_configured_subagents, roster_handles,
-    )
+    from ouroboros.configured_subagents import MAX_CONFIGURED_SUBAGENTS, SUBAGENTS_SETTING, parse_configured_subagents, roster_handles
     from ouroboros.reviewer_slot_config import review_pool_slots, review_pool_state, reviewer_slot_last_executions
     from ouroboros.server_maintenance import review_pool_migration_records
     from ouroboros.settings_integrity import runtime_environ

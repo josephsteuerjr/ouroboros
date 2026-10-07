@@ -674,10 +674,9 @@ def _configured_owner_draft(
 
 
 def with_factory_review_rows(catalog: Mapping[str, Any], doc: Mapping[str, Any]) -> Dict[str, Any]:
-    """A generated catalog nobody marked gains the factory reviewer rows (package A's
-    ``factory_review_rows``, the never-configured read's own minting), so the wizard
-    shows the reviewers the install will run. Callers never top up an owner-edited
-    draft: its empty pool is the owner's choice, refused at completion unless confirmed."""
+    """A generated catalog nobody marked gains the factory reviewer rows (the never-configured
+    read's own minting), so the wizard shows the reviewers the install will run. Callers never
+    top up an owner-edited draft: its empty pool is the owner's choice, refused unless confirmed."""
     from ouroboros.configured_subagents import MAX_CONFIGURED_SUBAGENTS
     from ouroboros.subscription_install_presets import factory_review_rows
 
@@ -691,10 +690,9 @@ def with_factory_review_rows(catalog: Mapping[str, Any], doc: Mapping[str, Any])
 
 
 def review_rows_on_main(catalog: Mapping[str, Any], settings: Mapping[str, Any]) -> Dict[str, Any]:
-    """Finishing without agent defaults while subscriptions are connected: every marked row
-    runs on Main, the count kept. A row keeps its identity and effort (a session's compound
-    effort becomes the row effort), takes Main's account pin and processing, and reads the
-    work itself; unmarked rows are untouched."""
+    """Finishing without agent defaults while subscriptions are connected: every marked row runs
+    on Main, the count kept, keeping its identity and effort (a session's compound effort becomes
+    the row effort), with Main's account pin and processing; unmarked rows are untouched."""
     from ouroboros.model_slots import MODEL_ACCOUNTS_KEY, model_role_option, resolve_processing_preference
     from ouroboros.provider_models import provider_for_model
     from ouroboros.route_spec import ROUTE_KIND_AGENT_SESSION, RouteSpec, compound_session_effort
@@ -848,9 +846,7 @@ async def api_onboarding_complete(request: Request) -> JSONResponse:
     allow_empty_pool = body.get(ALLOW_EMPTY_REVIEW_POOL) is True
     owner_draft, draft_error = _configured_owner_draft(body)
     if draft_error:
-        return unsaved_error(
-            draft_error, 400, code="invalid_available_subagents",
-        )
+        return unsaved_error(draft_error, 400, code="invalid_available_subagents")
 
     # BEFORE the read, not after: if a write lands between the two, the document
     # this request goes on to derive is NEWER than the fingerprint, the locked
@@ -887,20 +883,14 @@ async def api_onboarding_complete(request: Request) -> JSONResponse:
         # path is pure: no daemon read, reviewer rewrite, or preset marker.
         if owner_draft is not None:
             preset, failure = await resolve_install_preset(
-                current, subscriptions_connected=False, owner_draft=owner_draft,
-            )
+                current, subscriptions_connected=False, owner_draft=owner_draft)
             if failure is not None:
                 return failure.as_response()
             preset_reason = "configured_by_owner"
-            current.update(preset.settings_keys(
-                include_reviewer=False, include_marker=False,
-            ))
+            current.update(preset.settings_keys(include_reviewer=False, include_marker=False))
     else:
         preset, failure = await resolve_install_preset(
-            current,
-            subscriptions_connected=subscriptions_connected,
-            owner_draft=owner_draft,
-        )
+            current, subscriptions_connected=subscriptions_connected, owner_draft=owner_draft)
         if failure is not None:
             return failure.as_response()
         preset_reason = "applied"

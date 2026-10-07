@@ -238,7 +238,7 @@ def test_model_assigning_editors_share_the_grouped_source_select() -> None:
 
 
 def test_design_doc_states_the_source_is_chosen_rule() -> None:
-    """The rule itself lives in the design document, with its four groups
+    """The rule itself lives in the design document, with its three groups
     named in the order every surface renders them."""
     design = DESIGN_DOC.read_text(encoding="utf-8")
     rule_sentence = "A source is chosen, never spelled."
@@ -250,7 +250,10 @@ def test_design_doc_states_the_source_is_chosen_rule() -> None:
     rule = next((block for block in paragraphs if rule_sentence in block), "")
     assert rule, f"docs/DESIGN.md must state the rule: {rule_sentence!r}"
 
-    groups = ("configured subagents", "Subscriptions · models", "API keys", "Agents · sessions")
+    # Reviewers are catalog rows now, so no surface offers a configured-subagent
+    # reference group: the review lanes editor that did is retired.
+    assert "configured subagents" not in rule
+    groups = ("Subscriptions · models", "API keys", "Agents · sessions")
     positions = []
     for group in groups:
         assert group in rule, f"the rule paragraph must name the source group {group!r}"

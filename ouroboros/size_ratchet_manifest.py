@@ -195,7 +195,6 @@ BAND_PATHS = {
     "tests/test_cybergym_dispatch.py": "CyberGym dispatch tests cover completion-order admission, transient gateway pauses and budget-refusal recovery through one existing fake campaign harness.",
     "tests/test_cybergym_docker.py": "CyberGym workspace custody tests cover atomic gateway transfer, recovery and durable-result acknowledgement using the same attested fake container fixtures.",
     "tests/test_cybergym_executor_wire.py": "CyberGym served-wire evidence tests combine request-accounting disclosure with existing provider, final-PoC and classification coverage; gateway custody remains in its dedicated test module.",
-    "tests/test_deep_review_slot.py": "Deep-review delivery and receipt-provenance scenarios share native/session fixtures and keep route, memory, and source-range assertions together.",
     "tests/test_delegate_answer.py": "Entered the band by the #204 escalation-route pins (walk-up, schema and expiry-note source pins) on top of the phase-B interaction suite; one coherent delegated-question surface, split only when a natural seam appears",
     "tests/test_delegated_skill_payload.py": "Sol scope-review fix batch: P1 trust probes (forged index, symlinked git metadata), P2 golden-E2E review close and schema/docs pins joined the existing R1+gate-fix payload suite.",
     "tests/test_evolution_redesign.py": None,
@@ -243,12 +242,12 @@ BAND_PATHS = {
     "web/modules/settings.js": "Settings retains draft, validation and save ownership; account discovery subscription and refresh state live together in the existing settings_catalog.js owner.",
     "web/modules/settings_ui.js": "The existing Settings markup owner includes the client-local Appearance panel alongside the other tab declarations; theme behavior remains in theme.js, without a new one-panel wrapper.",
     "web/modules/skills.js": "One installed-skill page controller owns independently settling primary/optional reads and current-generation menu, identity and badge updates; domain lifecycle, cards, hub truth and shared interactions remain separate owners.",
+    "web/modules/subagents_settings.js": "PR-3 package E (review pool): reviewers are rows of this one catalog editor now, so each row's review facts (the Reviewer mark, the repeat caption, an API row's delivery, the per-review price or session-seat equivalent, the last-run disclosure, the minted-origin badge) and the list-level pool summary with its empty-pool confirmation sit beside the rows they describe. The retired review-lanes editor (reviewer_slots.js, 1594 lines) is deleted in the same change, so the module enters the 1001-1500 band at 1225 lines while the web tree shrinks; it adds no giant, function or byte debt.",
     "web/modules/updates.js": "The existing Updates page owns installation progress and the cumulative update description, including its refresh and retained-text presentation; keeping that shared status lifecycle in one module avoids a parallel controller.",
     "web/tests/chat_activity_block.test.js": "Real chat replay and current-census controls share the existing DOM fixture; added narration-free and late-evidence regressions exercise those same consumers.",
     "web/tests/chat_instance_dom.test.js": "Entered the band from 1000 lines with the alias-free subagent cost pin (stage-2 fix wave): that regression reproduces only through the real createChatInstance card path, and this file owns the DOM harness that drives it; split when the next createChatInstance face lands.",
     "web/tests/harness_login_cards.test.js": "Login-card suite grew past 1000 lines with the name-the-account face cases (agy pickup, issue #232); split when the next face lands.",
     "web/tests/onboarding_agents_step.test.js": "Keeps the shared onboarding controller tests together across preview freshness, typed failure delivery, owner draft preservation and explicit reviewer recovery.",
-    "web/tests/reviewer_slots.test.js": "Entered the band with the 2026-09-13 reviewer-slots editor: the per-row source picker, its read-only derived disclosure and the persistence cases stay in one module beside the editor they cover; split when a second editor surface lands.",
     "web/tests/subagents_settings.test.js": "Real editor parsing, lowering choices, dirty drafts and duplicate/API transitions are covered together.",
 }
 
