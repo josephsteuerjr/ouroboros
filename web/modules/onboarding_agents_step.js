@@ -818,6 +818,7 @@ export function createAgentsStep({
         get reads() { return store.reads; },
         refreshStatus() { return store.refresh(); },
         get availableSubagents() { return subagents.setting; },
+        get allowEmptyReviewPool() { return subagents.allowEmptyReviewPool; },
         setProcessingPreference(value) { subagents.setProcessingPreference(value); },
         /** Re-derive the provider list after the owner edits Accounts. */
         setSourceContext(context) {

@@ -78,16 +78,9 @@ _RETIRED_KEY_MENTION_ALLOWLIST = {
     ("ouroboros/provider_models.py", "OUROBOROS_REVIEW_MODELS"): ("declared-model surface over derived plane", 1),
     ("ouroboros/provider_models.py", "OUROBOROS_SCOPE_REVIEW_MODELS"): ("declared-model surface over derived plane", 1),
     ("ouroboros/provider_models.py", "OUROBOROS_SCOPE_REVIEW_MODEL"): ("declared-model surface over derived plane", 1),
-    # -- save-time warning triggers keyed on changed setting names (the
-    #    OUROBOROS_REVIEWER_SLOTS member keeps the check live; the retired
-    #    spellings are harmless startswith vestiges kept for raw-dict callers).
-    ("ouroboros/gateway/settings.py", "OUROBOROS_REVIEW_MODELS"): ("changed-key warning trigger", 1),
-    ("ouroboros/gateway/settings.py", "OUROBOROS_SCOPE_REVIEW_MODEL"): ("changed-key warning trigger", 1),
     # -- retirement prose (names the key to say it is retired/ignored).
     ("ouroboros/review_execution.py", "OUROBOROS_REVIEW_ROUTES"): ("retirement prose", 1),
     ("ouroboros/review_execution.py", "OUROBOROS_SCOPE_REVIEW_ROUTES"): ("retirement prose", 1),
-    ("web/modules/settings.js", "OUROBOROS_REVIEW_MODELS"): ("retirement prose (6.1 authoring note)", 1),
-    ("web/modules/settings.js", "OUROBOROS_SCOPE_REVIEW_MODELS"): ("retirement prose (6.1 authoring note)", 1),
 }
 
 

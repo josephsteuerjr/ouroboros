@@ -74,7 +74,7 @@ from tests.system_e2e.harness import (
     ScriptedStubModel,
     assert_settings_keyless,
     classify_call,
-    keyless_reviewer_slots,
+    keyless_review_catalog,
     keyless_settings,
     proc_environ,
     process_tree_pids,
@@ -391,22 +391,31 @@ def test_f21_projected_provider_family_credentials_default_empty():
     assert not non_empty, f"credential-shaped provider keys ship a non-empty default: {non_empty}"
 
 
-def test_keyless_reviewer_slots_parse_under_the_trees_own_parser():
-    """ABI 7.0 (ABI-10): the comma-list reviewer keys are RETIRED settings — pinning
-    them in the isolated settings.json is a silent no-op and the review organ falls
-    back to the shipped OpenRouter default panel (the exact failure observed live:
-    S2's triad dispatched gemini/terra/opus keyless and blocked at pack assembly).
-    The keyless lane therefore pins the STRUCTURED surface, and this test feeds it to
-    the tree's own strict parser: every configured row must be an api_chat route onto
-    the stub slug."""
-    from ouroboros.reviewer_slot_config import parse_reviewer_slots
+def test_keyless_review_catalog_parses_under_the_trees_own_parser(monkeypatch):
+    """The comma-list reviewer keys and the review lanes are RETIRED settings —
+    pinning them in the isolated settings.json is a silent no-op, and a catalog that
+    was never configured reads the factory reviewers: live OpenRouter routes that
+    dispatch keyless and block at pack assembly (the exact failure observed live: S2's
+    triad dispatched gemini/terra/opus). The keyless lane therefore pins catalog rows
+    marked Reviewer, and this test feeds them to the tree's own strict catalog parser:
+    every row must be an API route onto the stub slug, marked Reviewer, in a catalog
+    that delegates nothing."""
+    from ouroboros import configured_subagents
 
-    config = parse_reviewer_slots(keyless_reviewer_slots())
-    assert config.source == "structured"
-    assert len(config.triad) >= 1 and len(config.scope) >= 1
-    for row in (*config.triad, *config.scope):
-        assert row.kind == "api_chat", row
-        assert row.target_id == MOCK_SLUG, row
+    # The catalog row fields of the review pool (package A's parser accepts them).
+    monkeypatch.setattr(configured_subagents, "_ROW_KEYS",
+                        configured_subagents._ROW_KEYS | {"review_eligible"})
+    raw = keyless_review_catalog()
+    config = configured_subagents.parse_configured_subagents(raw)
+    assert config is not None and config.enabled is False
+    assert len(config.items) == 3
+    for row in config.items:
+        assert row.route.kind == "api_model" and row.route.target_id == MOCK_SLUG, row
+        assert row.enabled, row
+    assert all(item["review_eligible"] is True for item in json.loads(raw)["items"])
+    distinct = configured_subagents.parse_configured_subagents(keyless_review_catalog(distinct_models=True))
+    assert [row.route.target_id for row in distinct.items] == [
+        f"{MOCK_SLUG}-t{i}" for i in (1, 2, 3)]
 
 
 def test_f21_every_runtime_credential_env_read_is_stripped_from_the_keyless_child():

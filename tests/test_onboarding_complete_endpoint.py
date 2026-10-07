@@ -982,9 +982,9 @@ def test_install_time_status_cannot_be_forged_from_the_payload(onboarding):
     assert response.json()["preset"]["applied"] is False
     saved = onboarding.saved()
     assert not saved.get(PRESET_MARKER_KEY)
-    # Review is now an ordinary editable wizard surface. Its valid explicit
-    # value is preserved, but it cannot reopen presets or lower safety.
-    assert saved["OUROBOROS_REVIEWER_SLOTS"] == manual_slots
+    # Reviewers are catalog rows now: a posted lane value is not authored, and
+    # it cannot reopen presets or lower safety.
+    assert not saved.get("OUROBOROS_REVIEWER_SLOTS")
     assert saved.get("OUROBOROS_SAFETY_MODE", "") != "off"
 
 

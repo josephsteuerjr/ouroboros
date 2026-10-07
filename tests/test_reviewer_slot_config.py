@@ -19,7 +19,6 @@ from ouroboros.reviewer_slot_config import (
     load_reviewer_slot_config,
     parse_reviewer_slots,
     project_reviewer_slots_into_env,
-    reviewer_slot_save_check,
 )
 
 _STRUCTURED = {
@@ -200,51 +199,6 @@ def test_advisory_keeps_recognized_legacy_shape_and_empty_api_target():
     )
 
 
-def test_settings_save_refuses_a_malformed_row_before_persistence():
-    from starlette.requests import Request
-
-    from ouroboros.gateway.settings import _api_settings_post_locked
-
-    payload = json.loads(json.dumps(_STRUCTURED))
-    payload["triad"][0]["effrot"] = "low"
-    request = Request({
-        "type": "http", "method": "POST", "path": "/api/settings",
-        "headers": [], "query_string": b"",
-    })
-    response = _api_settings_post_locked(
-        request,
-        {REVIEWER_SLOTS_ENV: json.dumps(payload)},
-    )
-    body = json.loads(response.body)
-    assert response.status_code == 400
-    assert body["saved"] is False
-    assert "triad[0] has unknown keys" in body["error"]
-
-
-def test_settings_save_refuses_an_enabled_empty_advisory_session_route():
-    from starlette.requests import Request
-
-    from ouroboros.gateway.settings import _api_settings_post_locked
-
-    payload = json.loads(json.dumps(_STRUCTURED))
-    payload["advisory"] = {
-        "enabled": True,
-        "route": {"kind": "agent_session", "target_id": ""},
-    }
-    request = Request({
-        "type": "http", "method": "POST", "path": "/api/settings",
-        "headers": [], "query_string": b"",
-    })
-    response = _api_settings_post_locked(
-        request,
-        {REVIEWER_SLOTS_ENV: json.dumps(payload)},
-    )
-    body = json.loads(response.body)
-    assert response.status_code == 400
-    assert body["saved"] is False
-    assert "needs a non-empty target_id" in body["error"]
-
-
 # ---------------------------------------------------------------------------
 # reviewer_slot_config_error (#116): the loud-check facade for plan/skill review.
 # ---------------------------------------------------------------------------
@@ -363,27 +317,6 @@ def test_retired_phase5_route_envs_are_ignored(monkeypatch):
     assert all(row.session_target == "" and row.profile_id == "" for row in config.triad)
     assert config.advisory.kind == "api_chat"
     assert config.advisory.target_id == ""
-
-
-def test_default_panel_round_trips_through_the_settings_endpoint(monkeypatch):
-    import asyncio
-
-    from starlette.requests import Request
-
-    from ouroboros.gateway.settings import api_reviewer_slots
-    monkeypatch.delenv(REVIEWER_SLOTS_ENV, raising=False)
-    _clear_legacy(monkeypatch)
-    monkeypatch.setenv("OUROBOROS_REVIEW_MODELS", "m/one")
-    monkeypatch.setenv("OUROBOROS_SCOPE_REVIEW_MODELS", "m/scope")
-
-    request = Request({
-        "type": "http", "method": "GET", "path": "/api/reviewer-slots",
-        "headers": [], "query_string": b"",
-    })
-    body = json.loads(asyncio.run(api_reviewer_slots(request)).body)
-    assert body["source"] == "default"
-    migrated = json.dumps({key: body[key] for key in ("triad", "scope", "advisory")})
-    assert reviewer_slot_save_check(migrated) == ""
 
 
 # ---------------------------------------------------------------------------
@@ -547,57 +480,6 @@ def test_last_execution_projection_round_trips():
     assert projection["effective"]["model"] == "gpt-5.6-sol"
     assert projection["effective"]["verdict_method"] == "light_model_extraction"
     assert projection["capability_delta"][0]["reason"] == "extraction_instead_of_schema"
-
-
-def test_reviewer_slots_endpoint_reports_rows_and_config_errors(monkeypatch):
-    import asyncio
-
-    from starlette.requests import Request
-
-    from ouroboros.gateway.settings import api_reviewer_slots
-
-    def _get():
-        request = Request({"type": "http", "method": "GET", "path": "/api/reviewer-slots",
-                           "headers": [], "query_string": b""})
-        return asyncio.run(api_reviewer_slots(request))
-
-    _set_structured(monkeypatch)
-    body = json.loads(_get().body)
-    assert body["source"] == "structured"
-    assert body["limits"] == {"triad": TRIAD_SLOT_LIMIT, "scope": SCOPE_SLOT_LIMIT, "advisory": 1, "deep_review": 1}
-    assert body["triad"][1]["route"]["kind"] == "agent_session"
-    assert body["advisory"]["enabled"] is False
-
-    monkeypatch.setenv(REVIEWER_SLOTS_ENV, "{broken")
-    broken = json.loads(_get().body)
-    # A typed error beside the editor that can fix it — never a 500.
-    assert "config_error" in broken and "not valid JSON" in broken["config_error"]
-
-
-def test_reviewer_slots_endpoint_round_trips_the_manual_credential_pin(monkeypatch):
-    """Audit #3.4: GET must return the Q2 manual pin (route.profile_id), or a
-    subsequent save silently wipes it. Reversible by design, honest round-trip."""
-    import asyncio
-
-    from starlette.requests import Request
-
-    from ouroboros.gateway.settings import api_reviewer_slots
-
-    payload = {
-        "triad": [{"slot_id": "t1",
-                   "route": {"kind": "agent_session", "target_id": "codex", "profile_id": "koshak"}}],
-        "scope": [{"slot_id": "s1", "route": {"kind": "api_chat", "target_id": "openai/gpt-5.6-terra"}}],
-        "advisory": {"enabled": True,
-                     "route": {"kind": "agent_session", "target_id": "codex", "profile_id": "backup"}},
-    }
-    _set_structured(monkeypatch, payload)
-    request = Request({"type": "http", "method": "GET", "path": "/api/reviewer-slots",
-                       "headers": [], "query_string": b""})
-    body = json.loads(asyncio.run(api_reviewer_slots(request)).body)
-    assert body["triad"][0]["route"]["profile_id"] == "koshak"
-    assert body["advisory"]["route"]["profile_id"] == "backup"
-    # An api row carries no pin, so the key stays absent (not a null).
-    assert "profile_id" not in body["scope"][0]["route"]
 
 
 def test_login_request_honors_the_engine_client_pty_wire_contract():

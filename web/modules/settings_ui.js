@@ -1,7 +1,6 @@
 import { renderPageHeader, renderSegmentedField, renderTabStrip, bindTabStrip } from './page_header.js';
 import { PAGE_ICONS } from './page_icons.js';
 import { renderAgentAccountsSection, renderAgentsServiceBanner } from './harness_accounts.js';
-import { renderReviewerSlotsSection } from './reviewer_slots.js';
 import { renderSubagentsSection } from './subagents_settings.js';
 import { languageBlockHtml } from './settings_language.js';
 import { modelRolesHost } from './model_roles.js';
@@ -23,8 +22,8 @@ const SETTINGS_TABS = [
 ];
 // Guard markers: renderTabStrip emits behavior/advanced tabs at runtime.
 
-// 6.3: Review and Scope Review efforts moved to per-slot dropdowns in
-// Agents → Review lanes. Behavior keeps the surface-level lanes.
+// Review effort is a property of each reviewer row in Agents → Available
+// subagents. Behavior keeps the surface-level lanes.
 const EFFORT_FIELDS = [
     ['s-effort-task', 'Task / Chat', 'medium'],
     ['s-effort-evolution', 'Evolution', 'high'],
@@ -377,13 +376,10 @@ export function renderSettingsPage() {
                         ${modelRolesHost('settings-model-roles')}
                     </div>
 
-                    <!-- Review lanes and Delegation moved to the Agents tab
-                         (D-10): they answer "who does the work", not "which API
-                         model id". One capability, one section — no control here
-                         duplicates one there. The deep self-review reviewer is a
-                         Review lanes row too (R7); its former model field's key,
-                         OUROBOROS_MODEL_DEEP_SELF_REVIEW, survives only as the
-                         backend's invisible migration source for that row. -->
+                    <!-- Reviewers and Delegation live in the Agents tab (D-10):
+                         they answer "who does the work", not "which API model
+                         id". One capability, one section — no control here
+                         duplicates one there. -->
 
                     <div class="form-section">
                         <h3>Other Model Slots</h3>
@@ -406,7 +402,6 @@ export function renderSettingsPage() {
                          daemon or runtime problem is explained, instead of the
                          scattering of "(not in discovery)" the owner reported. -->
                     ${renderSubagentsSection()}
-                    ${renderReviewerSlotsSection()}
                 </section>
 
                 <section class="settings-panel" data-settings-panel="behavior">
@@ -480,7 +475,7 @@ export function renderSettingsPage() {
 
                     <div class="form-section">
                         <h3>Max Review Cycles</h3>
-                        <div class="settings-section-copy">Limits paid review waves, including dispatched technical failures: plan and task review per task, commit triad+scope per root task, and skill review per root task or manual snapshot. The last review still permits author corrections within ordinary task limits; explicit task-local author limits remain separate. Collection and exact replay are free. Advisory allows an explicit decision after receiving feedback or a disclosed unavailable result; Blocking still requires reviewer approval. <code>&infin;</code> removes the count cap, while deadlines, budgets and lifecycle limits still apply.</div>
+                        <div class="settings-section-copy">Limits paid review waves, including dispatched technical failures: plan and task review per task, commit review per root task, and skill review per root task or manual snapshot. The last review still permits author corrections within ordinary task limits; explicit task-local author limits remain separate. Collection and exact replay are free. Advisory allows an explicit decision after receiving feedback or a disclosed unavailable result; Blocking still requires reviewer approval. <code>&infin;</code> removes the count cap, while deadlines, budgets and lifecycle limits still apply.</div>
                         <div class="settings-effort-card">
                             <label>Max Review Cycles</label>
                             <input id="s-review-max-cycles" type="hidden" value="2">

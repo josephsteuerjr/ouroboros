@@ -37,7 +37,7 @@ from tests.system_e2e.harness import (
     ReviewScript,
     body_text,
     default_slot_binder,
-    keyless_reviewer_slots,
+    keyless_review_catalog,
     keyless_settings,
     require_lane,
     start_server,
@@ -154,7 +154,7 @@ def _control(text: str) -> dict:
 def _settings(stub) -> dict:
     return keyless_settings(
         stub, OUROBOROS_RUNTIME_MODE="advanced", OUROBOROS_REVIEW_ENFORCEMENT="blocking",
-        OUROBOROS_REVIEWER_SLOTS=keyless_reviewer_slots(distinct_models=True),
+        OUROBOROS_SUBAGENTS=keyless_review_catalog(distinct_models=True),
     )
 
 

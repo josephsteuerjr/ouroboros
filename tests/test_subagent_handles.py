@@ -316,6 +316,9 @@ def _post_settings(monkeypatch, body, stored=None):
     return asyncio.run(gws.api_settings_post(request)), saved
 
 
+NO_REVIEWERS_CONFIRMED = {"allow_empty_review_pool": True}
+
+
 def test_every_save_path_refuses_identical_engines_and_accepts_a_near_duplicate(monkeypatch):
     twins = {"enabled": True, "items": [_api("one", effort="low"), _api("two", effort="low")]}
     near = {"enabled": True, "items": [_api("one", effort="low"), _api("two", effort="high")]}
@@ -323,14 +326,15 @@ def test_every_save_path_refuses_identical_engines_and_accepts_a_near_duplicate(
     refused, saved = _post_settings(monkeypatch, {"OUROBOROS_SUBAGENTS": twins})
     assert refused.status_code == 400 and b"same engine" in refused.body
     assert "OUROBOROS_SUBAGENTS" not in saved
-    accepted, saved = _post_settings(monkeypatch, {"OUROBOROS_SUBAGENTS": near})
+    # None of these rows is a reviewer: the owner confirms the empty review pool.
+    accepted, saved = _post_settings(monkeypatch, {"OUROBOROS_SUBAGENTS": near, **NO_REVIEWERS_CONFIRMED})
     assert accepted.status_code == 200, accepted.body[:300]
     assert json.loads(saved["OUROBOROS_SUBAGENTS"])["items"][1]["effort"] == "high"
 
     # The engine is judged under THIS save's effective facts: the same body that
     # turns the global preference to fast makes an unset row and an explicit fast row one engine.
     inherits = {"enabled": True, "items": [_api("one"), _api("two", processing_preference="fast")]}
-    accepted, _ = _post_settings(monkeypatch, {"OUROBOROS_SUBAGENTS": inherits})
+    accepted, _ = _post_settings(monkeypatch, {"OUROBOROS_SUBAGENTS": inherits, **NO_REVIEWERS_CONFIRMED})
     assert accepted.status_code == 200, accepted.body[:300]
     refused, _ = _post_settings(
         monkeypatch, {"OUROBOROS_SUBAGENTS": inherits, "OUROBOROS_PROCESSING_PREFERENCE": "fast"})
@@ -362,7 +366,7 @@ def test_stored_twins_never_block_an_unrelated_save_but_any_roster_edit_is_judge
         assert saved == stored
     # ...and an edit that tells the twins apart is an ordinary save.
     fixed = {"enabled": True, "items": [TWINS["items"][0], {**TWINS["items"][1], "effort": "high"}]}
-    accepted, _ = _post_settings(monkeypatch, {"OUROBOROS_SUBAGENTS": fixed}, stored)
+    accepted, _ = _post_settings(monkeypatch, {"OUROBOROS_SUBAGENTS": fixed, **NO_REVIEWERS_CONFIRMED}, stored)
     assert accepted.status_code == 200, accepted.body[:300]
     # (3) the same twins on an install that stores none are a FRESH twin: refused.
     refused, _ = _post_settings(monkeypatch, {"OUROBOROS_SUBAGENTS": TWINS})

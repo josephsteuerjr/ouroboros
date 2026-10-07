@@ -58,17 +58,16 @@ def test_effort_defaults_in_config():
 def test_review_effort_default_carriers_stay_in_sync():
     """The owner-facing fallback must not drift from config/API defaults.
 
-    Since 6.3 moved the Review/Scope efforts off the Behavior tab into the
-    Review lanes section (Agents tab) as per-slot dropdowns, the owner-facing carrier is
-    reviewer_slots.js: an EMPTY slot effort inherits the surface default
-    (OUROBOROS_EFFORT_REVIEW / OUROBOROS_EFFORT_SCOPE_REVIEW), and the optional
-    advisory row defaults low (D14)."""
+    A reviewer is a catalog row marked Reviewer, and the catalog editor is the
+    owner-facing carrier: a marked row with no effort of its own (and no compound
+    session effort) states that it reviews at the pool default, the former
+    OUROBOROS_EFFORT_REVIEW default."""
     import pathlib
 
     root = pathlib.Path(__file__).resolve().parents[1]
-    slots_ui = (root / "web" / "modules" / "reviewer_slots.js").read_text(encoding="utf-8")
-    assert "review effort" in slots_ui and "scope review effort" in slots_ui
-    assert "effort: 'low'" in slots_ui  # the advisory default (D14)
+    editor = (root / "web" / "modules" / "subagents_settings.js").read_text(encoding="utf-8")
+    assert "export const REVIEW_POOL_DEFAULT_EFFORT = 'high';" in editor
+    assert "reviews at ${REVIEW_POOL_DEFAULT_EFFORT} effort" in editor
     # The surface effort keys are retired (review pool: effort lives on the reviewer
     # row); the read seam migrates them, so they are no shipped default any more.
     assert "OUROBOROS_EFFORT_REVIEW" not in SETTINGS_DEFAULTS

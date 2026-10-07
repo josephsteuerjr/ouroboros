@@ -73,7 +73,6 @@ from tests.system_e2e.harness import (
     body_text,
     classify_call,
     clone_repo,
-    keyless_reviewer_slots,
     keyless_settings,
     require_lane,
     two_part_clean_text,
@@ -170,18 +169,6 @@ def test_w3a_review_script_never_touches_agent_script_steps():
     assert not script.consumed()
     with pytest.raises(ValueError, match="review-organ kinds"):
         ReviewScript({"agent": ["nope"]})
-
-
-def test_w3a_keyless_reviewer_slots_advisory_row_parses_under_the_trees_parser():
-    from ouroboros.reviewer_slot_config import parse_reviewer_slots
-
-    config = parse_reviewer_slots(keyless_reviewer_slots(advisory=True))
-    assert config.advisory.enabled is True
-    assert config.advisory.kind == "api_chat"
-    assert config.advisory.target_id == "openai-compatible::mock-model"
-    # The default form stays byte-compatible: no advisory key, shipped default row.
-    config_default = parse_reviewer_slots(keyless_reviewer_slots())
-    assert config_default.advisory.target_id == ""
 
 
 # ===========================================================================
@@ -751,7 +738,6 @@ def test_s16_rejects_post_verdict_mutation(tmp_path_factory):
             stub,
             OUROBOROS_RUNTIME_MODE="advanced",
             OUROBOROS_REVIEW_ENFORCEMENT="blocking",
-            OUROBOROS_REVIEWER_SLOTS=keyless_reviewer_slots(),
         )
         server = start_server(clone, root, settings)
         try:

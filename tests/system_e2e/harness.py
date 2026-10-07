@@ -1115,35 +1115,30 @@ class KeylessIsolatedServer(IsolatedServer):
         self.candidate.release()
 
 
-def keyless_reviewer_slots(*, advisory: bool = False, distinct_models: bool = False) -> str:
-    """The structured ``OUROBOROS_REVIEWER_SLOTS`` value pinning every reviewer row
-    to the loopback stub.
+def keyless_review_catalog(*, distinct_models: bool = False) -> str:
+    """The ``OUROBOROS_SUBAGENTS`` catalog whose rows marked Reviewer are the whole
+    review pool, every one an API route onto the loopback stub.
 
-    ABI 7.0 (ABI-10): the comma-list reviewer settings keys are RETIRED —
-    ``load_settings`` drops them from the file, so pinning them there is a silent
-    no-op and the review organ falls back to the shipped OpenRouter default panel
-    (observed live on this tree: S2's triad dispatched gemini/terra/opus with no
-    credential and deterministically blocked at pack assembly). The structured key
-    is the ONE configuration surface, so the keyless lane pins THAT.
+    The review pool is the enabled catalog rows marked Reviewer (``review_eligible``),
+    and a never-configured catalog reads the factory reviewers instead: live
+    OpenRouter routes that dispatch with no credential and deterministically block
+    at pack assembly keyless. So the keyless lane pins THIS catalog. Three rows keep
+    the shipped panel's width. The catalog itself is switched off: review stays on
+    for rows marked Reviewer, while delegation stays as unconfigured as on a bare
+    keyless install.
 
-    ``advisory=True`` additionally pins the ONE optional advisory reviewer row to
-    the stub (wave 3a): the advisory pre-review then runs the bounded NATIVE
-    inspection episode against the loopback model instead of being unavailable
-    keyless (which the commit gate compensates with an audited bypass).
-
-    ``distinct_models=True`` pins seat ``t<i>`` to its own slug
+    ``distinct_models=True`` pins row ``review-t<i>`` to its own slug
     (``DISTINCT_MOCK_MODEL_IDS``) so a per-seat ReviewScript can tell the seats
-    apart on the wire; the stub must advertise those ids (``model_ids``).
+    apart on the wire; the stub must advertise those ids (``model_ids``). A
+    scenario that passes its own catalog owns its pool: it marks its own reviewers
+    or reviews nothing.
     """
-    row = {"kind": "api_chat", "target_id": MOCK_SLUG}
-    payload = {
-        "triad": [{"slot_id": f"t{i}", "route": {**row, **({"target_id": f"{MOCK_SLUG}-t{i}"} if distinct_models else {})}}
-                  for i in (1, 2, 3)],
-        "scope": [{"slot_id": "s1", "route": dict(row)}],
-    }
-    if advisory:
-        payload["advisory"] = {"enabled": True, "route": dict(row)}
-    return json.dumps(payload)
+    return json.dumps({"enabled": False, "items": [{
+        "subagent_id": f"review-t{i}",
+        "recommended_use": "Keyless reviewer on the loopback stub.",
+        "route": {"kind": "api_model", "target_id": f"{MOCK_SLUG}-t{i}" if distinct_models else MOCK_SLUG},
+        "review_eligible": True,
+    } for i in (1, 2, 3)]})
 
 
 def keyless_settings(stub: ScriptedStubModel, **overrides) -> dict:
@@ -1151,9 +1146,9 @@ def keyless_settings(stub: ScriptedStubModel, **overrides) -> dict:
 
     Every model-slot key the TREE declares is pinned — un-listed keys default to the
     empty string (slot disabled / no fallback), the live loop slots to the stub slug,
-    and the review organ through the structured ``OUROBOROS_REVIEWER_SLOTS`` (the one
-    ABI-10 configuration surface; the retired comma keys in the ACTIVE list are pinned
-    empty for hygiene but are dropped by ``load_settings`` either way). Deriving the
+    and the review pool through catalog rows marked Reviewer (``keyless_review_catalog``;
+    the retired comma keys in the ACTIVE list are pinned empty for hygiene but are
+    dropped by ``load_settings`` either way). Deriving the
     slot list from ``provider_models`` (instead of an enumerated literal, as the
     cancellation-harness precedent did) means an upstream slot added tomorrow is
     pinned by construction rather than silently defaulting to a live OpenRouter
@@ -1180,7 +1175,7 @@ def keyless_settings(stub: ScriptedStubModel, **overrides) -> dict:
         "OUROBOROS_PER_TASK_COST_USD": 10.0,
         "OPENAI_COMPATIBLE_BASE_URL": stub.base_url,
         "OPENAI_COMPATIBLE_API_KEY": "stub-key-not-a-credential",
-        "OUROBOROS_REVIEWER_SLOTS": keyless_reviewer_slots(),
+        "OUROBOROS_SUBAGENTS": keyless_review_catalog(),
     })
     for slot in ("OUROBOROS_MODEL", "OUROBOROS_MODEL_LIGHT"):
         cfg[slot] = MOCK_SLUG

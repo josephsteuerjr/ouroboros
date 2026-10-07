@@ -8,7 +8,6 @@ own effort outranks the surface key. Delivery is retrieval either way — an api
 row is the bounded native inspection episode, a session row a delegated run.
 """
 
-import asyncio
 import json
 import ntpath
 
@@ -56,16 +55,6 @@ def env(monkeypatch):
     monkeypatch.setenv("OUROBOROS_MODEL_DEEP_SELF_REVIEW", "openai/legacy-deep-model")
     monkeypatch.setenv("OUROBOROS_EFFORT_DEEP_SELF_REVIEW", "low")
     return monkeypatch
-
-
-def _get_endpoint():
-    from starlette.requests import Request
-
-    from ouroboros.gateway.settings import api_reviewer_slots
-
-    request = Request({"type": "http", "method": "GET", "path": "/api/reviewer-slots",
-                       "headers": [], "query_string": b""})
-    return json.loads(asyncio.run(api_reviewer_slots(request)).body)
 
 
 def test_deep_review_row_parses_on_the_shared_vocabulary(env):
@@ -163,40 +152,6 @@ def test_malformed_deep_review_refuses_the_whole_setting(env):
         deep_review_slot()
     # A valid row passes the save check (and produces no acceptance warning).
     assert reviewer_slot_save_check(_payload({"subagent_id": "session-critic"})) == ""
-
-
-def test_reviewer_slots_endpoint_reports_the_deep_review_row_and_its_limit(env):
-    env.setenv(REVIEWER_SLOTS_ENV, _payload())
-    body = _get_endpoint()
-    assert body["limits"]["deep_review"] == 1
-    # Synthesized: the effective row is shown AND labeled as not saved yet.
-    assert body["deep_review"] == {
-        "route": {"kind": "api_chat", "target_id": "openai/legacy-deep-model"},
-        "effort": "",
-        "processing_preference": "",
-        "synthesized_from": "OUROBOROS_MODEL_DEEP_SELF_REVIEW",
-    }
-    # Saved direct session row: the stored form round-trips with its pin, unlabeled.
-    env.setenv(REVIEWER_SLOTS_ENV, _payload(
-        {"route": {"kind": "agent_session", "target_id": "codex=gpt-5.6-sol", "profile_id": "koshak"}, "effort": "high"}))
-    body = _get_endpoint()
-    assert body["deep_review"] == {
-        "route": {"kind": "agent_session", "target_id": "codex=gpt-5.6-sol", "profile_id": "koshak"},
-        "effort": "high",
-        "processing_preference": "",
-    }
-    # Saved reference: the subagent_id IS the stored form; the route is disclosure only.
-    env.setenv(REVIEWER_SLOTS_ENV, _payload({"subagent_id": "api-critic"}))
-    row = _get_endpoint()["deep_review"]
-    assert row["subagent_id"] == "api-critic" and "route" not in row and "slot_id" not in row
-    assert row["resolved_route"] == {"kind": "api_chat", "target_id": "openai/gpt-5.6-terra"}
-    # Unconfigured install: the synthesized row is reported the same way.
-    # ABI 7.0 (ABI-10) retired the comma-list "legacy" source, so an install
-    # without the structured key reports the shipped default panel instead.
-    env.delenv(REVIEWER_SLOTS_ENV, raising=False)
-    body = _get_endpoint()
-    assert body["source"] == "default"
-    assert body["deep_review"]["synthesized_from"] == "OUROBOROS_MODEL_DEEP_SELF_REVIEW"
 
 
 # ---------------------------------------------------------------------------
@@ -683,54 +638,6 @@ def test_agent_keeps_the_previous_report_when_the_review_fails(tmp_path, monkeyp
     assert body.endswith("NEW REPORT") and link.endswith(" (surface=system)")
     record = load_record(drive, link.split(" ", 1)[0])
     assert record["surface"] == "system" and [seat["seat_id"] for seat in record["rows"]] == ["main"]
-
-
-# ---------------------------------------------------------------------------
-# Fix batch №1 — optional-key wire and repair save (items 1, 10).
-# ---------------------------------------------------------------------------
-
-
-def test_endpoint_carries_the_synthesized_row_beside_a_config_error(env):
-    """A malformed structured value must not blank the deep-review editor: the
-    legacy-derived REPAIR PLACEHOLDER (the row synthesized from the model key,
-    labeled `synthesized_from`) rides beside the typed config_error so the
-    repair save starts from a real row — it is NOT an effective row: none is
-    effective until the setting is repaired (`deep_review_slot()` raises)."""
-    env.setenv(REVIEWER_SLOTS_ENV, "{broken")
-    body = _get_endpoint()
-    assert "not valid JSON" in body["config_error"]
-    assert body["deep_review"] == {
-        "route": {"kind": "api_chat", "target_id": "openai/legacy-deep-model"},
-        "effort": "",
-        "synthesized_from": "OUROBOROS_MODEL_DEEP_SELF_REVIEW",
-    }
-    assert "triad" not in body  # the rows themselves are still unparseable
-
-
-def test_repair_save_without_the_optional_key_succeeds_and_an_emptied_target_is_refused(env):
-    """The optional key absent on the wire = the runtime synthesizes the row;
-    an EXPLICITLY emptied api target is the typed 400 (owner fork 3 = A).
-
-    Exercised at the save-check seam the POST handler calls
-    (`_check_reviewer_slots_against_incoming_roster`) — never through a real
-    `POST /api/settings`, whose apply rebinds the PROCESS-WIDE settings
-    authority (`config.SETTINGS_PATH`, bound session-wide by conftest) and
-    leaked this test's roster into later tests in the same worker."""
-    from ouroboros.gateway.settings import _check_reviewer_slots_against_incoming_roster
-
-    env.setenv(REVIEWER_SLOTS_ENV, "{broken")  # the stored value is malformed (config_error)
-    # Repair: a valid value WITHOUT deep_review passes the boundary check (no
-    # warning, no refusal) and the singleton stays synthesized from the key.
-    assert _check_reviewer_slots_against_incoming_roster({REVIEWER_SLOTS_ENV: _payload()}) == ""
-    assert deep_review_slot(parse_reviewer_slots(_payload())).target_id == "openai/legacy-deep-model"
-    # Explicitly emptied target: typed refusal at the parser and at the boundary seam.
-    emptied = _payload({"route": {"kind": "api_chat", "target_id": ""}})
-    with pytest.raises(ValueError, match="deep_review route.target_id"):
-        reviewer_slot_save_check(emptied)
-    with pytest.raises(ValueError, match="deep_review route.target_id"):
-        _check_reviewer_slots_against_incoming_roster({REVIEWER_SLOTS_ENV: emptied})
-    # An explicit CLEAR of the setting is a clear, not a validation subject.
-    assert _check_reviewer_slots_against_incoming_roster({REVIEWER_SLOTS_ENV: ""}) == ""
 
 
 # ---------------------------------------------------------------------------

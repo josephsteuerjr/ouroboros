@@ -185,7 +185,7 @@ def _reexports(source: str, symbol: str) -> bool:
         if symbol in names and "route_editor_primitives" in match.group("from"):
             return True
     # A same-named wrapper that delegates to the primitive counts: the source
-    # list still has ONE owner (reviewer_slots.js narrows the API label).
+    # list still has ONE owner.
     if re.search(rf"export\s+function\s+{re.escape(symbol)}\b", source):
         return bool(_import_specifiers(source, symbol) or re.search(
             rf"\w+\s*\.\s*{re.escape(symbol)}\b", source))
@@ -193,15 +193,16 @@ def _reexports(source: str, symbol: str) -> bool:
 
 
 def test_model_assigning_editors_share_the_grouped_source_select() -> None:
-    """Models roles, Available subagents and review lanes take their source
-    groups from ONE primitive, directly or through a module that re-exports it.
+    """Models roles and Available subagents (whose rows marked Reviewer are the
+    reviewers) take their source groups from ONE primitive, directly or through a
+    module that re-exports it.
 
     docs/DESIGN.md §7: every model-assigning surface offers "one grouped source
-    select with the same groups in the same order". Three private copies of the
-    group list is exactly how that order drifts apart per surface.
+    select with the same groups in the same order". Private copies of the group
+    list is exactly how that order drifts apart per surface.
     """
     symbol = "routeChoiceGroups"
-    editors = ("model_roles.js", "reviewer_slots.js", "subagents_settings.js")
+    editors = ("model_roles.js", "subagents_settings.js")
 
     primitives_source = PRIMITIVES.read_text(encoding="utf-8")
     assert re.search(rf"export\s+(?:function|const)\s+{symbol}\b", primitives_source), (

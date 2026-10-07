@@ -16,7 +16,7 @@ import {
     JOB_POLL_MAX_DELAY_MS,
     nextJobPollDelay,
 } from '../modules/harness_login_cards.js';
-import { reviewerSlotsSavePayload } from '../modules/reviewer_slots.js';
+import { ALLOW_EMPTY_REVIEW_POOL, availableSubagentsSavePayload } from '../modules/subagents_settings.js';
 
 // ---------------------------------------------------------------------------
 // marketplace: update-to-version prompt (window.prompt was dead on desktop).
@@ -224,50 +224,38 @@ test('job polling backs off on consecutive failures and gives up at the bound', 
 });
 
 // ---------------------------------------------------------------------------
-// reviewer_slots (#126): the save payload is honest about an empty set.
+// Review pool (#126 lineage): the save payload is honest about an empty pool.
 // ---------------------------------------------------------------------------
 
-test('an unloaded or unreachable view never authors the reviewer-slot setting', () => {
-    assert.deepEqual(reviewerSlotsSavePayload({ loaded: false }), {});
-    assert.deepEqual(reviewerSlotsSavePayload({
-        loaded: false, loadError: 'could not load reviewer slots: HTTP 502',
-    }), {});
-    // A load error outranks loaded=true (a stale flag from a previous load).
-    assert.deepEqual(reviewerSlotsSavePayload({
-        loaded: true, loadError: 'network gone', triad: [], scope: [],
-    }), {});
+const ROW = { subagent_id: 'r1', name: 'Reviewer one', recommended_use: '',
+    route: { kind: 'api_model', target_id: 'openai::gpt-5.6-sol' } };
+
+test('an unloaded or unparseable catalog never authors the subagent setting', () => {
+    assert.deepEqual(availableSubagentsSavePayload({ loaded: false, setting: { enabled: true, items: [ROW] } }), {});
+    assert.deepEqual(availableSubagentsSavePayload({ loaded: true, parseError: 'bad JSON',
+        setting: { enabled: true, items: [ROW] } }), {});
 });
 
-test('a LOADED empty set SENDS the key, so the backend 400 surfaces instead of a silent success', () => {
-    // The old guard returned {} for an empty triad/scope, so deleting every
-    // row reported "Settings saved" while saving nothing. The key now rides
-    // with triad:[] and the backend's «triad needs at least one slot» 400
-    // lands in the existing failed-save status. No client-side duplicate
-    // validation — the backend stays the SSOT.
-    const payload = reviewerSlotsSavePayload({
-        loaded: true, loadError: '', triad: [], scope: [],
-        advisory: { enabled: true, route: { kind: 'api_chat', target_id: '' }, effort: 'low' },
-    });
-    assert.ok('OUROBOROS_REVIEWER_SLOTS' in payload);
-    const parsed = JSON.parse(payload.OUROBOROS_REVIEWER_SLOTS);
-    assert.deepEqual(parsed.triad, []);
-    assert.deepEqual(parsed.scope, []);
-    assert.equal(parsed.advisory.enabled, true);
+test('a catalog with no reviewer SENDS the rows, so the server refusal surfaces instead of a silent success', () => {
+    const payload = availableSubagentsSavePayload({ loaded: true, setting: { enabled: true, items: [ROW] } });
+    assert.deepEqual(payload.OUROBOROS_SUBAGENTS.items.map((row) => row.subagent_id), ['r1']);
+    assert.ok(!(ALLOW_EMPTY_REVIEW_POOL in payload));
+    // Only the owner's explicit confirmation rides as a request flag, never inside the stored setting.
+    const confirmed = availableSubagentsSavePayload({ loaded: true, allowEmptyReviewPool: true,
+        setting: { enabled: true, items: [ROW] } });
+    assert.equal(confirmed[ALLOW_EMPTY_REVIEW_POOL], true);
+    assert.ok(!(ALLOW_EMPTY_REVIEW_POOL in confirmed.OUROBOROS_SUBAGENTS));
+    const paused = availableSubagentsSavePayload({ loaded: true, allowEmptyReviewPool: true,
+        setting: { enabled: true, items: [{ ...ROW, review_eligible: true, enabled: false }] } });
+    assert.equal(paused[ALLOW_EMPTY_REVIEW_POOL], true, 'a pool of switched-off reviewers is empty too');
 });
 
-test('a loaded populated set serializes exactly as the setting builder emits it', () => {
-    const payload = reviewerSlotsSavePayload({
-        loaded: true,
-        loadError: '',
-        triad: [{ slot_id: 't_1', route: { kind: 'api_chat', target_id: 'openai/gpt-5.6-sol' }, effort: 'high' }],
-        scope: [{ slot_id: 's_1', route: { kind: 'agent_session', target_id: 'codex=gpt-5.6-sol', profile_id: 'koshak' }, effort: '' }],
-        advisory: { enabled: false, route: { kind: 'api_chat', target_id: 'anthropic/claude-sonnet-5' }, effort: 'low' },
-    });
-    const parsed = JSON.parse(payload.OUROBOROS_REVIEWER_SLOTS);
-    assert.deepEqual(parsed.triad, [{
-        slot_id: 't_1', route: { kind: 'api_chat', target_id: 'openai/gpt-5.6-sol' }, effort: 'high',
-    }]);
-    assert.equal(parsed.scope[0].route.profile_id, 'koshak');
-    assert.equal('effort' in parsed.scope[0], false);
-    assert.equal(parsed.advisory.enabled, false);
+test('a stale confirmation never rides once a row is marked, nor on an empty catalog', () => {
+    const marked = availableSubagentsSavePayload({ loaded: true, allowEmptyReviewPool: true,
+        setting: { enabled: true, items: [{ ...ROW, review_eligible: true }] } });
+    assert.equal(marked.OUROBOROS_SUBAGENTS.items[0].review_eligible, true);
+    assert.ok(!(ALLOW_EMPTY_REVIEW_POOL in marked));
+    const empty = availableSubagentsSavePayload({ loaded: true, allowEmptyReviewPool: true,
+        setting: { enabled: true, items: [] } });
+    assert.ok(!(ALLOW_EMPTY_REVIEW_POOL in empty));
 });

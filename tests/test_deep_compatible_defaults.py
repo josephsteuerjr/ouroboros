@@ -1,8 +1,6 @@
 """Fresh setup through preview, completion, runtime projection and deep admission."""
-import asyncio
 import json
 import os
-from types import SimpleNamespace
 from unittest import mock
 
 import pytest
@@ -26,7 +24,6 @@ PAYLOAD = {"OPENAI_COMPATIBLE_BASE_URL": "https://llm.example/v1",
 @pytest.mark.parametrize("stored", [None, "openai/custom", OPENROUTER_DEFAULTS["deep_self_review"], ""])
 def test_setup_preserves_raw_deep_choice_and_synthesizes_only_absence(onboarding, monkeypatch, stored):
     from ouroboros.deep_self_review import deep_review_route
-    from ouroboros.gateway.settings import api_reviewer_slots
     from ouroboros.settings_integrity import task_settings_scope, task_settings_snapshot
 
     monkeypatch.delenv(KEY, raising=False)
@@ -34,9 +31,7 @@ def test_setup_preserves_raw_deep_choice_and_synthesizes_only_absence(onboarding
         onboarding.settings_path.write_text(json.dumps({KEY: stored}))
     preview = onboarding.client.post("/api/onboarding/subagents/preview", json=PAYLOAD)
     assert preview.status_code == 200, preview.text
-    panel = json.loads(preview.json()["reviewer_slots"])
     expected = stored or MAIN
-    assert panel["deep_review"]["route"]["target_id"] == expected
     completed = onboarding.client.post("/api/onboarding/complete", json=PAYLOAD)
     assert completed.status_code == 200, completed.text
     assert onboarding.calls["snapshot"] == 0  # no session daemon / provider dispatch
@@ -44,8 +39,6 @@ def test_setup_preserves_raw_deep_choice_and_synthesizes_only_absence(onboarding
     REAL_APPLY(loaded)
     assert config.get_deep_self_review_model() == expected
     assert rsc.deep_review_slot().target_id == expected
-    endpoint = json.loads(asyncio.run(api_reviewer_slots(SimpleNamespace())).body)
-    assert endpoint["deep_review"]["route"]["target_id"] == expected
     if stored is None:
         assert deep_review_route() == ("", MAIN)
     snapshot = task_settings_snapshot(loaded, dict(__import__("os").environ))

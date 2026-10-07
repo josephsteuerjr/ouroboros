@@ -66,30 +66,6 @@ def test_disabled_advisory_allows_empty_session_but_not_persisted_junk():
         parse_reviewer_slots(json.dumps(payload))
 
 
-def test_settings_save_refuses_unparseable_session_target_before_persistence():
-    from starlette.requests import Request
-
-    from ouroboros.gateway.settings import _api_settings_post_locked
-
-    payload = _payload()
-    payload["triad"][0]["route"]["target_id"] = "=malformed"
-    request = Request({
-        "type": "http",
-        "method": "POST",
-        "path": "/api/settings",
-        "headers": [],
-        "query_string": b"",
-    })
-    response = _api_settings_post_locked(
-        request,
-        {REVIEWER_SLOTS_ENV: json.dumps(payload)},
-    )
-    body = json.loads(response.body)
-    assert response.status_code == 400
-    assert body["saved"] is False
-    assert "does not name a concrete harness route" in body["error"]
-
-
 def test_malformed_advisory_target_never_consults_the_shared_route(monkeypatch):
     from ouroboros import reviewer_slot_config
 

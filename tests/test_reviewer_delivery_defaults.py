@@ -71,18 +71,6 @@ def test_delivery_is_refused_wherever_it_means_nothing(config, where):
         parse_reviewer_slots(config)
 
 
-def test_settings_round_trip_keeps_bare_rows_packet_and_native_rows_native(clean_env):
-    from starlette.requests import Request
-
-    from ouroboros.gateway.settings import api_reviewer_slots
-
-    clean_env.setenv(REVIEWER_SLOTS_ENV, _panel(_api("bare"), _api("native", delivery="native")))
-    request = Request({"type": "http", "method": "GET", "path": "/api/reviewer-slots",
-                       "headers": [], "query_string": b""})
-    body = json.loads(asyncio.run(api_reviewer_slots(request)).body)
-    assert body["triad"][0]["delivery"] == "packet" and body["triad"][1]["delivery"] == "native"
-    saved = json.dumps({key: body[key] for key in ("triad", "scope", "advisory")})
-    assert [row.delivery for row in parse_reviewer_slots(saved).triad] == ["packet", "native"]
 
 
 def test_the_shipped_default_triad_reads_natively_on_the_same_models(clean_env):

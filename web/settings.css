@@ -612,6 +612,39 @@
     padding: 0 11px;
 }
 
+/* Reviewer mark, its price and origin wrap as one line under the route. */
+.available-subagent-review {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    color: var(--text-meta);
+    font-size: var(--type-meta);
+}
+
+.available-subagent-reviewer {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    color: var(--text-primary);
+    cursor: pointer;
+}
+
+.available-subagent-minted {
+    padding: 0 var(--space-2);
+    border: 1px solid var(--surface-border);
+    border-radius: var(--radius);
+}
+
+.available-subagents-review-empty {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    color: var(--status-warn-fg);
+    font-size: var(--type-meta);
+}
+
 .settings-secret-list {
     display: flex;
     flex-direction: column;

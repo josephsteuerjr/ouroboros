@@ -5,6 +5,8 @@ import { escapeHtmlAttr, sinceLocalTime } from './utils.js';
 import { taskSourceDownloadUrl } from './api_client.js';
 import { harnessIdentityMarkup } from './harness_presentation.js';
 import { reconcileReviewMarkup } from './review_dom_patch.js';
+import { actorAwaiting, actorUnresolved, formatReviewProjection } from './review_record_card.js';
+export { formatReviewProjection } from './review_record_card.js';
 
 const escapeHtmlText = escapeHtmlAttr;
 
@@ -42,10 +44,6 @@ const finiteCount = (value) => {
     const number = Number(value);
     return Number.isFinite(number) && number >= 0 ? Math.trunc(number) : null;
 };
-// A reviewer answer that has not arrived is a gap, not a verdict: the host
-// types a planned wait as `pending_dispatch` and an exceptional one otherwise.
-const actorAwaiting = (actor) => text(actor?.operation_state) === 'pending_dispatch' && text(actor?.transport_status) !== 'success';
-const actorUnresolved = (actor) => ['in_flight', 'custody_lost'].includes(text(actor?.operation_state));
 // A roster with an unanswered slot reports how far it got, never a bare verdict;
 // a slot that is neither answered nor awaited keeps the warning tone.
 const heldProgress = (lead, roster, answered) => {
@@ -768,78 +766,6 @@ export function planReviewGroupFromTaskDetail(detail, ownerTaskId = '') {
         countIsAuthoritative: finiteCount(stateRecord.waves_omitted) === 0,
         attempts,
     };
-}
-
-function compactCoverage(coverage) {
-    if (!coverage || typeof coverage !== 'object') return '';
-    return Object.entries(coverage)
-        .filter(([, value]) => value !== '' && value !== null && value !== undefined)
-        .map(([key, value]) => `${key}=${String(value)}`)
-        .join(', ');
-}
-
-export function formatReviewProjection(projection) {
-    const panels = Array.isArray(projection?.panels) ? projection.panels : [];
-    const lines = [];
-    panels.forEach((panel, panelIndex) => {
-        if (!panel || typeof panel !== 'object') return;
-        const quorum = panel.quorum && typeof panel.quorum === 'object' ? panel.quorum : {};
-        const panelId = String(panel.panel_id || `panel-${panelIndex + 1}`);
-        const awaiting = (Array.isArray(panel.actors) ? panel.actors : []).filter(actorAwaiting).length;
-        const signal = String(panel.aggregate_signal || 'UNKNOWN');
-        // While a slot is awaited the aggregate is not final; DEGRADED is only the host's placeholder.
-        const verdictText = !awaiting ? signal : (signal === 'DEGRADED' ? `none (${awaiting} awaiting; held as DEGRADED)` : `${signal} (${awaiting} awaiting)`);
-        lines.push(
-            `Review panel ${panelId}: ${String(panel.surface || 'review')} · authority=${String(panel.authority || 'unspecified')} · verdict=${verdictText} · transport=${String(panel.transport_status || 'unknown')} · parse=${String(panel.parse_status || 'unknown')} · quorum=${String(quorum.contributed ?? 0)}/${String(quorum.configured ?? 0)} (required ${String(quorum.required ?? 0)}) · enforcement=${String(panel.enforcement_impact || 'unknown')}${panel.single_reviewer_no_diversity ? ' · single-reviewer (no diversity)' : ''}${panel.dialogue && panel.dialogue.status ? ` · dialogue=${String(panel.dialogue.status)}` : ''}${panel.superseded ? ' · superseded' : ''}`,
-        );
-        if (panel.reason) lines.push(`Panel reason: ${String(panel.reason)}`);
-        const coverage = compactCoverage(panel.coverage);
-        if (coverage) lines.push(`Panel coverage: ${coverage}`);
-        const binding = [
-            panel.candidate_hash ? `candidate_hash=${String(panel.candidate_hash)}` : '',
-            panel.evidence_revision ? `evidence_revision=${String(panel.evidence_revision)}` : '',
-            panel.fence_hash ? `fence_hash=${String(panel.fence_hash)}` : '',
-            panel.binding_hash ? `binding_hash=${String(panel.binding_hash)}` : '',
-        ].filter(Boolean);
-        if (binding.length) lines.push(`Panel binding: ${binding.join(' · ')}`);
-        (Array.isArray(panel.actors) ? panel.actors : []).forEach((actor) => {
-            if (!actor || typeof actor !== 'object') return;
-            const slotId = String(actor.slot_id || '?');
-            lines.push(
-                `Reviewer ${slotId}: role=${String(actor.actor_role || 'reviewer')} · provider=${String(actor.provider || 'unknown')} · model=${String(actor.model || 'unknown')} · transport=${actorAwaiting(actor) ? 'awaiting' : String(actor.transport_status || 'unknown')} · parse=${actorAwaiting(actor) ? 'awaiting' : String(actor.parse_status || 'unknown')} · verdict=${String(actor.semantic_verdict || 'none')}${actor.outcome_tier ? ` · outcome_tier=${String(actor.outcome_tier)}` : ''}${actor.dialogue_status ? ` · dialogue=${String(actor.dialogue_status)}` : ''} · quorum=${actor.quorum_contribution ? 'contributes' : 'abstains'} · enforcement=${String(actor.enforcement_impact || 'unknown')}${actorAwaiting(actor) || actorUnresolved(actor) ? sinceLocalTime(actor.awaiting_since) : ''}`,
-            );
-            const actorCoverage = compactCoverage(actor.coverage);
-            if (actorCoverage) lines.push(`Reviewer ${slotId} coverage: ${actorCoverage}`);
-            if (actor.reason) lines.push(`Reviewer ${slotId} reason: ${String(actor.reason)}`);
-            if (Array.isArray(actor.findings)) {
-                for (const finding of actor.findings) {
-                    if (!finding || typeof finding !== 'object') continue;
-                    const label = [text(finding.severity), text(finding.verdict)]
-                        .filter(Boolean).join(' ') || 'finding';
-                    const title = text(finding.item) || text(finding.summary) || '(no item)';
-                    const summaryText = text(finding.summary);
-                    const body = [
-                        `[${label}]${text(finding.id) ? ` ${text(finding.id)}` : ''} ${title}`,
-                        summaryText && summaryText !== title ? `summary: ${summaryText}` : '',
-                        text(finding.reason) ? `reason: ${text(finding.reason)}` : '',
-                        text(finding.evidence) ? `evidence: ${text(finding.evidence)}` : '',
-                        text(finding.recommendation) ? `fix: ${text(finding.recommendation)}` : '',
-                    ].filter(Boolean).join(' — ');
-                    lines.push(`Reviewer ${slotId} finding: ${body}`);
-                }
-                const omitted = finiteCount(actor.findings_omitted);
-                if (omitted) lines.push(`Reviewer ${slotId} findings omitted: ${omitted}`);
-            }
-            // P1: name the durable full copy unconditionally — bounded rows,
-            // per-string truncation markers and pre-findings-era projections
-            // all resolve through the same observability call.
-            const callId = text(actor.response_ref?.call_id);
-            if (callId) {
-                lines.push(`Reviewer ${slotId} full response: observability call ${callId}`);
-            }
-        });
-    });
-    return lines.join('\n');
 }
 
 function authorDispositionText(author, label = '') {
