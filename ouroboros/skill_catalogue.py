@@ -7,7 +7,7 @@ source store, never a second catalogue cache or a larger generic cap.
 """
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import fields
 from hashlib import sha256
 import json
 import logging
@@ -87,7 +87,17 @@ def _detail(ctx: Any, row: dict, drive_root: Any) -> dict:
         schemas = [{"name": tool.get("name"), "description": tool.get("description"),
                     "schema": tool.get("schema")}
                    for tool in _tools.values() if tool.get("skill") == selected.name]
-    return {**row, "manifest": asdict(selected.manifest), "tool_schemas": schemas}
+    manifest = {field.name: getattr(selected.manifest, field.name)
+                for field in fields(selected.manifest)}
+    try:
+        _encode(manifest)
+    except (TypeError, ValueError):
+        # The tolerant parser accepts YAML dates, sets and aliases. Keep their
+        # meaning in YAML rather than silently stringifying/dropping extras.
+        import yaml
+        manifest = {"body": selected.manifest.body, "representation": "yaml",
+                    "yaml": yaml.safe_dump(manifest, allow_unicode=True, sort_keys=False)}
+    return {**row, "manifest": manifest, "tool_schemas": schemas}
 
 
 def _source_record(ctx: Any, row: dict) -> dict:

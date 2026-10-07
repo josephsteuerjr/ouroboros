@@ -233,3 +233,30 @@ def test_inventory_detects_delete_and_payload_edit(registry):
         stream.write("\nNew instructions")
     edited = _consumer(registry, {"inventory": old["inventory"]})
     assert edited["error"] == "inventory_changed" and edited["returned"] == 0
+
+
+@pytest.mark.parametrize("padding", ["", "x" * 24000])
+def test_yaml_extra_values_do_not_break_named_detail(registry, padding):
+    import datetime
+    import yaml
+    body = padding + "Preserve these instructions exactly."
+    folder = _seed(registry, "yaml-extra", body=body)
+    manifest = folder / "SKILL.md"
+    text = manifest.read_text()
+    manifest.write_text(text.replace("\n---\n", "\npublished: 2026-10-08\nlabels: !!set {alpha: null, beta: null}\nindexes: {1: alpha, text: beta}\nshared: &self {back: *self}\n---\n", 1))
+    row = _consumer(registry, {"name": "yaml-extra", "detail": True})["skills"][0]
+    if padding:
+        ref = row["source_ref"]
+        read = registry.execute(ref["read"]["tool"], {**ref["read"]["arguments"], "start_char": 20000})
+        assert "Preserve these instructions exactly." in read
+        from ouroboros.artifacts import read_actor_source_bytes
+        row = json.loads(read_actor_source_bytes(registry._ctx.drive_root, "catalogue-consumer", ref))
+    detail = row["manifest"]
+    assert detail["body"] == body
+    assert detail["representation"] == "yaml"
+    complete = yaml.safe_load(detail["yaml"])
+    assert complete["raw_extra"]["published"] == datetime.date(2026, 10, 8)
+    assert complete["raw_extra"]["labels"] == {"alpha", "beta"}
+    assert complete["raw_extra"]["indexes"] == {1: "alpha", "text": "beta"}
+    shared = complete["raw_extra"]["shared"]
+    assert shared["back"] is shared
