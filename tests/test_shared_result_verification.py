@@ -1,5 +1,4 @@
 """Public consumer: admitted child B → real capture → parent verifies B, never A."""
-from hashlib import sha256
 import json
 from pathlib import Path
 import subprocess
@@ -9,11 +8,14 @@ import pytest
 
 from ouroboros.artifacts import task_artifact_dir_path, copy_directory_to_task_artifacts
 from ouroboros.headless import finalize_task_artifacts
-from ouroboros.task_results import load_task_result, write_task_result
+from ouroboros.task_results import write_task_result
 from ouroboros.task_status import load_effective_task_result
 from ouroboros.tools.registry import ToolContext, ToolRegistry
 from ouroboros.workspace_patch_capture import write_workspace_patch_artifacts
 from supervisor.events_subagent_admission import _resolve_subagent_constraint
+
+# Actual Git subprocess fixtures follow the repository's real-process lane.
+pytestmark = pytest.mark.serial
 
 
 def git(root, *args):
