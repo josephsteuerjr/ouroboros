@@ -984,6 +984,7 @@ def test_the_brief_of_a_three_file_change_on_the_real_tree_is_measured(tmp_path)
     # paragraph and the Coupling questions section (the retired scope brief
     # alone measured 209,106). The ceiling keeps about the same headroom for the
     # next index growth (~23K), not a rounding of the measurement.
+    # The engine facts/lifecycle merge (2026-10-08) adds 161 index chars inside this headroom.
     assert without_diff < 234_000, without_diff
     assert sections["repository_index"] > 20_000          # the index really ran
     assert sections["governance_stable_inline"] > 40_000  # BIBLE really inline
