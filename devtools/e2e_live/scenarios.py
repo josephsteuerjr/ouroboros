@@ -231,6 +231,26 @@ def commit_refusal_facts(ledger: dict, tools_rows: list, stored: dict) -> dict:
     }
 
 
+def commit_wave_fact(records: list, task_id: str) -> dict:
+    """SM1's durable fact of the review WAVE: the commit gate's review-ledger record of this task
+    (``state/review_ledger/<record_id>.json``, ``surface=commit_gate``) whose seats were dispatched
+    and answered both questions of the brief (``verdict.per_question``: ``change`` and ``coupling``).
+    The retired ``scope_review_complete`` event is gone with the scope reviewer; the one record the
+    wave writes is what proves it ran. ``{}`` when no such record exists; otherwise the newest one's
+    ``record_id``, ``aggregate``, ``per_question`` and ``seats`` (never a verdict judgement: under
+    blocking enforcement the landing itself required PASS, and that is ``commit_landed``'s check)."""
+    waves = sorted((r for r in records if isinstance(r, dict) and r.get("surface") == "commit_gate"
+                    and str(r.get("task_id") or "") == str(task_id)), key=lambda r: str(r.get("ts") or ""))
+    for record in reversed(waves):
+        verdict = record.get("verdict") if isinstance(record.get("verdict"), dict) else {}
+        answers = verdict.get("per_question") if isinstance(verdict.get("per_question"), dict) else {}
+        rows = [row for row in (record.get("rows") or []) if isinstance(row, dict)]
+        if rows and answers.get("change") and answers.get("coupling"):
+            return {"record_id": str(record.get("record_id") or ""), "aggregate": str(verdict.get("aggregate") or ""),
+                    "per_question": {k: str(v) for k, v in answers.items()}, "seats": len(rows)}
+    return {}
+
+
 def dispatch_verdict(rows: list, expected_text: str) -> dict:
     """What the durable tools.jsonl rows of an extension surface prove about its dispatch.
 
@@ -553,8 +573,12 @@ def run_sm1(ctx: LaneContext) -> None:
     vision = vision_evidence_rows(tools_rows)
     ctx.facts["vision_evidence_present"] = bool(vision)
     ctx.facts["vision_evidence_tools"] = sorted({str(r.get("tool") or "") for r in vision})
-    ctx.check("scope_review_complete_event",
-              bool(ctx.wait_events(task_oracle, "scope_review_complete", lambda _row: True)))
+    # The wave's durable record (the task's forked drive root, else the server root): the gate writes
+    # it inside the commit call, so this wait only covers a late durable row, as the event wait did.
+    wave = ctx.h.wait_until(lambda: commit_wave_fact(
+        task_oracle.review_ledger_records() + ctx.oracle.review_ledger_records(), task_id) or None, 90) or {}
+    ctx.facts["commit_gate_wave"] = wave
+    ctx.check("commit_gate_wave_record", bool(wave))
     ctx.check_paid_tokens([task_id])
     # Include the original names too: silently dropping a role cannot shrink the browser proof.
     names = SM1_REQUIRED_PALETTE | palette.keys() | sm1_palette_tokens(before[SM1_CSS_PATH]).keys()

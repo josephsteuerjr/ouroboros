@@ -60,6 +60,34 @@ def test_the_landing_commit_call_records_its_skip_flags():
     assert scenarios.commit_refusal_facts({}, [], {})["landing_skip_flags"] == []
 
 
+def test_t2_the_wave_fact_is_the_commit_gates_record_of_this_task_with_both_questions_answered():
+    """FIX3 T2: the oracle reads what the wave really writes — the commit gate's review-ledger record
+    (built here by the ledger itself, never a hand-shaped dict) — and ignores a dispatch-less
+    refusal record, another task's record and another surface's; the newest answering record wins."""
+    from ouroboros import review_ledger as rl
+    from tests.test_review_ledger import BOTH, _facts, _raw, _three
+
+    raws = [_raw("s1", "openai/gpt-5"), _raw("s2", "anthropic/claude-x", parts=BOTH), _raw("s3", "google/gemini")]
+    landed = rl.build_commit_gate_record(_facts(raws, task_id="sm1-task")).to_dict()
+    assert landed["verdict"]["per_question"] == {"change": "PASS", "coupling": "PASS"}, landed["verdict"]
+    refused = rl.build_commit_gate_record(_facts([], task_id="sm1-task", dispatch_refusal={
+        "kind": "pool_empty", "message": "the review pool is empty"})).to_dict()
+    other_task = rl.build_commit_gate_record(_facts(_three(), task_id="other-task")).to_dict()
+    other_surface = {**landed, "surface": "plan_review", "ts": "2099-01-01T00:00:00+00:00"}
+
+    fact = scenarios.commit_wave_fact([refused, other_task, other_surface, landed], "sm1-task")
+    assert fact == {"record_id": landed["record_id"], "aggregate": "PASS",
+                    "per_question": {"change": "PASS", "coupling": "PASS"}, "seats": 3}
+    assert scenarios.commit_wave_fact([refused, other_task, other_surface], "sm1-task") == {}, (
+        "a record that dispatched nothing, another task's or another surface's is not the wave")
+    assert scenarios.commit_wave_fact([], "sm1-task") == {} and scenarios.commit_wave_fact([None, 3], "sm1-task") == {}
+    # Several attempts: the NEWEST record that answered both questions is the fact, whatever its verdict
+    # (the landing itself is commit_landed's business), never an older PASS over a newer answer.
+    newer_fail = {**landed, "record_id": "rv-newer", "ts": "2099-01-01T00:00:00+00:00",
+                  "verdict": {**landed["verdict"], "aggregate": "FAIL", "per_question": {"change": "FAIL", "coupling": "PASS"}}}
+    assert scenarios.commit_wave_fact([landed, newer_fail], "sm1-task")["record_id"] == "rv-newer"
+
+
 def test_ui_probe_waits_for_the_requested_document():
     calls = []
     probe = UIProbe("http://lane.test")
