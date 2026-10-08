@@ -150,6 +150,37 @@ def test_a_catalog_with_no_marked_row_is_an_empty_pool_a_loud_fact_not_a_default
     assert [row["seat_id"] for row in never_configured["pool"]] == ["review-1", "review-2", "review-3"]
 
 
+def test_the_seats_without_credentials_are_a_block_fact_and_every_seat_is_the_loud_one(monkeypatch):
+    """VD3-08: the block names the api seats whose model this install holds no credentials for
+    (the same fact ``GET /api/review-pool`` carries as ``pool_without_credentials`` and Settings
+    shows); a session seat logs in itself and is never listed; when it is every seat of the pool
+    the block says so in one loud key. Funded, neither key appears."""
+    from ouroboros import provider_models
+
+    monkeypatch.setenv(SUBAGENTS_SETTING, _POOL)
+    handles = _handles()
+    monkeypatch.setattr(provider_models, "model_has_credentials_in_settings",
+                        lambda model, settings: model != "openai/gpt-5.6-terra")
+    some, _ = _block()
+    assert some["pool_without_credentials"] == [handles["critic-key"]]
+    assert "no_pool_row_has_credentials" not in some, "the session seat and a funded api seat still answer"
+
+    monkeypatch.setattr(provider_models, "model_has_credentials_in_settings", lambda model, settings: False)
+    unfunded, _ = _block()
+    assert unfunded["pool_without_credentials"] == [handles["critic-key"], handles["packet-key"]]
+    assert "no_pool_row_has_credentials" not in unfunded, "the session seat logs in itself"
+
+    monkeypatch.setenv(SUBAGENTS_SETTING, _roster(_row("critic-key", "openai/gpt-5.6-terra"),
+                                                   _row("packet-key", "openai/gpt-5.6-sol", delivery="packet")))
+    api_only, _ = _block()
+    assert api_only["no_pool_row_has_credentials"] is True
+    assert len(api_only["pool_without_credentials"]) == len(api_only["pool"]) == 2
+
+    monkeypatch.setattr(provider_models, "model_has_credentials_in_settings", lambda model, settings: True)
+    funded, _ = _block()
+    assert "pool_without_credentials" not in funded and "no_pool_row_has_credentials" not in funded
+
+
 def test_an_invalid_catalog_is_an_error_with_an_empty_pool_not_an_absent_one(monkeypatch):
     from ouroboros.reviewer_slot_config import review_pool_state
 

@@ -1466,7 +1466,46 @@ test('review-pool facts price saved rows by their loaded route; an edited route 
     assert.equal(dom.row(0).facts.textContent, 'In the review pool · cost unknown');
     editor.setReviewPool({ row_costs: {}, pool: [], migration: { snapshot: 'state/review_lanes_snapshot.json', reported: false } });
     assert.equal(dom.pool.note.textContent,
-        'Rows marked “From a former review lane” were converted from the review lanes setting; its previous value is kept in state/review_lanes_snapshot.json.');
+        'Rows marked “From a former review lane” were converted from your review lanes; snapshot state/review_lanes_snapshot.json keeps their previous value.');
+    editor.destroy();
+});
+
+test('the pool note says what the migration did to the owner\'s review settings and when no pool row has credentials', () => {
+    const dom = accessEditorDom();
+    const editor = createAvailableSubagentsEditor({ doc: dom.doc, win: null });
+    editor.load(setting([apiRow({ review_eligible: true })]));
+    const snapshot = 'state/review_migrations/20261008T101010Z-slots-to-pool.json';
+    const receipt = (fields) => ({ snapshot, reported: true, trigger: 'lanes_key', error: '', source: 'document', ...fields });
+    const pool = [{ subagent_id: 'api_scout', route: { target_id: 'openai/gpt-5.6-sol' }, cost: { basis: 'per_review' } }];
+
+    editor.setReviewPool({ row_costs: {}, pool, migration: receipt({ outcome: 'converted' }) });
+    assert.equal(dom.pool.note.textContent,
+        `Rows marked “From a former review lane” were converted from your review lanes; snapshot ${snapshot} keeps their previous value.`);
+    editor.setReviewPool({ row_costs: {}, pool, migration: receipt({ outcome: 'factory', trigger: 'never_configured' }) });
+    assert.equal(dom.pool.note.textContent,
+        `This install had no review settings, so factory reviewers were set up (rows marked “Factory reviewer”); snapshot ${snapshot}.`);
+    editor.setReviewPool({ row_costs: {}, pool, migration: receipt({ outcome: 'factory', trigger: 'never_configured', source: 'environment' }) });
+    assert.match(dom.pool.note.textContent, /factory reviewers were set up .* The catalog from the environment runs instead of these rows\.$/);
+    editor.setReviewPool({ row_costs: {}, pool, migration: receipt({ outcome: 'error', error: 'OUROBOROS_REVIEWER_SLOTS: row 2 has no model', source: 'error' }) });
+    assert.equal(dom.pool.note.textContent,
+        `Review migration failed: OUROBOROS_REVIEWER_SLOTS: row 2 has no model; your lanes were kept; snapshot ${snapshot}. Mark reviewers here and save to finish.`);
+    editor.setReviewPool({ row_costs: {}, pool, migration: receipt({ outcome: 'error', error: 'bad lanes', snapshot: '', source: 'error' }) });
+    assert.equal(dom.pool.note.textContent,
+        'Review migration failed: bad lanes; your lanes were kept; no snapshot was written. Mark reviewers here and save to finish.');
+    // A receipt of an earlier document the owner has since re-saved says nothing.
+    editor.setReviewPool({ row_costs: {}, pool, migration: receipt({ outcome: 'converted', source: 'history' }) });
+    assert.equal(dom.pool.note.hidden, true);
+
+    // VD3-08: every pool row without credentials is the loud fact; some rows is a shorter one.
+    editor.setReviewPool({ row_costs: {}, pool, migration: null, pool_without_credentials: ['api_scout'] });
+    assert.equal(dom.pool.note.textContent,
+        'No pool row has credentials: none of the 1 reviewer model has an API key in this install, so every review will fail until a key is added or a reviewer with one is marked.');
+    const two = [...pool, { subagent_id: 'critic', route: { target_id: 'anthropic/claude-fable-5' }, cost: { basis: 'per_review' } }];
+    editor.setReviewPool({ row_costs: {}, pool: two, migration: null, pool_without_credentials: ['critic'] });
+    assert.equal(dom.pool.note.textContent, 'No credentials in this install for critic: those seats cannot answer.');
+    // Both facts stand side by side; a pool error still comes first.
+    editor.setReviewPool({ row_costs: {}, pool, migration: receipt({ outcome: 'converted' }), pool_without_credentials: ['api_scout'] });
+    assert.match(dom.pool.note.textContent, /^Rows marked .* No pool row has credentials: /);
     editor.destroy();
 });
 

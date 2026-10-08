@@ -296,6 +296,35 @@ function reviewNotes(row, state, index) {
     return notes.join(' ');
 }
 
+/**
+ * The lanes-to-pool migration receipt that decided the shown document (`GET /api/review-pool`
+ * `migration`): what happened to the owner's review settings, in one sentence. A `history`
+ * receipt describes an earlier document the owner has since re-saved, so it says nothing.
+ */
+function migrationNote(migration) {
+    if (!migration || migration.source === 'history') return '';
+    const snapshot = migration.snapshot ? `snapshot ${migration.snapshot}` : 'no snapshot was written';
+    if (migration.outcome === 'error') {
+        return `Review migration failed: ${migration.error || 'reason not recorded'}; your lanes were kept; ${snapshot}. Mark reviewers here and save to finish.`;
+    }
+    const inForce = migration.source === 'environment' ? ' The catalog from the environment runs instead of these rows.' : '';
+    if (migration.outcome === 'factory') {
+        return `This install had no review settings, so factory reviewers were set up (rows marked “${MINTED_FROM.factory_default}”); ${snapshot}.${inForce}`;
+    }
+    return `Rows marked “${MINTED_FROM.review_lane}” were converted from your review lanes; ${snapshot} keeps their previous value.${inForce}`;
+}
+
+/** The pool rows whose model has no credentials in this install (`pool_without_credentials`); every row is the loud fact. */
+function credentialsNote(payload) {
+    const missing = payload.pool_without_credentials || [];
+    const pool = payload.pool || [];
+    if (!missing.length) return '';
+    if (pool.length && missing.length === pool.length) {
+        return `No pool row has credentials: none of the ${pool.length} reviewer model${pool.length === 1 ? '' : 's'} has an API key in this install, so every review will fail until a key is added or a reviewer with one is marked.`;
+    }
+    return `No credentials in this install for ${missing.join(', ')}: those seats cannot answer.`;
+}
+
 function reviewPoolSummary(state) {
     const items = state.setting?.items || [];
     const pool = reviewPoolRows(state.setting).length;
@@ -306,9 +335,7 @@ function reviewPoolSummary(state) {
     const payload = state.reviewPool || {};
     let note = payload.load_error || '';
     if (!note && payload.config_error) note = `The saved review pool has an error: ${payload.config_error}`;
-    if (!note && payload.migration?.snapshot) {
-        note = `Rows marked “${MINTED_FROM.review_lane}” were converted from the review lanes setting; its previous value is kept in ${payload.migration.snapshot}.`;
-    }
+    note = [note, migrationNote(payload.migration), credentialsNote(payload)].filter(Boolean).join(' ');
     return {
         count: `Reviewers: ${pool}`,
         stays: marked ? 'Off stops delegation only: review stays on for rows marked Reviewer.' : '',

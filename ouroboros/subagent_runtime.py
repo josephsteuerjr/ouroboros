@@ -295,6 +295,7 @@ def review_facts_block(snapshot: Optional[TaskSettingsSnapshot] = None) -> str:
     from ouroboros import reviewer_slot_config as rs
     from ouroboros.config import get_review_enforcement, get_runtime_mode, runtime_settings, task_settings_scope
     from ouroboros.configured_subagents import SUBAGENTS_SETTING, parse_configured_subagents
+    from ouroboros.provider_models import model_has_credentials_in_settings
     from ouroboros.review_execution import ReviewRouteKind
     from ouroboros.runtime_mode_policy import runtime_mode_at_least
     from ouroboros.tools.review_helpers import review_enforcement_blocks
@@ -305,6 +306,7 @@ def review_facts_block(snapshot: Optional[TaskSettingsSnapshot] = None) -> str:
         source, error = state["state"], state["error"]
         pool: list[dict[str, Any]] = []
         slots: list[Any] = []
+        without_credentials: list[str] = []
         if source != "error":
             try:
                 raw = settings.get(SUBAGENTS_SETTING)
@@ -322,6 +324,9 @@ def review_facts_block(snapshot: Optional[TaskSettingsSnapshot] = None) -> str:
                     "delivery": "session" if session else ("native" if slot.native_retrieval else "packet"),
                     "cost_hint": SESSION_SEAT_COST_HINT if session else _api_review_cost_hint(slot),
                 })
+                # A session seat logs in itself; an api seat answers only with its provider's key.
+                if not session and not model_has_credentials_in_settings(slot.model, dict(settings)):
+                    without_credentials.append(pool[-1]["subagent_id"])
         migration = _review_migration_facts(settings)
         if migration.get("error") and source != "error":
             source, error = "error", migration["error"]
@@ -341,6 +346,10 @@ def review_facts_block(snapshot: Optional[TaskSettingsSnapshot] = None) -> str:
         "pool": pool,
         "pool_empty": source == "empty",
         **({"coupling_unanswerable": True} if unanswerable else {}),
+        # VD3-08: the seats this install holds no credentials for (the fact Settings shows
+        # from the same payload field); every seat of the pool is the loud one.
+        **({"pool_without_credentials": without_credentials} if without_credentials else {}),
+        **({"no_pool_row_has_credentials": True} if without_credentials and len(without_credentials) == seats else {}),
         "surfaces": _REVIEW_SURFACES,
         "omitted": {"rows": seats if seats > 4 else 0},
         "full_source": {"pool": "GET /api/review-pool", "records": "## Review records"},
