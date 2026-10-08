@@ -84,5 +84,6 @@ def test_a_retrieving_pool_does_not_create_a_packet_size_refusal(monkeypatch, ki
     monkeypatch.setenv("OUROBOROS_REVIEW_ENFORCEMENT", "blocking")
     frozen = runner._freeze_contributor_slots(runner._resolved_review_config())
     assert [slot.retrieves for slot in review_pool_slots()] == [not refuses, True]
+    # I3-D1: the same rule on both lanes — the operator lane is not refused on its own.
     assert runner._diff_size_refusal(SimpleNamespace(contributor=True), frozen, 500001, 500000) is refuses
-    assert runner._diff_size_refusal(SimpleNamespace(contributor=False), frozen, 500001, 500000)
+    assert runner._diff_size_refusal(SimpleNamespace(contributor=False), frozen, 500001, 500000) is refuses
