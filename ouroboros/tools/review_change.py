@@ -10,9 +10,10 @@ and binds only a body subject's record; a verdict on another root locks nothing.
 Panel (owner, 07.10): seats come from the review pool. For a body subject outside Cyber Pro the pool is
 the owner's, so ``reviewers`` only ADD seats and a named subset is recorded as ignored. For a body subject
 in Cyber Pro and for ANY subject outside the body, ``reviewers`` IS the panel (omitted = the whole pool); a
-narrowed panel without a ``reason`` is recorded loudly (``reason_missing``), never refused.
-``coupling_only`` seats answer only the coupling question; like every added seat they stay outside the
-quorum and their findings are ``additional_findings``.
+narrowed panel without a ``reason`` is recorded loudly (``reason_missing``), never refused. The counted
+seats of that composition are marked pool rows (the owner's menu, decision 1A); an enabled row outside
+the pool is seated as an added critic. ``coupling_only`` seats answer only the coupling question; like
+every added seat they stay outside the quorum and their findings are ``additional_findings``.
 
 Surfaces (decision 3A): ``change`` is the panel review above. ``preflight`` is the same wave with ONE
 enabled catalog row the author names, pool member or not — the optional pre-commit look at a worktree.
@@ -277,12 +278,14 @@ def _effort_facts(order: str, seats: Sequence[Any], own: Dict[str, str]) -> Dict
 
 
 def compose_panel(request: ReviewChangeRequest, *, adds_only: bool) -> ComposedPanel:
-    """The wave's seats over the review pool. A preflight seats the one named row.
-    ``adds_only`` (a body subject outside Cyber Pro): the pool plus any named row
-    outside it as an added seat. Otherwise the named seats ARE the panel, the whole
-    pool when none is named. A named reviewer is a pool seat or any enabled catalog
-    row (its id or handle). A malformed catalog yields no seats and its error; the
-    wave then reports the typed block."""
+    """The wave's seats over the review pool. A preflight seats the one named row,
+    pool member or not (decision 3A). ``adds_only`` (a body subject outside Cyber
+    Pro): the pool plus any named row outside it as an added seat. Otherwise the
+    named seats ARE the panel, the whole pool when none is named — and that
+    composition draws its counted seats from the marked pool only (the owner's menu,
+    decision 1A); an enabled catalog row outside the pool, named by its id or handle,
+    is heard as an added critic, never counted. A malformed catalog yields no seats
+    and its error; the wave then reports the typed block."""
     from ouroboros import review_ledger as ledger
     from ouroboros import reviewer_slot_config as slots
     from ouroboros.configured_subagents import MAX_CONFIGURED_SUBAGENTS
@@ -312,9 +315,13 @@ def compose_panel(request: ReviewChangeRequest, *, adds_only: bool) -> ComposedP
         return slots.PoolSeat(slot, tuple(ledger.seat_parts(slot, coupling_only=coupling_only)), additional)
 
     named = list({slot.slot_id: slot for slot in map(seat, request.reviewers)}.values())
-    if request.surface == "preflight" or (named and not adds_only):
+    if request.surface == "preflight":
         seats = [placed(slot) for slot in named]
         facts: Dict[str, Any] = {"composition": "composed", "chosen_by": "author"}
+    elif named and not adds_only:
+        seats = ([placed(slot) for slot in named if slot.slot_id in in_pool]
+                 + [placed(slot, additional=True) for slot in named if slot.slot_id not in in_pool])
+        facts = {"composition": "composed", "chosen_by": "author"}
     elif adds_only:
         seats = [placed(slot) for slot in pool] + [placed(slot, additional=True) for slot in named if slot.slot_id not in in_pool]
         chosen = {slot.slot_id for slot in named if slot.slot_id in in_pool}
@@ -332,7 +339,9 @@ def compose_panel(request: ReviewChangeRequest, *, adds_only: bool) -> ComposedP
             continue
         seats.append(placed(slot, additional=True, coupling_only=True))
     if not any(PART_CHANGE in parts for _slot, parts, extra in seats if not extra):
-        raise ReviewChangeArgumentError("the panel has no seat for the change question; name at least one reviewer")
+        raise ReviewChangeArgumentError(
+            "the panel has no seat for the change question; name at least one reviewer from the review pool "
+            "(an enabled row outside the pool is an added critic, never the quorum)")
     if len(seats) > MAX_CONFIGURED_SUBAGENTS:
         raise ReviewChangeArgumentError(
             f"a wave seats at most {MAX_CONFIGURED_SUBAGENTS} reviewers (this call asks {len(seats)})")
@@ -938,7 +947,8 @@ _DESCRIPTION = (
     "its tree. Rules follow the subject: the body is read against the body "
     "layer, anything else against the universal core checklist. Panel: for a body subject outside Cyber Pro the "
     "review pool stands and reviewers only add seats; otherwise reviewers IS the panel (omitted = the whole pool) "
-    "and reason records why. surface=preflight seats exactly the ONE enabled catalog row you name (pool member or "
+    "and reason records why — its counted seats are pool rows, an enabled row outside the pool is an added "
+    "critic. surface=preflight seats exactly the ONE enabled catalog row you name (pool member or "
     "not): an optional early look, never the commit panel. subject=system with surface=system is /review: one row "
     "(default: the Main model) reads the whole system against BIBLE.md and returns a report. The same subject, "
     "surface, rules and panel return the settled record free (reused=true); enforcement is recorded and on another "
@@ -970,7 +980,8 @@ def get_tools() -> List[ToolEntry]:
         "goal": _string("What the change is meant to achieve."),
         "scope": _string("What the change deliberately covers."),
         "author_questions": _names("Your own questions to the reviewers, passed verbatim."),
-        "reviewers": _names("Pool seats or enabled catalog rows, by id or handle (see the panel rule)."),
+        "reviewers": _names("Pool seats (counted) or enabled catalog rows outside the pool (added critics), by id "
+                            "or handle (see the panel rule)."),
         "reason": _string("Why this panel; recorded with it."),
         "coupling_only": _names("Extra critics for the coupling question only; outside the quorum."),
         "reviewer_effort": {"type": "string", "enum": list(EFFORT_SCALE), "description": (

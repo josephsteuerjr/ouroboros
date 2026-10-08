@@ -485,6 +485,36 @@ def test_a_body_subset_outside_cyber_pro_is_ignored_and_recorded(h: Harness, mon
     assert (composed["panel"]["composition"], composed["panel"]["reviewers_subset_ignored"]) == ("composed", False)
 
 
+def test_a_composed_panel_counts_pool_seats_only_and_hears_an_unmarked_row_as_a_critic(
+        h: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
+    """D1-02 / V02, decision 1A: the marked rows are the menu the author composes from.
+    On a foreign root and on the body in Cyber Pro an enabled row the owner did not
+    mark (``scout``) is seated as an added critic beside the named pool seats — its
+    findings are additional, the quorum is the pool seats' — and a composition that
+    names NO pool seat has no quorum and is refused before any wave."""
+    pool = _pool()
+    h.wave.failing = {"scout"}
+    _stage(h.project, "a.py", "a = 1\n")
+    foreign = h.run(subject="index", reviewers=[pool[0], "scout"], reason="one pool seat, one scout")
+    assert (h.wave.calls[-1].triad, h.wave.calls[-1].coupling) == ([pool[0]], ["scout"])
+    assert (foreign["panel"]["composition"], foreign["panel"]["additional"]) == ("composed", ["scout"])
+    assert {row["seat_id"]: row["additional"] for row in foreign["rows"]} == {pool[0]: False, "scout": True}
+    assert foreign["aggregate"] == rl.VERDICT_PASS and foreign["quorum"]["required"] == 1
+    assert [f["seat_id"] for f in foreign["findings"]["additional_findings"]] == ["scout"]
+
+    monkeypatch.setattr(rc, "get_runtime_mode", lambda: "cyber_pro")
+    _stage(h.system, "body.py", "x = 1\n")
+    body = h.run(root="system_repo", subject="index", reviewers=["scout", pool[1]], reason="cyber pro composes")
+    assert (h.wave.calls[-1].triad, h.wave.calls[-1].coupling) == ([pool[1]], ["scout"])
+    assert (body["panel"]["composition"], body["panel"]["additional"]) == ("composed", ["scout"])
+    assert body["aggregate"] == rl.VERDICT_PASS
+
+    _stage(h.system, "more.py", "y = 2\n")
+    with pytest.raises(rc.ReviewChangeArgumentError, match="from the review pool"):
+        h.run(root="system_repo", subject="index", reviewers=["scout"], reason="only the scout")
+    assert len(h.wave.calls) == 2, "no wave was paid for a composition without a pool seat"
+
+
 def test_reviewer_effort_is_this_waves_order(h: Harness) -> None:
     pool = _pool()
     _stage(h.project, "a.py", "a = 1\n")
