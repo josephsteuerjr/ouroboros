@@ -186,8 +186,9 @@ def test_project_work_entries_share_live_phase_title_and_motion(engine, theme, w
                 ended = {**fact, "activity_id": "late-card", "status": "cancelled"}
                 page.evaluate("a=>chat.hydrateStateSnapshot({supervisor_ready:true,active_chat_activities_complete:true,active_chat_activities:[a]})", ended)
                 page.evaluate("""()=>emit('chat',{chat_id:1,task_id:'late-card',role:'assistant',
-                    is_progress:true,content:'Earlier progress arriving later',ts:'2026-10-08T14:00:00Z'})""")
+                    is_progress:true,narration:true,content:'Earlier progress arriving later',ts:'2026-10-08T14:00:00Z'})""")
                 late = page.locator('.chat-live-card[data-task-id="late-card"]')
+                playwright.expect(late.locator('[data-live-title]')).to_have_text("Earlier progress arriving later")
                 playwright.expect(late.locator('[data-live-phase]')).to_have_text("Cancelled")
                 assert late.locator('[data-live-phase]').get_attribute("data-motion") == "0"
                 assert late.get_attribute("data-finished") == "1"

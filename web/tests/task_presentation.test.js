@@ -193,7 +193,7 @@ test('interrupted child stays retryable with a Working chip and inspectable deta
     );
     // #1110: an unfinished card's chip comes from the record's own state, so the
     // terminal phase is passed only when the card is finished.
-    assert.match(applyState, /desiredLiveCardPhase\(record, record\.finished \? summary\.phase \|\| 'done' : ''\)/);
+    assert.match(applyState, /desiredLiveCardPhase\(record, closedPhase \|\| \(record\.finished \? summary\.phase \|\| 'done' : ''\)\)/);
     assert.match(applyState, /setLiveCardPhase\(record, desiredPhase\.phase, desiredPhase\.text, desiredPhase\.className,\s*desiredPhase\.secondary\)/);
     assert.equal([...applyState.matchAll(/setLiveCardPhase\(/g)].length, 1);
     // The Failed-into-the-title workaround is gone: the name stays stable.

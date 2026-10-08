@@ -1646,7 +1646,9 @@ export function createChatInstance({
         const typingBefore = typingEl.style.display;
         let timelineChanged = false;
         const nextPhase = summary.phase || '';
-        if (_historyRow?.history_id && record.updates > 0 && !summary.terminal
+        const closedPhase = record.finished && !isTerminalTaskPhase(nextPhase, summary.terminal) ? replayTerminalPhase(record) : '';
+        const initialContent = record.finished && (!record.updates || (summary.human && !record.lastHumanHeadline));
+        if (_historyRow?.history_id && record.updates > 0 && !initialContent && !summary.terminal
                 && (record.finished || _historyAppending
                     || Date.parse(rawTs) < Date.parse(record.latestSourceTs || ''))) {
             const changed = mergeHistoricalTimelineItem(record, summary, _historyRow, ts);
@@ -1659,7 +1661,7 @@ export function createChatInstance({
         if (summary.toolCall?.fact === 'wait_ended' && record.toolFold.calls.get(summary.toolCall.key)?.settlement) {
             summary = { ...summary, visible: false }; // wait history remains in the fold
         }
-        if (record.finished && !isTerminalTaskPhase(nextPhase, summary.terminal)) {
+        if (closedPhase && !initialContent) {
             if (foldView) {
                 upsertToolFoldRow(record, foldView, ts, rawTs);
                 renderLiveCardTimeline(record);
@@ -1669,8 +1671,8 @@ export function createChatInstance({
             renderLiveCardMeta(record, summary.costProjection);
             return liveCardProjectionChanged(before, record);
         }
-        if (summary.terminal || (!_historyReplayActive && !_syncPass1Active
-                && ['working', 'thinking'].includes(summary.phase))) {
+        if (!closedPhase && (summary.terminal || (!_historyReplayActive && !_syncPass1Active
+                && ['working', 'thinking'].includes(summary.phase)))) {
             restoreCardActivity(record);
             if (!summary.terminal) {
                 if (record.isSubagent && record.parkedPhase === 'unknown' && ws.isConnected?.() !== false) syncParkedPhase(record, summary.phase);
@@ -1682,12 +1684,12 @@ export function createChatInstance({
         if (foldView?.clearedNotice) { renderLiveCardTimeline(record); timelineChanged = true; }
 
         if (!record.isSubagent) {
-            activeLiveGroupId = nextGroupId;
+            if (!closedPhase) activeLiveGroupId = nextGroupId;
             reanchorTaskCard(record, rawTs, { suppressDomInsert });
         }
         record.updates += 1;
         const wasFinished = record.finished;
-        // No placeholder: a frame naming nothing is no narration; the chip says Working (#1369).
+        // Empty frames name nothing (#1369).
         const headline = summary.headline || record.lastHumanHeadline || '';
         const syntheticKey = summary.dedupeKey || dedupeKey || `${summary.phase || 'working'}|${headline}|${summary.body || ''}`;
         const isLegacyParentSubagentKey = syntheticKey.startsWith('parent-subagent:');
@@ -1696,7 +1698,7 @@ export function createChatInstance({
             || ['subagent-lifecycle:', 'subagent-progress:', 'subagent-result:', 'task_done|', 'tool:']
                 .some((prefix) => syntheticKey.startsWith(prefix));
         if (!isLegacyParentSubagentKey) {
-            record.finished = isTerminalTaskPhase(nextPhase, summary.terminal);
+            record.finished = Boolean(closedPhase) || isTerminalTaskPhase(nextPhase, summary.terminal);
         }
         if (summary.human && headline) {
             record.lastHumanHeadline = headline;
@@ -1712,11 +1714,10 @@ export function createChatInstance({
                 || (record.updates > 1 ? record.titleEl.textContent : ''));
         // Only task facts own the outcome chip under a hold; failed tools are diagnostics.
         if (summary.observedOutcome && !record.finished) record.observedOutcome = summary.observedOutcome;
-        const desiredPhase = desiredLiveCardPhase(record, record.finished ? summary.phase || 'done' : '');
+        const desiredPhase = desiredLiveCardPhase(record, closedPhase || (record.finished ? summary.phase || 'done' : ''));
         setLiveCardPhase(record, desiredPhase.phase, desiredPhase.text, desiredPhase.className,
             desiredPhase.secondary);
-        // Title: project name, child's lineage, or activity; an empty block has none.
-        // Project naming leaves the activity headline in the timeline.
+        // Project/child identity names the card; authored activity stays in its timeline.
         const title = record.suggestedName || (record.isSubagent ? childTitle(record)
             : !blockHasWork(record) ? ''
                 : (record.finished ? record.lastHumanHeadline || 'Task activity'
@@ -1780,7 +1781,7 @@ export function createChatInstance({
         hideTypingIndicatorOnly();
         // Log task_done bypasses finishLiveCard; settle Cancel and its marker.
         if (record.finished) {
-            settleLiveCard(record, summary.phase || 'done', wasFinished);
+            settleLiveCard(record, wasFinished);
         } else {
             setLiveCardTypingVisible(record, true);
         }
@@ -1795,7 +1796,7 @@ export function createChatInstance({
     }
 
     // Author controls end; paid-review waits retain their own lifetime.
-    function settleLiveCard(record, phase, wasFinished) {
+    function settleLiveCard(record, wasFinished) {
         record.root.dataset.finished = '1';
         if (record.toolFold) {
             upsertToolFoldRow(record, noteToolHostMetrics(record, {}), '', '');
@@ -1831,7 +1832,7 @@ export function createChatInstance({
                 && record.titleEl.textContent !== presentation.headline) {
             record.titleEl.textContent = blockHasWork(record) ? 'Task activity' : '';
         }
-        settleLiveCard(record, activePhase, wasFinished);
+        settleLiveCard(record, wasFinished);
         ensureLiveCardVisible(record);
         if (activeLiveGroupId === record.groupId) activeLiveGroupId = '';
         syncChatStatus();

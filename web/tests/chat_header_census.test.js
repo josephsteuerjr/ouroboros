@@ -31,6 +31,11 @@ function makeInstance({ details = {}, calls = [], state = { census: null }, chat
         // `state.census` is what a fetched /api/state answers with (null = idle);
         // `state.fail` makes the read reject like a dropped connection.
         if (state.fail) throw new Error('offline');
+        if (String(url).startsWith('/api/chat/history') && state.pages) {
+            const cursor = new URL(String(url), 'http://local').searchParams.get('cursor') || 'recent';
+            assert.ok(state.pages.has(cursor), cursor);
+            return { ok: true, json: async () => state.pages.get(cursor) };
+        }
         if (String(url).startsWith('/api/chat/history') && state.history) {
             return { ok: true, json: async () => ({ messages: state.history, window: { complete: true } }) };
         }
@@ -238,6 +243,97 @@ for (const withdrawBeforeMount of [false, true]) {
             assert.equal(fx.card('independent').dataset.finished, '0');
             assert.equal(fx.card('independent').querySelector('[data-live-phase]').dataset.motion, '1');
         } finally { fx.instance.destroy(); restoreDom(fx.prior); }
+    });
+}
+
+for (const firstCarrier of ['narration', 'metrics', 'tool span']) {
+    test(`R3 a cached terminal keeps initial authored content after ${firstCarrier}`, () => {
+        const fx = makeInstance();
+        try {
+            const id = 'initial-content';
+            fx.census([{ activity_id: id, chat_id: 1, kind: 'managed_task', phase: 'working', status: 'cancelled' }], true);
+            if (firstCarrier !== 'narration') {
+                fx.handlers.get('log')({ chat_id: 1, data: { task_id: id, ts: '2026-10-08T10:00:00Z',
+                    ...(firstCarrier === 'metrics' ? { type: 'task_metrics_event', tool_calls: 1 }
+                        : { type: 'tool_call_started', tool: 'read_file', tool_call_id: 'initial-span' }) } });
+                assert.equal(fx.card(id).querySelector('[data-live-phase]').textContent, 'Cancelled');
+                assert.equal(fx.card(id).querySelector('[data-live-phase]').dataset.motion, '0');
+            }
+            const text = 'I found the relevant state transition.';
+            fx.handlers.get('chat')({ chat_id: 1, task_id: id, role: 'assistant', system_type: 'model_narration',
+                is_progress: true, narration: true, content: text, ts: '2026-10-08T10:00:01Z' });
+            const card = fx.card(id);
+            assert.equal(card.querySelector('[data-live-title]').textContent, text);
+            assert.equal(card.querySelector('[data-live-phase]').textContent, 'Cancelled');
+            assert.equal(card.dataset.finished, '1');
+            assert.equal(card.querySelector('[data-live-phase]').dataset.motion, '0');
+            assert.ok(card.querySelector('[data-live-timeline]').children.length > 0, 'initial content reaches the timeline renderer');
+            const count = card.querySelector('[data-live-count]').textContent;
+            fx.handlers.get('chat')({ chat_id: 1, task_id: id, role: 'assistant', is_progress: true, narration: true,
+                content: 'Late progress must not replace the established finished card.', ts: '2026-10-08T10:00:02Z' });
+            assert.equal(card.querySelector('[data-live-title]').textContent, text);
+            assert.equal(card.querySelector('[data-live-count]').textContent, count);
+            assert.equal(fx.calls.filter(url => url.endsWith(`/api/tasks/${id}`)).length, 0);
+        } finally { fx.instance.destroy(); restoreDom(fx.prior); }
+    });
+}
+
+for (const [status, label] of [['completed', 'Done'], ['failed', 'Failed']]) {
+    test(`R3 off-screen ${status} card rematerializes with its retained narrative`, async () => {
+        const id = 'evicted-root', text = 'Reading the repository before completion';
+        const progress = { chat_id: 1, task_id: id, role: 'assistant', is_progress: true, narration: true,
+            text, content: text, ts: '2026-10-08T10:00:00Z', history_id: 'old-progress', history_position: { source: 'progress', offset: 1 } };
+        const terminal = { chat_id: 1, task_id: id, role: 'assistant', system_type: 'task_summary', status,
+            task_terminal_status: status, text: 'Finished', content: 'Finished', ts: '2026-10-08T10:00:05Z',
+            history_id: 'old-terminal', history_position: { source: 'chat', offset: 2 } };
+        const page = (messages, cursor, next = null) => ({ messages, progress: [], page_cursor: cursor,
+            next_cursor: next, has_more: Boolean(next), window: { complete: !next }, coverage: null });
+        const pages = new Map([['recent', page([progress, terminal], 'recent-first')]]);
+        const fx = makeInstance({ state: { pages, census: { active_chat_activities: [],
+            active_chat_activities_complete: true, supervisor_ready: true } } });
+        const descriptor = Object.getOwnPropertyDescriptor(ElementStub.prototype, 'innerHTML');
+        const rect = ElementStub.prototype.getBoundingClientRect, rects = ElementStub.prototype.getClientRects, rendered = [];
+        Object.defineProperty(ElementStub.prototype, 'innerHTML', { ...descriptor,
+            set(value) { rendered.push(String(value)); descriptor.set.call(this, value); } });
+        const settle = async () => { for (let n = 0; n < 30; n += 1) await new Promise(resolve => setTimeout(resolve, 0)); };
+        try {
+            fx.handlers.get('chat')({ chat_id: 1, task_id: id, role: 'assistant', is_progress: true, narration: true,
+                content: text, ts: progress.ts });
+            fx.handlers.get('chat')({ chat_id: 1, task_id: id, role: 'assistant', system_type: 'task_summary',
+                task_terminal_status: status, content: 'Finished', ts: terminal.ts });
+            fx.open(); await settle();
+            const original = fx.card(id);
+            assert.ok(original);
+            const messages = globalThis.document.byId.get('chat-messages');
+            ElementStub.prototype.getBoundingClientRect = function () { return this === messages || this === fx.mount
+                ? { top: 0, bottom: 800, left: 0, right: 1000, width: 1000, height: 800 }
+                : { top: -5000, bottom: -4980, left: 0, right: 100, width: 100, height: 20 }; };
+            ElementStub.prototype.getClientRects = function () { return [this.getBoundingClientRect()]; };
+            pages.set('recent', page([{ chat_id: 1, role: 'user', text: 'A newer request', content: 'A newer request',
+                ts: '2026-10-08T10:10:00Z', history_id: 'newer-owner', history_position: { source: 'chat', offset: 9 } }],
+                'recent-second', 'older-first'));
+            pages.set('older-first', page([progress, terminal], 'older-first'));
+            fx.close(); fx.open(); await settle();
+            assert.equal(fx.card(id), null, 'the real history owner evicts the finished off-screen card');
+            rendered.length = 0;
+            const older = messages.querySelector('.chat-load-older-btn');
+            assert.equal(older.hidden, false);
+            older.listeners.get('click')[0]({ target: older }); await settle();
+            const restored = fx.card(id);
+            assert.ok(restored, 'Load more history restores the retained work');
+            assert.notEqual(restored, original);
+            assert.equal(restored.querySelector('[data-live-title]').textContent, text);
+            assert.equal(restored.querySelector('[data-live-count]').textContent, '2 notes');
+            assert.equal(restored.querySelector('[data-live-phase]').textContent, label);
+            assert.equal(restored.querySelector('[data-live-phase]').dataset.motion, '0');
+            assert.equal(restored.dataset.finished, '1');
+            assert.equal(restored.dataset.ts, String(Date.parse(progress.ts)));
+            assert.ok(rendered.some(value => value.includes(text) && value.includes('chat-live-line')));
+        } finally {
+            fx.instance.destroy(); restoreDom(fx.prior);
+            ElementStub.prototype.getBoundingClientRect = rect; ElementStub.prototype.getClientRects = rects;
+            Object.defineProperty(ElementStub.prototype, 'innerHTML', descriptor);
+        }
     });
 }
 
