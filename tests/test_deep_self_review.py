@@ -265,6 +265,47 @@ class TestRunSystemReview:
         assert record["dispatch_refusal"] == {"kind": "reviewer_unavailable", "message": refusal}
         assert (system_ctx.drive_root / "memory" / "deep_review.md").read_text(encoding="utf-8") == "PREVIOUS REPORT"
 
+    def _session_row(self, monkeypatch):
+        """An unmarked enabled session row with its own effort and credential pin."""
+        from tests.review_pool_rosters import mixed_pool_rows, pool_roster, pool_seat, set_review_pool
+
+        set_review_pool(monkeypatch, pool_roster(*mixed_pool_rows(), pool_seat(
+            "deep-session", "codex=gpt-5.6-sol", kind="agent_session", effort="xhigh", profile_id="prof-1", marked=False)))
+        return "deep-session"
+
+    def test_the_record_names_the_chosen_rows_real_seat_plan(self, system_ctx, monkeypatch):
+        """D1-04 / V11 / D2-03: the system seat is written in the wave's shared ``rows``
+        contract, so the record carries the row's route, effort, profile, session
+        target and catalog id — not a seat rebuilt from the answer's model name."""
+        from ouroboros.review_ledger import load_record
+        from ouroboros.tools.review_change import run_review_change
+
+        row = self._session_row(monkeypatch)
+        self._stub(monkeypatch, ("REPORT", {"resolved_model": "codex=gpt-5.6-sol", "cost": 0.5}))
+        result = run_review_change(system_ctx, subject="system", surface="system", reviewers=[row])
+        [seat] = load_record(system_ctx.drive_root, result["record_id"])["rows"]
+        assert seat["seat_id"] == row and seat["subagent_id"] == row
+        assert seat["requested"] == {"route": "agent_session", "model": "codex=gpt-5.6-sol", "effort": "xhigh",
+                                     "profile": "prof-1", "delivery": "retrieving", "session_target": "codex=gpt-5.6-sol",
+                                     "processing_preference": "", "subagent_id": row}
+        assert seat["effective"]["route"] == "agent_session" and seat["parts_answered"] == ["report"]
+
+    def test_a_refused_review_still_records_the_seat_it_chose(self, system_ctx, monkeypatch):
+        from ouroboros.review_ledger import load_record
+        from ouroboros.tools.review_change import run_review_change
+
+        row = self._session_row(monkeypatch)
+        self._stub(monkeypatch, ("❌ Deep self-review unavailable: no harness.",
+                                 {"execution_status": "infra_failed", "reason_code": "deep_self_review_unavailable"}))
+        result = run_review_change(system_ctx, subject="system", surface="system", reviewers=[row])
+        record = load_record(system_ctx.drive_root, result["record_id"])
+        assert record["dispatch_refusal"]["kind"] == "reviewer_unavailable"
+        [seat] = record["rows"]
+        assert (seat["seat_id"], seat["status"], seat["parts_answered"]) == (row, "not_dispatched", [])
+        assert (seat["requested"]["route"], seat["requested"]["effort"], seat["requested"]["profile"]) == (
+            "agent_session", "xhigh", "prof-1")
+        assert record["verdict"]["aggregate"] == "NOT_DISPATCHED"
+
     def test_the_record_binds_the_tree_the_reviewer_read_not_the_one_after(self, system_ctx, monkeypatch):
         """D1-06 / V13: the subject is snapshotted BEFORE the reviewer reads; a tree that
         moves under the review is disclosed, never passed off as the one read."""

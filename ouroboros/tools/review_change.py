@@ -794,6 +794,19 @@ def _system_tree(system: pathlib.Path) -> Tuple[str, str]:
     return str(tree or ""), _git_line(system, "rev-parse", "HEAD")
 
 
+def system_seat_plan(row: Any) -> Dict[str, Any]:
+    """The system seat in the wave's shared ``structured["rows"]`` contract (the one
+    ``parallel_review._describe_review_wave`` and the gate write): route, effort, session
+    target and profile, catalog id, a retrieving delivery — so the record names the row
+    actually chosen, and names it even when the review is refused before any send."""
+    from ouroboros.reviewer_slot_config import row_effort
+
+    return {"slot_id": row.slot_id, "model": row.target_id, "route": row.kind,
+            "effort": row_effort(row, "deep_self_review"), "session_target": row.session_target,
+            "session_profile": row.profile_id, "subagent_id": row.subagent_id,
+            "retrieves": True, "parts": [PART_CHANGE], "additional": False, "brief_sha": ""}
+
+
 def run_system_review(ctx: ToolContext, *, reviewer: str = "", effort: str = "", goal: str = "", llm: Any = None,
                       emit_progress: Any = None, deadline_at: str = "") -> Dict[str, Any]:
     """``/review`` = ``review_change(subject=system, surface=system)``: one seat (``system_review_row``)
@@ -841,10 +854,7 @@ def run_system_review(ctx: ToolContext, *, reviewer: str = "", effort: str = "",
                     "tree_sha": tree, "diff_sha": "", "checkout": ""},
         "goal": goal, "layer": layer_for(fact), "body_fact": str(fact.body), "body_how": str(fact.how),
         "enforcement": str(get_review_enforcement() or ""),
-        "structured": {"started_ts": started, "triad_rows": [{
-            "slot_id": row.slot_id, "subagent_id": row.subagent_id, "model": row.target_id, "route": row.kind,
-            "effort": row.effort, "retrieves": True, "session_target": row.session_target,
-            "session_profile": row.profile_id}]},
+        "structured": {"started_ts": started, "rows": [system_seat_plan(row)]},
         "triad_raw": [] if refused else [{
             "slot_id": row.slot_id, "status": "error" if failed else "responded", "raw_text": "" if failed else report,
             "model_id": str(usage.get("resolved_model") or ""), "cost_usd": cost if isinstance(cost, (int, float)) else None,
