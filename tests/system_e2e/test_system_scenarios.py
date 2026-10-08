@@ -11,7 +11,7 @@ lands WITH its phases and must survive the domain transplants unchanged:
   answers a WS chat frame with an assistant reply, runs one scripted stub task to
   completion, and leaves a sane durable ``task_results/<id>.json`` behind.
 * S2 — review organ: a scripted task drives ``commit_reviewed`` over a doc-only diff
-  with the advisory pre-review explicitly skipped (audited bypass) and BLOCKING
+  with the preflight explicitly skipped (``preflight: skipped``) and BLOCKING
   enforcement, the stub answers the triad packet and retrieving scope reviewer with
   all-clean verdicts, and the commit lands in the isolated clone. Landing under
   ``blocking`` makes the git log itself the proof that both review organs ran and
@@ -570,8 +570,8 @@ S2_SCRIPT = [
     {"tool": "commit_reviewed", "arguments": {
         "commit_message": S2_COMMIT_MESSAGE,
         "paths": [S2_DOC_PATH],
-        # Audited advisory-only skip (recorded as `bypassed` in the ledger) — the
-        # scenario's subject is the triad+scope organ, not the advisory pre-review.
+        # The explicit skip is recorded as `preflight: skipped` on the commit's review
+        # record — the scenario's subject is the triad+scope organ, not the preflight.
         "skip_advisory_review": True,
         # The post-commit hermetic pytest is out of scope for a smoke that proves the
         # review organ; the skip is recorded in the commit attempt.
@@ -712,24 +712,19 @@ def test_s2_commit_reviewed_triad_and_scope_pass_on_doc_only_diff(e2e_clone, tmp
                                      check=True, capture_output=True, text=True).stdout.strip()
             assert serving == serving_head and not (e2e_clone / S2_DOC_PATH).exists()
 
-            # Durable review evidence lives in the task's FORKED drive root
-            # (state/headless_tasks/<id>/data — headless-task isolation on this tree):
-            # the audited advisory bypass and the scope round.
+            # Durable review evidence: the scope round lives in the task's FORKED drive
+            # root (state/headless_tasks/<id>/data — headless-task isolation on this
+            # tree); the commit's review record (canonical data root, read from both)
+            # carries the explicit skip as a fact, never an audited bypass (3A).
             task_oracle = oracle.task_drive(task_id)
             assert task_oracle.data_root != oracle.data_root, (
                 "task drive root missing — headless drive layout changed?")
-            runs = task_oracle.advisory_review().get("advisory_runs") or []
-            bypassed = [r for r in runs if isinstance(r, dict) and r.get("status") == "bypassed"]
-            assert bypassed, f"no bypassed advisory run in the task ledger: {runs!r}"
-            assert bypassed[0].get("commit_message") == S2_COMMIT_MESSAGE, bypassed[0]
-            assert task_oracle.events("advisory_review_bypassed"), "bypass event missing"
-            # The one wave's durable record answers both questions: the review
-            # ledger index of the canonical data root carries the coupling PASS.
-            ledger_rows = oracle._jsonl("state/review_ledger/index.jsonl") or task_oracle._jsonl(
-                "state/review_ledger/index.jsonl")
-            waves = [row for row in ledger_rows if row.get("surface") == "commit_gate"]
-            assert waves, "no commit-gate review record in the ledger"
-            assert waves[-1]["verdict"]["per_question"] == {"change": "PASS", "coupling": "PASS"}, waves[-1]
+            records = task_oracle.review_ledger_records() + oracle.review_ledger_records()
+            skipped = [r for r in records if r.get("surface") == "commit_gate"
+                       and (r.get("preflight") or {}).get("status") == "skipped"]
+            assert skipped, f"no commit_gate record with preflight skipped: {records!r}"
+            # The one wave's durable record answers both questions (the brief of two parts).
+            assert skipped[-1]["verdict"]["per_question"] == {"change": "PASS", "coupling": "PASS"}, skipped[-1]
         finally:
             server.stop()
 

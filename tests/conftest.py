@@ -606,6 +606,17 @@ def _reset_custody_memo_between_tests():
 
 
 @pytest.fixture(autouse=True)
+def _review_pool_contract_seam(monkeypatch):
+    """The review-pool symbols of packages A/B that ``review_change`` is written against;
+    only the missing ones are stood in (``tests/_review_pool_contract.py``), so this is
+    inert once the real symbols land."""
+    from tests import _review_pool_contract
+
+    _review_pool_contract.install(monkeypatch)
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _reset_accepted_ids_between_tests():
     """The named-ingress index (``message_ingress._AcceptedIds``) is keyed by chat-log path:
     no folded prefix outlives its test, whatever the next one writes at that path."""

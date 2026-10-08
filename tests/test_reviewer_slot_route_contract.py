@@ -92,7 +92,7 @@ def test_settings_save_refuses_unparseable_session_target_before_persistence():
 
 
 def test_malformed_advisory_target_never_consults_the_shared_route(monkeypatch):
-    from ouroboros.tools import claude_advisory_review as advisory
+    from ouroboros import reviewer_slot_config
 
     payload = _payload()
     payload["advisory"] = {
@@ -103,7 +103,7 @@ def test_malformed_advisory_target_never_consults_the_shared_route(monkeypatch):
     monkeypatch.setenv("OUROBOROS_REVIEW_SESSION_ROUTE", "codex=gpt-5.6-sol:high")
 
     with pytest.raises(ValueError, match="does not name a concrete harness route"):
-        advisory.advisory_gate_unavailability_reason()
+        reviewer_slot_config.advisory_slot_config()
 
 
 def test_compound_session_effort_precedes_the_scope_surface_default(monkeypatch):

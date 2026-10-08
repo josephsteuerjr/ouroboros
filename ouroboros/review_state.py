@@ -441,34 +441,12 @@ def advisory_commit_ready(
 ) -> bool:
     """SSOT for every ``repo_commit_ready`` projection (H5, capinv-447).
 
-    Mirrors the real advisory gate: Cyber retains action authority; otherwise
-    fresh/bypassed/skipped coverage, or a
-    typed technical failure permitted under owner-selected advisory enforcement.
-    ``matching_run`` is supplied only after the caller matches current repo/hash;
-    permission never changes its failure status or makes it fresh. Obligations
-    and debt block only under blocking enforcement. Triad, scope, custody and
-    every other commit requirement remain independent.
+    It mirrored the advisory gate, which decision 3A retired: no advisory freshness,
+    obligation or commit-readiness debt holds a commit any more (open obligations ride
+    into the panel's brief; the debt stays a disclosed diagnostic), so this axis is
+    always ready. The panel, tests, custody, fingerprint revalidation and binding are
+    the commit gate and are not projected here.
     """
-    from ouroboros.tools.review_helpers import review_enforcement_blocks
-
-    if not review_enforcement_blocks("blocking"):
-        return True
-    if not effectively_fresh:
-        from ouroboros.config import get_review_enforcement
-        from ouroboros.tools.commit_gate import review_failure_is_technical
-
-        # The caller has already matched the record to the current repo/hash.
-        # This is permission under advisory enforcement, never freshness/PASS.
-        if ((enforcement or get_review_enforcement()) != "advisory"
-                or getattr(matching_run, "status", "") not in {"error", "parse_failure"}
-                or not review_failure_is_technical(getattr(matching_run, "execution", {}) or {})):
-            return False
-    if open_obligations or open_debts:
-        if enforcement is None:
-            from ouroboros.config import get_review_enforcement
-
-            enforcement = get_review_enforcement()
-        return str(enforcement or "").strip().lower() != "blocking"
     return True
 
 
@@ -622,7 +600,6 @@ def format_status_section(state: AdvisoryReviewState, repo_dir: Optional[pathlib
         if state.last_stale_reason:
             lines.append(f"   Reason: {state.last_stale_reason}")
         lines.append(f"   Invalidated by: {state.stale_marker_attribution_note()}")
-        lines.append("   Run preflight_review again before commit_reviewed.")
 
     if open_debts:
         lines.append(f"\n### Commit-readiness debt ({len(open_debts)})")

@@ -3,7 +3,6 @@
 BASELINE_SOURCE_SHA = "77d6827b7a72a632899bb6cc64a7e759aabcfaa6"
 
 GIANT_PATHS = (
-    "ouroboros/tools/git.py",
     "server.py",
     "skills/unix_computer_use/plugin.py",
     "supervisor/workers.py",
@@ -187,13 +186,11 @@ BAND_PATHS = {
     "tests/system_e2e/test_system_scenarios_w4.py": "system_e2e wave-4 scenario module: six scenarios (S18-S23 - update carrier/conflict/crash variants, chat-lineage cancel, absorb kill-recovery, delegated interactive answer) plus the interactive fake-daemon contract pin; one module per wave is the suite convention - split only if a later wave extends THIS module instead of adding its own.",
     "tests/system_e2e/test_system_scenarios_w8.py": "Entered the band from 937 lines (#1196): S32 (the exact pause across a graceful server restart) reuses the S30 priced-stub, pause and Resume helpers of this module, so it lives beside them instead of duplicating them in a new wave module.",
     "tests/test_acceptance_async_loop.py": "Shared real-loop fixtures bind asynchronous settlement, owner ingress, exposure and final author response; keeping the lifecycle assertions together avoids duplicating the coordinator harness.",
-    "tests/test_advisory_observability.py": None,
     "tests/test_available_subagents_runtime.py": "Configured-session route and legacy custody regressions retained after removing compulsory source-request production tests.",
     "tests/test_build_scripts.py": None,
     "tests/test_chat_attachments.py": "New owner chat attachments contract suite: measured refs, the confined upload route, the pending guard, one canonical row with the same views live and on replay, skill/transport ingress and the Windows handle proof share one upload/ingress harness; splitting it would duplicate those fixtures.",
     "tests/test_child_drive_settlement.py": "Entered the band from 850 lines with the exact-review repair probes (current-bytes custody of mutable files, per-row input closure across mailbox cleanup, create-only placement, cancel-under-lock, generation fences, lock order): one probe per finding beside the settlement suite they constrain; split when a second custody surface lands.",
     "tests/test_claudexor_runtime_delivery.py": "One suite pins managed runtime delivery end to end: closure install, exact Node selection and both POSIX tar.gz and Windows ZIP Node/npm toolchain extraction.",
-    "tests/test_commit_gate.py": None,
     "tests/test_cybergym_dispatch.py": "CyberGym dispatch tests cover completion-order admission, transient gateway pauses and budget-refusal recovery through one existing fake campaign harness.",
     "tests/test_cybergym_docker.py": "CyberGym workspace custody tests cover atomic gateway transfer, recovery and durable-result acknowledgement using the same attested fake container fixtures.",
     "tests/test_cybergym_executor_wire.py": "CyberGym served-wire evidence tests combine request-accounting disclosure with existing provider, final-PoC and classification coverage; gateway custody remains in its dedicated test module.",

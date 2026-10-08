@@ -16,7 +16,7 @@ from ouroboros.contracts.schema_versions import read_schema_version
 from ouroboros.review_ledger import CouplingOutcome
 from ouroboros.review_state import load_state
 from ouroboros.tools import git
-from tests.test_advisory_inline_freshness import candidate  # noqa: F401
+from tests.test_git_review_preflight_gate import candidate  # noqa: F401
 
 TREE, PARENT, DIFF = "t" * 40, "p" * 40, "d" * 64
 BOTH, CHANGE = ("change", "coupling"), ("change",)
@@ -725,7 +725,7 @@ def test_ledger_facts_take_this_waves_own_execution_rows_never_the_shared_projec
                                                                          operation_state="settled")], {"s1": slot})
     mine = {"s1": {"ts": "2026-10-07T00:00:01+00:00", "surface": "commit_gate", "effective": {"model": "openai/gpt-5"}}}
     ctx._last_review_slot_executions = dict(mine)
-    facts = commit_gate._review_ledger_facts(ctx, "msg", goal="", scope="", pre_fingerprint={}, advisory_paths=None,
+    facts = commit_gate._review_ledger_facts(ctx, "msg", goal="", scope="", pre_fingerprint={},
                                              blocked=False, block_reason="", combined_findings=None,
                                              dispatch_refusal=None, pending=False)
     assert facts["slot_executions"] == mine, "another surface's row for the same seat is not this wave's fact"
@@ -738,7 +738,7 @@ def test_tests_fact_is_passed_only_for_a_candidate_bound_proof(candidate, monkey
     ctx = candidate
     git._reset_commit_review_state(ctx)
     facts = lambda: commit_gate._review_ledger_facts(  # noqa: E731
-        ctx, "msg", goal="", scope="", pre_fingerprint={}, advisory_paths=None, blocked=False, block_reason="",
+        ctx, "msg", goal="", scope="", pre_fingerprint={}, blocked=False, block_reason="",
         combined_findings=None, dispatch_refusal=None, pending=False)["tests"]
     assert facts() == {"policy": "NOT_RUN", "result": "unknown"}
     ctx._preflight_tests_passed = True  # the runner's flag from an EARLIER candidate survives in the process

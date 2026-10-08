@@ -203,53 +203,6 @@ def test_raw_triad_query_keeps_frozen_profile_without_wait_override_rescuing_it(
     assert ledger(root)[-1]["state"] == "settled" and ledger(root)[-1]["cost_usd"] is None
 
 
-def test_raw_advisory_applies_override_before_credentials_size_and_real_dispatch(live_wait, monkeypatch):
-    from ouroboros.tools import claude_advisory_review as advisory, preflight_review_run as preflight
-    from ouroboros.tools.registry import ToolContext
-    from ouroboros import config, reviewer_slot_config
-
-    root, gateway, _client, controller, _events, _decide = live_wait
-    replacement = "claudexor::codex=replacement-model"
-    original = AdvisorySlotConfig(target_id=MODEL, profile_id="account-a", effort="high")
-    monkeypatch.setattr(reviewer_slot_config, "advisory_slot_config", lambda: original)
-    monkeypatch.setattr(preflight, "advisory_review_route", lambda: "api_chat")
-    monkeypatch.setattr("ouroboros.provider_models.model_has_credentials", lambda model: model == replacement)
-    monkeypatch.setattr(config, "DATA_DIR", root)
-    monkeypatch.setattr(advisory, "_build_advisory_prompt", lambda *_a, **_kw: "Review the supplied evidence.")
-    controller.overrides["reviewer:advisory_slot_1"] = {
-        "model": replacement, "model_account_override": "account-b", "use_local": False}
-    catalog_calls = []
-
-    def catalog(source, profile=None, *, requested_model=None):
-        catalog_calls.append((source, profile))
-        return {"source": source, "credentialProfileId": profile, "accountFingerprint": "fingerprint-b",
-                "observedAt": ce.utc_now_iso(), "provenance": "fixture",
-                "models": [{"id": "replacement-model", "contextWindow": 800_000}]}
-
-    monkeypatch.setattr(LLMClient, "claudexor_model_catalog", staticmethod(catalog))
-    sizes = []
-    real_size = advisory._api_window_skip_warning
-
-    def size(model, prompt, managed, slot=None):
-        sizes.append((model, slot.profile_id, slot.effort))
-        return real_size(model, prompt, managed, slot)
-
-    monkeypatch.setattr(advisory, "_api_window_skip_warning", size)
-    completed = result(route={**ROUTE, "model": "replacement-model", "credentialProfileId": "account-b", "accountFingerprint": "fingerprint-b"})
-    completed["message"] = {"content": '[{"item":"correctness","verdict":"PASS","severity":"advisory","reason":"checked"}]'}
-    gateway.results = [completed]
-    ctx = ToolContext(repo_dir=root, drive_root=root, task_id="task-one")
-    items, raw, model, _chars = preflight._run_claude_advisory(root, "Check", ctx, options={"include_repo_diff": False})
-    assert items and "ADVISORY_ERROR" not in raw and model == replacement
-    assert sizes == [(replacement, "account-b", "high")]
-    assert catalog_calls and all(profile == "account-b" for _source, profile in catalog_calls)
-    assert gateway.uploads[0][0]["model"] == "replacement-model"
-    assert gateway.uploads[0][0]["account"] == {"mode": "pin", "profileId": "account-b"}
-    assert gateway.uploads[0][0]["options"]["reasoningEffort"] == "high"
-    assert original.target_id == MODEL and original.profile_id == "account-a"
-    assert ledger(root)[-1]["state"] == "settled"
-
-
 def test_retrieving_seat_sends_under_the_row_plan_profile_not_the_original_slot(setup, monkeypatch):
     """The one wave dispatches each retrieving seat with the profile its row plan
     carries (`session_profiles`), never the configured slot object's original

@@ -176,16 +176,16 @@ def test_record_commit_attempt_reviewing_lands_paid_on_the_ledger(tmp_path):
     assert count_paid_review_cycles(ctx, root_task_id="root-9") == 1
 
 
-def test_stage_cycle_free_gate_runs_before_advisory_gate():
-    """Order pin: the free Max-Review-Cycles gate precedes the advisory/tests
+def test_stage_cycle_free_gate_runs_before_preflight_gate():
+    """Order pin: the free Max-Review-Cycles gate precedes the preflight/tests
     gate, which precedes the paid dispatch."""
     import inspect
 
     import ouroboros.tools.git as git_mod
 
     source = inspect.getsource(git_mod._run_reviewed_stage_cycle)
-    assert source.index("_free_cycle_gate(") < source.index("_advisory_and_tests_gate(")
-    assert source.index("_advisory_and_tests_gate(") < source.index("_run_parallel_review(")
+    assert source.index("_free_cycle_gate(") < source.index("_preflight_and_tests_gate(")
+    assert source.index("_preflight_and_tests_gate(") < source.index("_run_parallel_review(")
 
 
 def test_resolve_root_task_id_ignores_the_followup_chain():
@@ -404,8 +404,10 @@ def test_skill_review_contract_fingerprint_preserves_legacy_and_tracks_rows(monk
     monkeypatch.setenv("OUROBOROS_EFFORT_REVIEW", "high")
     legacy = skill_review_contract_fingerprint(["m1", "m2"], required_items=("a",))
     # The author-finality contract is part of the skill-review prompt contract;
-    # its deliberate wording change invalidates the old fingerprint.
-    assert legacy == "b0d298d70bf93185b2b88f647af3ab28233e18db517c13398d7b323c786dd16b"
+    # its deliberate wording change invalidates the old fingerprint. Decision 3A
+    # then removed the advisory-evidence input from the prompt builder (no
+    # advisory critic feeds the skill reviewer), which moved it once more.
+    assert legacy == "2401d2c34e3805f5ba6dcd933a2abf4d44c3af88dc5d140bddc24018cfebfca7"
     legacy_delivery = {
         "legacy_skill_fingerprint": True,
         "models": ["m1", "m2"], "routes": ["api_chat", "api_chat"],

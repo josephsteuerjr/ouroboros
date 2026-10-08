@@ -720,14 +720,8 @@ def test_the_retired_acceptance_api_pin_apparatus_is_gone():
 
 def test_advisory_disabled_is_a_standing_owner_decision(monkeypatch):
     _set_structured(monkeypatch)
-    from ouroboros.tools.claude_advisory_review import (
-        advisory_review_route,
-        advisory_slot_enabled,
-    )
-
-    assert advisory_slot_enabled() is False
-    assert advisory_review_route() == "agent_session"
-    assert advisory_slot_config().effort == "low"
+    advisory = advisory_slot_config()
+    assert (advisory.enabled, advisory.kind, advisory.effort) == (False, "agent_session", "low")
 
 
 def test_runs_as_records_applied_facts_never_requested_as_applied():

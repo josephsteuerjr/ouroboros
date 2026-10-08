@@ -70,7 +70,6 @@ def test_second_task_reviews_and_commits_only_explicitly_selected_correction(tmp
     monkeypatch.setenv("OUROBOROS_REVIEW_ENFORCEMENT", "blocking")
     monkeypatch.setenv("OUROBOROS_REVIEW_MAX_CYCLES", "1")
     reviews, checks, publications = [], [], []
-    monkeypatch.setattr(git, "advisory_gate_unavailable", lambda: False)
     monkeypatch.setattr(git, "_managed_candidate_needs_proof", lambda _ctx: False)
     monkeypatch.setattr(git, "_post_commit_result", lambda *_a, **_kw: None)
     monkeypatch.setattr(git, "_auto_push", lambda *_a, **_kw: publications.append("mock") or "")

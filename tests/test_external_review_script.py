@@ -104,7 +104,8 @@ def test_contributor_trust_boundary_covers_functional_review_dependencies():
         "ouroboros/runtime_mode_policy.py",
         "ouroboros/usage_accounting.py",
         "ouroboros/utils.py",
-        "ouroboros/tools/claude_advisory_review.py",
+        "ouroboros/tools/preflight_review.py",
+        "ouroboros/tools/commit_gate.py",
         "ouroboros/tools/registry.py",
         "ouroboros/tools/release_sync.py",
         "ouroboros/tools/review_synthesis.py",
@@ -139,10 +140,12 @@ def test_external_review_script_is_a_wrapper_over_the_review_operation():
     assert 'root="system_repo", surface="change"' in source
     assert 'subject="base..head"' in source
     # Operator lane: the exact commit-gate dry-run, in the runtime's isolated
-    # checkout of the staged index, with the advisory pre-review recorded in full.
+    # checkout of the staged index, with the named preflight's record and full
+    # answer beside it (decision 3A; approval item 3).
     assert "_run_non_committing_review_cycle(" in source
-    assert "skip_advisory_review=False" in source
-    assert '"advisory.txt"' in source
+    assert "preflight_reviewer=args.preflight_reviewer" in source
+    assert '"preflight.json"' in source and '"preflight.txt"' in source
+    assert "advisory.txt" not in source and "skip_advisory_review" not in source
     assert 'kind="index", surface="commit_gate"' in source
     assert "adaptive_quorum" not in source
     assert "aggregate_review_verdict" not in source

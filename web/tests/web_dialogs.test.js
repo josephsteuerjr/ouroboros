@@ -9,6 +9,7 @@ import test from 'node:test';
 import { promptUpdateVersion } from '../modules/marketplace.js';
 import { promptCampaignObjective } from '../modules/evolution.js';
 import { confirmAndSendPanic, shouldFirePanic } from '../modules/chat_activity.js';
+import { chooseAndSendReview } from '../modules/chat.js';
 import { shouldPollStatus } from '../modules/claudexor_status_store.js';
 import {
     JOB_POLL_GIVE_UP_FAILURES,
@@ -134,6 +135,54 @@ test('/panic cancel/backdrop/Escape resolutions send NOTHING', async () => {
         assert.equal(fired, false, `resolution ${JSON.stringify(resolution)} must not fire`);
         assert.deepEqual(sent, [], `resolution ${JSON.stringify(resolution)} must send nothing`);
     }
+});
+
+// ---------------------------------------------------------------------------
+// chat: /review names its executor (decision 3A): one enabled catalog row, else Main.
+// ---------------------------------------------------------------------------
+
+const REVIEW_ROSTER = { enabled: true, items: [
+    { subagent_id: 'sol', name: 'sol-high', route: {} },
+    { subagent_id: 'off', name: 'switched-off', enabled: false, route: {} },
+    { subagent_id: 'raw', route: {} },
+] };
+
+test('/review offers Main first plus every enabled catalog row and sends the chosen one', async () => {
+    const sent = [];
+    const seen = [];
+    const fired = await chooseAndSendReview({
+        openConfirmDialog: async (options) => { seen.push(options); return { confirmed: true, value: 'sol' }; },
+        ws: { send: (msg) => sent.push(msg) },
+        readSettings: async () => ({ OUROBOROS_SUBAGENTS: JSON.stringify(REVIEW_ROSTER) }),
+    });
+    assert.equal(fired, true);
+    assert.deepEqual(sent, [{ type: 'command', cmd: '/review sol' }]);
+    assert.equal(seen[0].input, true);
+    assert.deepEqual(seen[0].choices, [
+        { value: '', label: 'Main model (default)' },
+        { value: 'sol', label: 'sol-high' },
+        { value: 'raw', label: 'raw' },
+    ]);
+});
+
+test('/review default sends the bare command (Main); cancel sends nothing; an unreadable roster still offers Main', async () => {
+    const sent = [];
+    const ws = { send: (msg) => sent.push(msg) };
+    const readSettings = async () => ({ OUROBOROS_SUBAGENTS: REVIEW_ROSTER });
+    assert.equal(await chooseAndSendReview({
+        ws, readSettings, openConfirmDialog: async () => ({ confirmed: true, value: '' }),
+    }), true);
+    assert.deepEqual(sent, [{ type: 'command', cmd: '/review' }]);
+    for (const resolution of [false, null, { confirmed: false, value: 'sol' }]) {
+        assert.equal(await chooseAndSendReview({ ws, readSettings, openConfirmDialog: async () => resolution }), false);
+    }
+    assert.equal(sent.length, 1);
+    const seen = [];
+    await chooseAndSendReview({
+        ws, openConfirmDialog: async (options) => { seen.push(options); return false; },
+        readSettings: async () => { throw new Error('offline'); },
+    });
+    assert.deepEqual(seen[0].choices, [{ value: '', label: 'Main model (default)' }]);
 });
 
 // ---------------------------------------------------------------------------

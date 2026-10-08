@@ -10,7 +10,7 @@ from ouroboros.tools import git, plan_review
 from ouroboros.tools.parallel_review import aggregate_review_verdict
 from ouroboros.tools.review_helpers import review_enforcement_blocks
 from ouroboros.review_ledger import CouplingOutcome
-from tests.test_advisory_inline_freshness import candidate  # noqa: F401
+from tests.test_git_review_preflight_gate import candidate  # noqa: F401
 from tests.test_plan_review_engine import harness, _call, _state  # noqa: F401
 
 
@@ -52,22 +52,25 @@ def test_coupling_facts_survive_action_authority(candidate, access, status):  # 
         assert event["decision_authority"] == "cyber_pro"
 
 
-def test_missing_preflight_does_not_become_a_review(candidate, access):  # noqa: F811
+def test_missing_preflight_is_a_stated_fact_never_a_review_or_a_block(candidate, access, monkeypatch):  # noqa: F811
     from ouroboros.review_state import load_state
+    from ouroboros.tools import commit_gate
 
-    outcome = git._check_advisory_freshness(candidate, "candidate", paths=["change.py"])
-    assert (outcome is None) == (access == "cyber_pro")
+    monkeypatch.setattr(git, "_run_review_preflight_tests", lambda *a, **kw: None)
+    monkeypatch.setattr(commit_gate, "run_commit_preflight", lambda *a, **kw: pytest.fail("no row was named"))
+    outcome = git._preflight_and_tests_gate(candidate, "candidate", 0, classification_paths=["change.py"])
+    assert outcome is None, "a commit without a named preflight row blocks under neither authority"
+    assert commit_gate._review_preflight_facts(candidate) == {"status": "not_performed", "record_id": ""}
     assert load_state(candidate.drive_root).advisory_runs == []
 
 
-def test_review_status_readiness_matches_actual_cyber_gate(candidate, access):  # noqa: F811
-    from ouroboros.tools.claude_advisory_review import _handle_review_status
+def test_review_status_readiness_matches_the_actual_gate(candidate, access):  # noqa: F811
+    from ouroboros.tools.preflight_review import _handle_review_status
     from ouroboros.review_state import load_state
 
     projection = json.loads(_handle_review_status(candidate))
-    assert projection["repo_commit_ready"] == (access == "cyber_pro")
+    assert projection["repo_commit_ready"] is True, "no preflight is owed under either authority"
     assert not projection["advisory_runs"]
-    assert projection["latest_advisory_status"] != "fresh"
     assert not load_state(candidate.drive_root).advisory_runs
 
 
@@ -80,7 +83,7 @@ def test_actual_staged_candidate_can_continue_after_failed_review(candidate, acc
     result = CouplingOutcome(blocked=True, status="error")
     not_performed = ("⚠️ REVIEW_BLOCKED: review NOT_PERFORMED — the coupling question (Part 2) "
                      "was answered by no seat — asked of: slot_2.")
-    monkeypatch.setattr(git, "_advisory_and_tests_gate", lambda *a, **k: None)
+    monkeypatch.setattr(git, "_preflight_and_tests_gate", lambda *a, **k: None)
     monkeypatch.setattr(git, "_install_paid_dispatch_stamp", lambda *a, **k: None)
     monkeypatch.setattr(git, "_reconcile_and_clear_review_roster", lambda *a, **k: None)
     monkeypatch.setattr(git, "_run_parallel_review",
@@ -131,7 +134,7 @@ def test_pending_cyber_commit_uses_no_second_dispatch(candidate, access, monkeyp
             pre_fingerprint={"fingerprint": "new"}, review_rebuttal="")
         assert free["replay_reason"] == "review_pending"
         assert load_state(candidate.drive_root).attempts[-1].triad_raw_results == before
-        monkeypatch.setattr(git, "_advisory_and_tests_gate", lambda *a, **k: None)
+        monkeypatch.setattr(git, "_preflight_and_tests_gate", lambda *a, **k: None)
         monkeypatch.setattr(git, "_run_parallel_review", lambda *a, **k: pytest.fail("duplicate paid panel"))
         cycle = git._run_reviewed_stage_cycle(candidate, "new candidate", 0,
             paths=["change.py"], require_release_tag=False)

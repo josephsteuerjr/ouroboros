@@ -312,50 +312,6 @@ def test_canonical_write_failure_keeps_a_bounded_explicit_gap(evidence_context, 
     assert len(text) <= _ACCEPT_NOTES_CAP
 
 
-@pytest.mark.parametrize("delivery", ["native", "session"])
-def test_preflight_execution_receives_source_before_send_and_rejoins_identical_bytes(evidence_context, monkeypatch, delivery):
-    import ouroboros.tools.claude_advisory_review as advisory
-    import ouroboros.tools.preflight_review_run as run
-    import ouroboros.reviewer_slot_config as slots
-
-    ctx = evidence_context
-    model_response(ctx, "before", "Before")
-    tool_response(ctx, "one", "before")
-    model_response(ctx, "after", "Frozen assessment")
-    evidence = capture_commit_review_evidence(ctx)
-    monkeypatch.setattr(run, "advisory_review_route", lambda: "agent_session" if delivery == "session" else "api_chat")
-    monkeypatch.setattr(slots, "advisory_slot_config", lambda: SimpleNamespace(target_id="fixture", effort="high", subagent_id="", profile_id="", use_local=False))
-    monkeypatch.setattr("ouroboros.provider_models.model_has_credentials", lambda *a: True)
-    monkeypatch.setattr(advisory, "_predispatch_size_skip", lambda *a, **kw: None)
-    monkeypatch.setattr(advisory, "_api_window_skip_warning", lambda *a, **kw: "")
-    monkeypatch.setattr(advisory, "_mandatory_read_corpus_chars", lambda *a: 0)
-    monkeypatch.setattr(advisory, "_build_advisory_prompt", lambda *a, **kw: "Original work order\n" + kw["prompt_context"]["task_evidence_section"])
-    executions = []
-    execution = {}
-    def receive(prompt, repo, current, *args, **kwargs):
-        assert execution["evidence_source_ref"] == evidence["source_ref"]
-        source = kwargs["task_evidence"]
-        assert source["source_ref"] == evidence["source_ref"]
-        if delivery == "session":
-            assert pathlib.Path(source["session_path"]).read_bytes() == read_actor_source_bytes(ctx.budget_drive_root, ctx.task_id, evidence["source_ref"])
-        executions.append(prompt)
-        return SimpleNamespace(success=True, result_text="[]", source_text="[]", usage={}, session_id="", cost_usd=0.0), "fixture"
-    monkeypatch.setattr(advisory, "_run_advisory_delegated" if delivery == "session" else "_run_advisory_native", receive)
-    result = run._run_claude_advisory(ctx.repo_dir, "message", ctx, options={"include_repo_diff": False, "task_evidence": evidence, "execution": execution})
-    assert result[1] == "[]"
-    assert "Frozen assessment" in executions[0]
-    if delivery == "session":
-        # Rejoin restores from the original canonical source even after trace and
-        # the disposable view disappear; it does not reconstruct current facts.
-        execution["pending_invocation_id"] = "pending"
-        ctx._execution_trace["tool_calls"] = []
-        shutil.rmtree(ctx.repo_dir / ".review-drive")
-        monkeypatch.setattr("ouroboros.delegate_custody.invocation_record", lambda *a: {"request": {"prompt": executions[0]}})
-        again = run._run_claude_advisory(ctx.repo_dir, "message", ctx, options={"execution": execution})
-        assert again[1] == "[]"
-        assert executions[1] == executions[0]
-
-
 @pytest.mark.parametrize("pending", [False, True])
 def test_session_copy_lifetime_follows_existing_review_custody(evidence_context, monkeypatch, pending):
     from ouroboros.tools import git_review_cycle
@@ -453,93 +409,19 @@ def test_autoattached_image_process_trace_reaches_commit_evidence(evidence_conte
         assert "proof of visual inspection" in exact
 
 
-@pytest.mark.parametrize("recorded", [False, True])
-@pytest.mark.parametrize("current_trace", ["changed", "empty"])
-def test_pending_preflight_selection_survives_reconciliation_then_stage_dispatch(
-    evidence_context, monkeypatch, recorded, current_trace,
-):
-    from ouroboros.review_state import AdvisoryRunRecord, compute_snapshot_hash, make_repo_key, update_state
-    from ouroboros.tools import claude_advisory_review as advisory, git, preflight_review_run as preflight
-    from ouroboros.tools.review_multi_model import _query_model
-    import ouroboros.review_substrate as substrate
-
-    ctx = evidence_context
-    (ctx.repo_dir / "README.md").write_text("candidate\n")
-    subprocess.run(["git", "add", "README.md"], cwd=ctx.repo_dir, check=True)
-    model_response(ctx, "before", "Before")
-    tool_response(ctx, "screen", "before")
-    model_response(ctx, "after", "ORIGINAL_ASSESSMENT")
-    frozen = capture_commit_review_evidence(ctx) if recorded else {}
-    execution = {"invocation_id": "pending-preflight", "pending_invocation_id": "pending-preflight", "operation_state": "in_flight",
-                 "fingerprint": git._fingerprint_staged_diff(ctx.repo_dir)["fingerprint"],
-                 "intent": {"commit_message": "candidate", "goal": "", "scope": "", "review_rebuttal": ""}}
-    if recorded:
-        execution["evidence_source_ref"] = frozen["source_ref"]
-    update_state(ctx.drive_root, lambda state: state.add_run(AdvisoryRunRecord(
-        snapshot_hash=compute_snapshot_hash(ctx.repo_dir, paths=["README.md"]),
-        commit_message="candidate", status="pending", ts="2026-09-09T00:00:00Z",
-        repo_key=make_repo_key(ctx.repo_dir), task_id=ctx.task_id, snapshot_paths=["README.md"], execution=execution)))
-    ctx._execution_trace["tool_calls"].clear()
-    if current_trace == "changed":
-        tool_response(ctx, "different", "before", result="NEW_TOOL_OBSERVATION")
-    ctx._commit_review_evidence = {"preview": "STALE_CONTEXT"}
-    monkeypatch.setattr(preflight, "advisory_review_route", lambda: "agent_session")
-    monkeypatch.setattr(advisory, "advisory_review_route", lambda: "agent_session")
-    monkeypatch.setattr(advisory, "advisory_slot_enabled", lambda: True)
-    monkeypatch.setattr(advisory, "check_worktree_readiness", lambda *a, **kw: [])
-    monkeypatch.setattr(advisory, "_release_metadata_preflight", lambda *a, **kw: None)
-    monkeypatch.setattr(advisory, "_check_worktree_version_sync_shared", lambda *a: "")
-    monkeypatch.setattr("ouroboros.delegate_custody.invocation_record", lambda *a: {"request": {"prompt": "ORIGINAL_PREFLIGHT_PROMPT"}})
-    sent = []
-    def rejoin(prompt, _repo, _ctx, **kwargs):
-        assert prompt == "ORIGINAL_PREFLIGHT_PROMPT"
-        sent.append(("preflight", kwargs.get("task_evidence", {}).get("source_ref", {})))
-        return SimpleNamespace(success=True, result_text='[{"item":"fixture","verdict":"PASS","severity":"advisory","reason":"recorded"}]',
-                               source_text="", usage={}, session_id="existing", cost_usd=0), "fixture"
-    monkeypatch.setattr(advisory, "_run_advisory_delegated", rejoin)
-    git._reset_commit_review_state(ctx)
-    assert git._reconcile_advisory_before_preparation(ctx, "candidate", goal="", scope="", paths=["README.md"], review_rebuttal="") == ""
-    assert ctx._advisory_reconciled
-    assert ctx._commit_review_evidence.get("source_ref", {}) == frozen.get("source_ref", {})
-    monkeypatch.setattr("ouroboros.review_evidence.capture_commit_review_evidence", lambda *a: pytest.fail("rejoin must not capture the current trace"))
-    monkeypatch.setattr(git, "_free_cycle_gate", lambda *a, **kw: None)
-    monkeypatch.setattr(git, "_advisory_and_tests_gate", lambda *a, **kw: None)
-    monkeypatch.setattr(git, "_install_paid_dispatch_stamp", lambda *a: None)
-    def receive(request, **kwargs):
-        sent.append((request.surface, request.evidence.get("task_execution", {}).get("source_ref", {})))
-        return SimpleNamespace(actors=[{"status": "ok", "raw_text": "[]", "usage": {}}])
-    monkeypatch.setattr(substrate, "run_review_request", receive)
-    def dispatch(_ctx, *args, **kwargs):
-        # One wave: a packet seat and a retrieving two-part seat.
-        asyncio.run(_query_model(None, "fixture", [{"role": "user", "content": "packet"}], asyncio.Semaphore(1),
-                                 _ctx, task_evidence=_ctx._commit_review_evidence, use_local=False))
-        asyncio.run(_query_model(None, "fixture", [], asyncio.Semaphore(1), _ctx, slot_id="slot_2",
-                                 native_retrieval=True, session_task="two-part brief", session_root=str(_ctx.repo_dir),
-                                 task_evidence=_ctx._commit_review_evidence, use_local=False))
-        return None, None, "", []
-    monkeypatch.setattr(git, "_run_parallel_review", dispatch)
-    outcome = git._run_reviewed_stage_cycle(ctx, "candidate", time.time(), paths=["README.md"], require_release_tag=False)
-    assert outcome["status"] == "passed", outcome
-    assert sent == [(surface, frozen.get("source_ref", {}))
-                    for surface in ("preflight", "multi_model_review", "multi_model_review")]
-    if not recorded:
-        assert ctx._commit_review_evidence == {}
-
-
-def test_fresh_stage_captures_current_evidence_after_rejoin_flag_reset(evidence_context, monkeypatch):
+def test_fresh_stage_captures_current_evidence_over_a_stale_selection(evidence_context, monkeypatch):
+    """No preflight rejoin carries a frozen selection any more (3A): every stage reads
+    the current trace, so a stale selection left on the context never reaches the panel."""
     from ouroboros.tools import git
 
     ctx = evidence_context
     (ctx.repo_dir / "README.md").write_text("fresh candidate\n")
-    ctx._advisory_reconciled = True
     ctx._commit_review_evidence = {"preview": "OLD_REJOIN"}
     model_response(ctx, "before", "Before")
     tool_response(ctx, "new", "before")
     model_response(ctx, "after", "NEW_ASSESSMENT")
-    assert git._reconcile_advisory_before_preparation(ctx, "fresh", goal="", scope="", paths=["README.md"], review_rebuttal="") == ""
-    assert not ctx._advisory_reconciled
     monkeypatch.setattr(git, "_free_cycle_gate", lambda *a, **kw: None)
-    monkeypatch.setattr(git, "_advisory_and_tests_gate", lambda *a, **kw: None)
+    monkeypatch.setattr(git, "_preflight_and_tests_gate", lambda *a, **kw: None)
     monkeypatch.setattr(git, "_install_paid_dispatch_stamp", lambda *a: None)
     observed = []
     monkeypatch.setattr(git, "_run_parallel_review", lambda *a, **kw: (observed.append(ctx._commit_review_evidence) or None, None, "", []))

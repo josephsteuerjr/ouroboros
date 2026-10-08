@@ -6,11 +6,8 @@ from types import SimpleNamespace
 import pytest
 
 from ouroboros.review_execution import ReviewRouteKind
-from ouroboros.review_state import load_state
-from ouroboros.tools import claude_advisory_review as advisory
-from ouroboros.tools import git
 from ouroboros.tools import review as review_mod
-from tests.test_advisory_inline_freshness import candidate  # noqa: F401
+from tests.test_git_review_preflight_gate import candidate  # noqa: F401
 
 SOURCE = "review source\n" * 500
 PASS_ITEM = json.dumps([{"item": "bible_compliance", "verdict": "PASS", "severity": "critical", "reason": "ok"}])
@@ -97,18 +94,6 @@ def test_actual_budget_exception_keeps_independent_origin():
     usage, _, _, state, _ = _review_exception_projection(BudgetExceeded("no funds"), {}, _ReviewAttemptHistory(), {})
     assert usage["review_failure_phase"] == "admission"
     assert state == "not_dispatched"
-
-
-def test_preflight_parse_failure_remains_failed_under_advisory(candidate, monkeypatch):  # noqa: F811
-    monkeypatch.setenv("OUROBOROS_REVIEW_ENFORCEMENT", "advisory")
-    monkeypatch.setattr(advisory, "_run_advisory_tests", lambda ctx: None)
-    monkeypatch.setattr(advisory, "_run_claude_advisory", lambda *a, **kw: ([], "unparsed complete review", "test/model", 20))
-    result = git._advisory_and_tests_gate(candidate, "candidate", 0, classification_paths=["change.py"], advisory_paths=["change.py"], skip_advisory_pre_review=False, skip_tests=False)
-    assert result is None
-    row = load_state(candidate.drive_root).advisory_runs[-1]
-    assert row.status == "parse_failure" and row.raw_result == "unparsed complete review"
-    assert row.execution["failure_phase"] == "format"
-    assert any("not a PASS" in str(item) for item in candidate._review_advisory)
 
 
 def test_frozen_failed_actor_with_raw_output_stays_failed():

@@ -124,7 +124,6 @@ def test_a_compatible_only_install_reviews_on_main(clean_env):
     from ouroboros.review_model_routes import get_review_models, get_scope_review_models
     from ouroboros.settings_defaults import OPENROUTER_REVIEW_DEFAULTS
     from ouroboros.subscription_install_presets import factory_review_rows
-    from ouroboros.tools.claude_advisory_review import _advisory_default_model
 
     doc = {"OPENAI_COMPATIBLE_BASE_URL": "https://llm.example/v1", "OUROBOROS_MODEL": "openai-compatible::glm-5.3"}
     for key, value in doc.items():
@@ -135,7 +134,6 @@ def test_a_compatible_only_install_reviews_on_main(clean_env):
     assert [row["route"]["target_id"] for row in factory_review_rows(doc)] == ["openai-compatible::glm-5.3"] * 3
     assert get_review_models() == list(OPENROUTER_REVIEW_DEFAULTS["triad"])
     assert get_scope_review_models() == ["openai-compatible::glm-5.3"]
-    assert _advisory_default_model() == "openai-compatible::glm-5.3"
     # The default panel shows the advisory on that route instead of a keyless OpenRouter default.
     assert rsc.load_reviewer_slot_config().advisory.target_id == "openai-compatible::glm-5.3"
     # An explicit compatible list is the owner's and is honoured exactly.

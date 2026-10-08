@@ -71,6 +71,9 @@ os.environ.setdefault("OUROBOROS_RUNTIME_MODE", "pro")
 # fixing the environment.
 _GENUINE_BLOCK_REASONS = {"critical_findings"}
 _OPENROUTER_MIN_REMAINING_USD = 10.0
+# Split-the-commit policy for a diff a reviewer receives as prompt text (the number the
+# retired advisory gate carried); retrieving actors read the files and are not bound by it.
+_PACKET_DIFF_CHARS_CAP = 500_000
 _CONTRIBUTOR_DEFAULT_BASE_REF = "upstream/ouroboros"
 _CONTRIBUTOR_LANDING_OBLIGATION_ITEMS = frozenset({
     "version_bump",
@@ -95,8 +98,8 @@ _REVIEW_SUBSTRATE_PATHS = frozenset({
     "ouroboros/review_verdict.py", "ouroboros/review_projection.py", "ouroboros/review_state.py",
     "ouroboros/review_state_records.py", "ouroboros/review_state_model.py", "ouroboros/review_state_custody.py",
     "ouroboros/runtime_mode_policy.py", "ouroboros/triad_review.py", "ouroboros/usage_accounting.py",
-    "ouroboros/observability.py", "ouroboros/utils.py", "ouroboros/tools/claude_advisory_review.py",
-    "ouroboros/tools/preflight_review_prompt.py", "ouroboros/tools/preflight_review_run.py", "ouroboros/tools/commit_gate.py",
+    "ouroboros/observability.py", "ouroboros/utils.py", "ouroboros/tools/preflight_review.py",
+    "ouroboros/commit_admission.py", "ouroboros/tools/commit_gate.py",
     "ouroboros/tools/git.py", "ouroboros/tools/parallel_review.py", "ouroboros/tools/registry.py",
     "ouroboros/tools/review.py", "ouroboros/tools/review_multi_model.py", "ouroboros/tools/review_context_atlas.py",
     "ouroboros/tools/review_helpers.py", "ouroboros/tools/review_prompt_text.py", "ouroboros/tools/review_file_pack.py",
@@ -210,27 +213,6 @@ def _load_settings_into_env() -> None:
     _fallback("OPENAI_API_KEY", "openai")
     _fallback("ANTHROPIC_API_KEY", "anthropic")
     _fallback("OPENROUTER_API_KEY", "openrouter")
-
-
-def _advisory_unavailability_warning() -> str:
-    """Return a safe route-aware operator warning, or ``""`` when available."""
-    from ouroboros.tools.claude_advisory_review import (
-        ADVISORY_REVIEW_CHOICE_GUIDANCE,
-        advisory_gate_unavailability_reason,
-    )
-
-    try:
-        reason = advisory_gate_unavailability_reason()
-    except ValueError:
-        reason = "invalid_advisory_configuration"
-    if reason is None:
-        return ""
-    return (
-        f"WARN: configured advisory review is unavailable ({reason}). "
-        "The production flow keeps its existing reason-specific behavior; "
-        "inspect advisory.txt and the typed review outcome. "
-        f"{ADVISORY_REVIEW_CHOICE_GUIDANCE}"
-    )
 
 
 def _git_text(args: list[str], *, cwd: pathlib.Path | None = None) -> str:
@@ -617,8 +599,9 @@ def _raw_actor(row: dict) -> dict:
 
 
 def _pending_checkout_custody(ctx) -> dict:
-    """Retain the candidate while actual reviewer custody is unresolved."""
-    from ouroboros.review_state import _load_state_unlocked, make_repo_key
+    """Retain the candidate while actual reviewer custody is unresolved: a panel seat,
+    or the author's preflight seat whose ``surface=preflight`` record is still pending."""
+    from ouroboros.review_ledger import STATE_PENDING
     from ouroboros.tools.git import _review_custody_pending
 
     facts = {}
@@ -626,15 +609,14 @@ def _pending_checkout_custody(ctx) -> dict:
     if _review_custody_pending(ctx) and (reviewers or getattr(ctx, "_review_custody_lost", False)):
         facts["reviewers"] = reviewers
         facts["custody_lost"] = bool(getattr(ctx, "_review_custody_lost", False))
-    try:
-        state = _load_state_unlocked(pathlib.Path(ctx.drive_root), strict_attempt_authority=True)
-        runs = state.filter_advisory_runs(repo_key=make_repo_key(pathlib.Path(ctx.repo_dir)))
-        active = [run.execution for run in runs if run.execution_pending]
-        if active:
-            facts["preflight"] = active
-    except Exception as exc:
-        # Unknown is disclosed as unknown; it does not assert a live worker.
-        facts["custody_unreadable"] = f"{type(exc).__name__}: {exc}"
+    preflight = dict(getattr(ctx, "_commit_preflight", None) or {})
+    if preflight.get("record_id"):
+        record, problem = _review_record(ctx, preflight)
+        if record is None:
+            # Unknown is disclosed as unknown; it does not assert a live worker.
+            facts["custody_unreadable"] = problem
+        elif str(record.get("state") or "") == STATE_PENDING:
+            facts["preflight"] = {"record_id": preflight["record_id"], "state": STATE_PENDING}
     return facts
 
 
@@ -989,8 +971,7 @@ def _diff_size_refusal(args, resolved_config: dict, reviewable_chars: int, cap: 
     """The cap binds packet recipients; configured retrieving actors read files.
 
     Scope rows always retrieve; only triad rows can receive a packet. The
-    operator lane keeps the advisory hard cap of the commit gate it previews,
-    whose commit would refuse such a diff anyway. Native API actors remain paid
+    operator lane keeps the cap for every panel. Native API actors remain paid
     seats even though they do not receive a packet.
     """
     from ouroboros.reviewer_slot_config import row_plan_retrieves
@@ -1083,6 +1064,10 @@ def _parse_args():
     parser.add_argument("--attach-host-engine", action="store_true", help=(
         "With --contributor: use the host's running Claudexor engine attach-only; "
         "never start, prepare, rotate, claim or stop one."))
+    parser.add_argument("--preflight-reviewer", default="", help=(
+        "Operator lane only: one enabled catalog row (id or handle) that reads the staged change "
+        "first, as commit_reviewed(preflight_reviewer=...) does; its surface=preflight record and "
+        "full answer land in preflight.json / preflight.txt. Omitted = no preflight."))
     parser.add_argument("--no-isolated-checkout", action="store_true", help=(
         "Operator lane only: run the gate cycle in this worktree instead of a frozen "
         "isolated checkout of the staged patch (edits during the run then reach the reviewers)."))
@@ -1092,6 +1077,8 @@ def _parse_args():
         parser.error("--base-ref/--head-ref require --contributor")
     if args.contributor and args.no_isolated_checkout:
         parser.error("--contributor requires the frozen isolated checkout")
+    if args.contributor and args.preflight_reviewer:
+        parser.error("--preflight-reviewer is an operator-lane option")
     if args.contributor and not args.head_ref:
         parser.error(
             "--contributor requires --head-ref: the review runs this checkout's review "
@@ -1203,7 +1190,7 @@ def _operator_reviewable_diff_chars(fallback_chars: int) -> int:
     """Size of the TEXTUAL staged diff — what the commit gate's reviewers read.
 
     ``git diff --cached`` shows binary blobs as "Binary files differ" stubs;
-    measuring the advisory hard cap against the ``--binary`` patch refused
+    measuring the packet cap against the ``--binary`` patch refused
     image-asset commits for bytes no reviewer model would see. The contributor
     lane keeps its conservative patch-size measurement, and a failed git
     invocation falls back to ``fallback_chars`` (the conservative binary-patch
@@ -1243,12 +1230,10 @@ def main() -> int:
             print("ERROR: staged diff is empty — `git add` the changes first.", file=sys.stderr)
             return 2
         reviewable_chars = _operator_reviewable_diff_chars(len(staged))
-    from ouroboros.tools.claude_advisory_review import _MAX_DIFF_CHARS_ERROR
-
-    if _diff_size_refusal(args, resolved_config, reviewable_chars, _MAX_DIFF_CHARS_ERROR):
+    if _diff_size_refusal(args, resolved_config, reviewable_chars, _PACKET_DIFF_CHARS_CAP):
         print(
-            f"ERROR: staged diff is {reviewable_chars:,} chars — over the advisory hard cap "
-            f"({_MAX_DIFF_CHARS_ERROR:,}) and at least one reviewer receives the diff as prompt "
+            f"ERROR: staged diff is {reviewable_chars:,} chars — over the review packet cap "
+            f"({_PACKET_DIFF_CHARS_CAP:,}) and at least one reviewer receives the diff as prompt "
             "text. Policy: split the phase into smaller single-intent commits instead of "
             "relaxing the gate (a panel of retrieving actors reads the diff itself and is "
             "not bound by this cap).",
@@ -1357,17 +1342,20 @@ def _contributor_lane(args, host_ctx, proposal: dict, *, resolved_config: dict, 
     return exit_code
 
 
-def _write_advisory_record(output_dir: pathlib.Path, review_drive_root: pathlib.Path, repo_dir) -> None:
-    """``advisory.txt``: the full recorded advisory pre-review of this cycle."""
-    from dataclasses import asdict
-
-    from ouroboros.review_state import load_state, make_repo_key
-
-    runs = load_state(review_drive_root).filter_advisory_runs(repo_key=make_repo_key(pathlib.Path(repo_dir)))
-    record = asdict(runs[-1]) if runs else {"status": "not_run", "reason": "cycle did not reach preflight"}
-    advisory_text = json.dumps(record, ensure_ascii=False, indent=2)
-    (output_dir / "advisory.txt").write_text(advisory_text + "\n", encoding="utf-8")
-    print("ADVISORY PRE-REVIEW (recorded full source)\n" + advisory_text)
+def _write_preflight_record(output_dir: pathlib.Path, ctx, review_drive_root: pathlib.Path) -> None:
+    """``preflight.json`` + ``preflight.txt``: the cycle's preflight fact, its ``surface=preflight``
+    record with every seat row, and the helper's full answer beside it (``--preflight-reviewer``)."""
+    fact = dict(getattr(ctx, "_commit_preflight", None)
+                or {"status": "not_performed", "record_id": "", "reason": "cycle did not reach preflight"})
+    record, problem = _review_record(ctx, fact) if fact.get("record_id") else (None, "")
+    seats = _seat_records(record, review_drive_root)
+    text = "\n\n".join(str(seat.get("answer") or "") for seat in seats)
+    summary = {"preflight": fact, "review_record": _record_link(record, fact, review_drive_root),
+               **({"record_problem": problem} if problem else {})}
+    _write_json(output_dir / "preflight.json", {**summary, "seats": seats})
+    (output_dir / "preflight.txt").write_text(text + "\n", encoding="utf-8")
+    print("PREFLIGHT REVIEW (surface=preflight record; the helper's full answer follows)\n"
+          + _json_text(summary) + ("\n" + text if text else ""))
 
 
 def _reviewed_tree_drift(checkout: pathlib.Path, staged: str, output_dir: pathlib.Path) -> bool:
@@ -1391,15 +1379,26 @@ def _reviewed_tree_drift(checkout: pathlib.Path, staged: str, output_dir: pathli
 
 def _operator_lane(args, host_ctx, commit_message: str, *, goal: str, scope: str, staged: str,
                    resolved_config: dict, output_dir: pathlib.Path, review_drive_root: pathlib.Path) -> int:
-    """The commit gate's own non-committing cycle (advisory, tests preflight, triad +
-    scope, ledger record) over the staged index, run in an isolated checkout of the
-    staged patch that the runtime materializes (``review_subject.isolated_checkout``):
-    edits in this worktree during the run cannot reach the reviewers, and the checkout
-    is retained when review custody is still open after the cycle."""
+    """The commit gate's own non-committing cycle (deterministic checks, hermetic tests
+    preflight, the author's optional ``surface=preflight`` look, triad + scope, ledger record)
+    over the staged index, run in an isolated checkout of the staged patch that the runtime
+    materializes (``review_subject.isolated_checkout``): edits in this worktree during the run
+    cannot reach the reviewers, and the checkout is retained when review custody is still
+    open after the cycle."""
+    from ouroboros.tools.commit_gate import preflight_reviewer_error
     from ouroboros.tools.git import _run_non_committing_review_cycle
     from ouroboros.tools.registry import ToolContext
     from ouroboros.tools.review_subject import ReviewSubjectSpec, isolated_checkout
 
+    refusal = preflight_reviewer_error(args.preflight_reviewer.strip()) if args.preflight_reviewer.strip() else ""
+    if refusal:  # as commit_reviewed refuses it: before any checkout, test run or paid look
+        print(f"ERROR: {refusal}", file=sys.stderr)
+        _write_json(output_dir / "outcome.json", {"exit_code": 2, "outcome": {
+            "status": "failed", "block_reason": "tool_arg_error", "message": f"TOOL_ARG_ERROR: {refusal}"}})
+        return 2
+    # The lane always pays the hermetic suite, doc-only diffs included (the advisory-carrying
+    # cycle it replaced did); an explicit operator env value still wins.
+    os.environ.setdefault("OUROBOROS_PREFLIGHT_DIFF_AWARE", "false")
     spec = ReviewSubjectSpec(root_kind="system_repo", root=str(REPO), kind="index", surface="commit_gate")
     retained: dict = {}
     outcome: dict = {}
@@ -1417,14 +1416,11 @@ def _operator_lane(args, host_ctx, commit_message: str, *, goal: str, scope: str
             checkout = pathlib.Path(frozen.checkout)
             ctx = ToolContext(repo_dir=checkout, drive_root=review_drive_root)
             print(f"Isolated review checkout: {checkout}", file=sys.stderr)
-        # The shared cycle owns preparation, admission and any paid preflight.
-        advisory_warning = _advisory_unavailability_warning()
-        if advisory_warning:
-            print(advisory_warning, file=sys.stderr)
+        # The shared cycle owns preparation, admission and the named preflight.
         try:
             outcome = _run_non_committing_review_cycle(
-                ctx, commit_message, skip_advisory_review=False, goal=goal, scope=scope)
-            _write_advisory_record(output_dir, review_drive_root, ctx.repo_dir)
+                ctx, commit_message, goal=goal, scope=scope, preflight_reviewer=args.preflight_reviewer)
+            _write_preflight_record(output_dir, ctx, review_drive_root)
             if checkout is not None and not _pending_checkout_custody(ctx):
                 _reviewed_tree_drift(checkout, staged, output_dir)
         finally:

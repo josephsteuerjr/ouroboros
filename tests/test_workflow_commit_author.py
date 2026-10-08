@@ -8,7 +8,7 @@ from ouroboros.review_state import load_state
 from ouroboros.task_results import write_task_result
 from ouroboros.tools import git
 from ouroboros.review_ledger import CouplingOutcome
-from tests.test_advisory_inline_freshness import candidate  # noqa: F401
+from tests.test_git_review_preflight_gate import candidate  # noqa: F401
 
 
 @pytest.mark.parametrize("failure", ["critical", "scope_critical", "infra", "pending"])

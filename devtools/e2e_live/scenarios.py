@@ -41,8 +41,6 @@ _VERSION_PARTS_RE = re.compile(r"^(\d+\.\d+\.)(\d+)(-?(?:rc|alpha|beta|a|b)\.?)?
 # The runtime's typed refusal prefix on a blocked review tool result ("⚠️ CODE: ...").
 _REFUSAL_CODE_RE = re.compile(r"⚠️\s*([A-Z][A-Z_]+):")
 _REVIEW_TOOLS = ("preflight_review", "commit_reviewed")
-# The prefix ``claude_advisory_review`` stamps on an oversize-prompt skip row's ``raw_result``.
-_ADVISORY_SKIP_PREFIX = "⚠️ ADVISORY_SKIPPED:"
 # The product's vision/browser inspection surfaces (``ouroboros/tools/vision.py``, ``browser.py``).
 _VISION_TOOLS = ("analyze_screenshot", "vlm_query", "view_image")
 _BROWSER_TOOL = "browser_action"
@@ -200,15 +198,14 @@ def tool_result_rows(tools_rows: list) -> list:
 def commit_refusal_facts(ledger: dict, tools_rows: list, stored: dict) -> dict:
     """The TYPED trail of every ``commit_reviewed``/``preflight_review`` refusal of a task.
 
-    Three durable sources, none of them model prose: the advisory ledger's attempt rows
-    (``phase``/``status``/``block_reason``) and advisory-run statuses, the tools.jsonl rows of
+    Three durable sources, none of them model prose: the review state's attempt rows
+    (``phase``/``status``/``block_reason``), the tools.jsonl rows of
     the two review tools (their typed ``status`` plus the runtime's own ``⚠️ CODE:`` refusal
     prefix — PREFLIGHT_BLOCKED, TESTS_PREFLIGHT_BLOCKED, SCOPE_REVIEW_BLOCKED, ...), and the
     task's terminal ``reason_code`` (``budget_exhausted`` = BudgetExceeded, ``deadline_local``
     = the deadline). The first paid run's SM1 lanes failed on exactly this ladder and the
     result rows named none of it."""
     attempts = [a for a in (ledger.get("attempts") or []) if isinstance(a, dict)]
-    runs = [r for r in (ledger.get("advisory_runs") or []) if isinstance(r, dict)]
     tools_rows = tool_result_rows(tools_rows)
     calls = []
     for row in tools_rows:
@@ -227,7 +224,6 @@ def commit_refusal_facts(ledger: dict, tools_rows: list, stored: dict) -> dict:
         "commit_attempts": [{"attempt": a.get("attempt"), "phase": str(a.get("phase") or ""),
                              "status": str(a.get("status") or ""), "block_reason": str(a.get("block_reason") or "")}
                             for a in attempts],
-        "advisory_run_statuses": [str(r.get("status") or "") for r in runs],
         "review_tool_calls": calls,
         "refusal_codes": sorted({c["code"] for c in calls if c["code"]}),
         "terminal_status": str(stored.get("status") or ""),
@@ -426,7 +422,7 @@ def sm1_prompt() -> str:
         "Keep the effective palette consistent on / and /onboarding, including their actual controls "
         "(tests/test_web_typography_static.py pins the shared source); verify the visible result the way the "
         "review policy requires (exercise real consumers in both browser documents and inspect "
-        "it); then land it as a reviewed release through preflight_review and commit_reviewed with "
+        "it); then land it as a reviewed release through commit_reviewed with "
         f"commit message '{SM1_COMMIT_MESSAGE}', following the release policy the review organs "
         "enforce (every commit is a release: the synchronized version carriers are bumped in the same "
         "diff — a patch bump). Finish once the commit has landed."
@@ -445,17 +441,6 @@ def version_is_bumped(before: str, after: str) -> bool:
         return is_release_version(after) and Version(after.strip()) > Version(before.strip())
     except InvalidVersion:
         return False
-
-
-def advisory_run_is_real(run: dict) -> bool:
-    """A ledger row the advisory reviewer actually produced. ``fresh`` is written only by a
-    completed reviewer episode; ``stale`` is ANY aged row (fresh, bypassed or skipped), told
-    apart by the bypass fields and the skip prefix the two audited paths stamp."""
-    status = str(run.get("status") or "")
-    if status == "fresh":
-        return True
-    return (status == "stale" and not run.get("bypass_reason") and not run.get("bypassed_by_task")
-            and not str(run.get("raw_result") or "").startswith(_ADVISORY_SKIP_PREFIX))
 
 
 def vision_evidence_rows(tools_rows: list) -> list:
@@ -560,9 +545,6 @@ def run_sm1(ctx: LaneContext) -> None:
     ctx.check("worktree_clean_after_commit", clean, worktree_porcelain=porcelain, worktree_transient=transient)
     task_oracle = ctx.oracle.task_drive(task_id)
     ledger = task_oracle.advisory_review()
-    runs = [r for r in (ledger.get("advisory_runs") or []) if isinstance(r, dict)]
-    # A REAL advisory run, not the audited skip/bypass row the earlier prompt routed through.
-    ctx.check("advisory_ledger_row_present", any(advisory_run_is_real(r) for r in runs))
     tools_rows = task_oracle.tools_rows()
     ctx.facts["commit_reviewed_refusals"] = commit_refusal_facts(ledger, tools_rows, stored)
     ctx.check("landed_without_skip_flags", ctx.checks["commit_landed"]
@@ -677,11 +659,9 @@ def sm1_stub_script(clone: pathlib.Path) -> dict:
     writes.extend(sm1_release_writes(clone, sm1_next_version((clone / "VERSION").read_text(encoding="utf-8"), taken)))
     return {"agent": [
         *writes,
-        # The full user path, no skip flags: the release preflight sees VERSION in scope, the
-        # advisory episode runs against the stub (a REAL ledger row), and the hermetic suite is
-        # the tests preflight exactly like the paid prompt (``preflight_runner._preflight_env``
-        # scrubs every settings key the loopback lane projects).
-        {"tool": "preflight_review", "arguments": {"commit_message": SM1_COMMIT_MESSAGE}},
+        # The full user path, no skip flags: the release preflight sees VERSION in scope and the
+        # hermetic suite is the tests preflight exactly like the paid prompt
+        # (``preflight_runner._preflight_env`` scrubs every settings key the loopback lane projects).
         {"tool": "commit_reviewed", "arguments": {
             "commit_message": SM1_COMMIT_MESSAGE, "paths": [w["arguments"]["path"] for w in writes],
             "goal": "Change the brand accent for the live E2E stand and release it",

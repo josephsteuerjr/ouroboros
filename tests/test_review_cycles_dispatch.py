@@ -282,7 +282,7 @@ def _stage_cycle_harness(tmp_path, monkeypatch, *, fingerprint):
         git_mod, "_fingerprint_staged_diff",
         lambda repo_dir: {"ok": True, "fingerprint": fingerprint},
     )
-    monkeypatch.setattr(git_mod, "_advisory_and_tests_gate", lambda *a, **k: None)
+    monkeypatch.setattr(git_mod, "_preflight_and_tests_gate", lambda *a, **k: None)
     monkeypatch.setattr(git_mod, "_review_binding_precondition_error", lambda *a, **k: "")
     return git_mod, ctx, progress
 

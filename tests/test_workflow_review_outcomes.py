@@ -6,7 +6,7 @@ from ouroboros.tools import git
 from ouroboros.mutation_attribution import capture_mutation_baseline
 from ouroboros.task_results import write_task_result
 from ouroboros.review_state import load_state
-from tests.test_advisory_inline_freshness import candidate  # noqa: F401
+from tests.test_git_review_preflight_gate import candidate  # noqa: F401
 
 
 @pytest.mark.parametrize("basis", ["none", "unrelated_prior", "explicit_prior", "custody_lost"])
@@ -49,7 +49,7 @@ def test_commit_finish_requires_received_outcome(candidate, monkeypatch, basis):
     if basis == "explicit_prior":
         reference = json.loads(prior.split('\n', 1)[1])['review_reference']
     row = load_state(ctx.drive_root).attempts[-1]
-    from ouroboros.tools.claude_advisory_review import _handle_review_status
+    from ouroboros.tools.preflight_review import _handle_review_status
     projected = json.loads(_handle_review_status(ctx))
     assert ("author_disposition" in projected["next_step"]) is (basis == "custody_lost")
     assert ("review_reference" in projected) is (basis == "custody_lost")

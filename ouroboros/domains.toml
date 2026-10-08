@@ -512,9 +512,7 @@ D20 = "Presence"
 "ouroboros/tools/arg_feedback.py" = "D04"
 "ouroboros/tools/browser.py" = "D05"
 "ouroboros/tools/chronicle.py" = "D15"
-"ouroboros/tools/claude_advisory_review.py" = "D06"
-"ouroboros/tools/preflight_review_prompt.py" = "D06"
-"ouroboros/tools/preflight_review_run.py" = "D06"
+"ouroboros/tools/preflight_review.py" = "D06"
 "ouroboros/tools/commit_gate.py" = "D10"
 "ouroboros/tools/compact_context.py" = "D03"
 "ouroboros/tools/control.py" = "D08"
@@ -806,7 +804,6 @@ allowed = [
   "D06->D10",
   "D06->D12",
   "D06->D13",
-  "D06->D14",
   "D06->D16",
   "D06->D17",
   "D06->D18",
@@ -964,6 +961,7 @@ lazy_only = [
   "D06->D03",
   "D06->D05",
   "D06->D08",
+  "D06->D14",
   "D06->D15",
   "D07->D03",
   "D07->D09",
@@ -988,6 +986,7 @@ lazy_only = [
   "D10->D11",
   "D10->D14",
   "D10->D15",
+  "D10->D16",
   "D10->D17",
   "D11->D06",
   "D11->D15",

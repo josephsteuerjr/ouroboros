@@ -1,8 +1,11 @@
 """Deep self-review of the whole Ouroboros system against BIBLE.md.
 
-The review runs on the configured ``deep_review`` reviewer row
-(``reviewer_slot_config.deep_review_slot``). Every row DELIVERS BY RETRIEVAL —
-the reviewer reads the repository itself — in one of two shapes:
+``/review`` is ``review_change(subject=system, surface=system)``
+(``tools/review_change.run_system_review``): the review runs on the ONE row the
+call names — any enabled catalog row — or, by default, the direct Main row
+(``main_review_row``), and its report is that record's answer. Every row
+DELIVERS BY RETRIEVAL — the reviewer reads the repository itself — in one of
+two shapes:
 
 * an ``api_chat`` row (a bare route or a configured-subagent reference) is a
   NATIVE inspection episode — the reviewer reads the repository through the
@@ -12,7 +15,7 @@ the reviewer reads the repository itself — in one of two shapes:
 * an ``agent_session`` row is a delegated read-only session — the same task,
   reads not host-observed (disclosed as ``unobserved``).
 
-Both deliveries ride the executor seam exactly like the advisory: the product
+Both deliveries ride the shared review executor seam: the product
 is free markdown (``triad_review`` shape ``report``), a bound landing before
 the final answer delivers the collected draft marked INCOMPLETE, and the host
 prepends a provenance header naming the delivery, model, rounds, receipts,
@@ -41,7 +44,6 @@ from ouroboros.reviewer_slot_config import (  # noqa: E402
     ROUTE_KIND_API,
     ROUTE_KIND_SESSION,
     ConfiguredReviewerSlot,
-    deep_review_slot,
     row_effort,
 )
 from ouroboros.usage_accounting import BudgetExceeded  # noqa: E402
@@ -173,20 +175,26 @@ def _session_route_reason(row: ConfiguredReviewerSlot) -> str:
     return str(unavailable or "")
 
 
+def main_review_row() -> ConfiguredReviewerSlot:
+    """The direct Main row (``OUROBOROS_MODEL`` and its local flag): ``/review``'s
+    executor when the call names none (decision 3A)."""
+    from ouroboros.subagents import _lane_model, _use_local_for_lane
+
+    model = _lane_model("main")
+    return ConfiguredReviewerSlot(slot_id="main", kind=ROUTE_KIND_API, target_id=model,
+                                  use_local=True if _use_local_for_lane("main", model) else None)
+
+
 def deep_review_route(row: Optional[ConfiguredReviewerSlot] = None) -> Tuple[str, Optional[str]]:
-    """``(unavailable_reason, identity)`` for the deep-review row.
+    """``(unavailable_reason, identity)`` for the deep-review row (default: Main).
 
     '' means available; ``identity`` is then what the review runs on — the api
     row's sendable model (``_api_route_model``, the direct-OpenAI resolution
     included) or the session row's ``harness[=model]`` target. Availability is
     ROUTE-AWARE: an api row needs its routed model's credentials, a session row
-    a healthy delegated route. A malformed reviewer-slot setting is the typed
-    reason, never a fallback.
+    a healthy delegated route.
     """
-    try:
-        row = row or deep_review_slot()
-    except ValueError as exc:
-        return str(exc), None
+    row = row or main_review_row()
     if row.kind not in (ROUTE_KIND_API, ROUTE_KIND_SESSION):
         return f"deep_review row has an unknown route kind {row.kind!r}", None
     if not str(row.target_id or "").strip():
@@ -200,9 +208,8 @@ def deep_review_route(row: Optional[ConfiguredReviewerSlot] = None) -> Tuple[str
 def deep_review_unavailable_text(reason: str) -> str:
     """The ONE unavailable message (prefix classified by ``outcomes``)."""
     return (
-        f"❌ Deep self-review unavailable: {reason}. Configure the deep-review row in "
-        "Settings → Agents → Review lanes (or OUROBOROS_MODEL_DEEP_SELF_REVIEW) with a "
-        "route this install can pay."
+        f"❌ Deep self-review unavailable: {reason}. Run /review on a row this install can pay: "
+        "any enabled Settings → Agents row, or the Main model (the default)."
     )
 
 
@@ -547,8 +554,8 @@ def _run_retrieving_review(
     required_sources: Optional[list] = None,
     required_sources_ref: Optional[dict] = None,
 ) -> Tuple[str, Dict[str, Any]]:
-    """The row's delivery (native episode or delegated session), exactly like
-    the advisory: hand-built request, slot and assignment; the product is the
+    """The row's delivery (native episode or delegated session): hand-built
+    request, slot and assignment; the product is the
     report text. ``model`` is the sendable spelling ``deep_review_route``
     resolved for the row (its own target when the caller names none)."""
     from dataclasses import asdict
@@ -621,8 +628,7 @@ def _run_retrieving_review(
         executor = _review_route_executor(assignment, llm=llm)
     else:
         # An api deep_review row IS the bounded inspection episode, whether or
-        # not a configured subagent binds it — the same direct binding the
-        # advisory api row uses (`claude_advisory_review`), so a bare route
+        # not a configured subagent binds it, so a bare route (Main included)
         # never falls back to a one-shot chat with nothing to read.
         from ouroboros.review_native_episode import NativeToolRoundReviewExecutor
 
@@ -759,7 +765,7 @@ def run_deep_self_review(
     required_sources: Optional[list] = None,
     required_sources_ref: Optional[dict] = None,
 ) -> Tuple[str, Dict[str, Any]]:
-    """Execute the deep self-review on the configured row.
+    """Execute the deep self-review on ``slot`` (default: the direct Main row).
 
     Returns ``(text, usage)``. A delivered report carries the host provenance
     header; every ordinary review failure returns its text with typed usage
@@ -771,16 +777,13 @@ def run_deep_self_review(
     exception that propagates is ``BudgetExceeded`` — the paid ledger's
     refusal is budget vocabulary for the agent's budget-pause rail, not a
     review error.
-    ``slot`` overrides the configured row (tests, callers that already resolved it).
+    ``slot`` is the row ``/review`` chose (``review_change.system_review_row``).
     ``required_sources`` and its exact source handle may come from the caller's
     immutable review assembler. Without one, coverage names only the
     constitution actually delivered inline, never an inferred whole-tree scope.
     """
     try:
-        try:
-            row = slot or deep_review_slot()
-        except ValueError as exc:
-            return _failed(deep_review_unavailable_text(str(exc)), reason_code="deep_self_review_unavailable")
+        row = slot or main_review_row()
         from ouroboros.review_records import apply_review_model_override
         from ouroboros.model_wait import current_model_wait
         waiter = current_model_wait()

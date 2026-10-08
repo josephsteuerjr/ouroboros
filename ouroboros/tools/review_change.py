@@ -7,12 +7,18 @@ starts on its own and never runs tests. The rules follow the subject: a subject 
 against the body layer, anything else against the universal core. Enforcement is recorded for every root
 and binds only a body subject's record; a verdict on another root locks nothing.
 
-Panel (owner, 07.10): for a body subject outside Cyber Pro the configured panel is the owner's, so
-``reviewers`` only ADD seats and a named subset is recorded as ignored. For a body subject in Cyber Pro and
-for ANY subject outside the body, ``reviewers`` IS the panel (omitted = every configured seat); a narrowed
-panel without a ``reason`` is recorded loudly (``reason_missing``), never refused. ``coupling_only`` seats
-answer only the coupling question; like every added seat they stay outside the quorum and their findings
-are ``additional_findings``.
+Panel (owner, 07.10): seats come from the review pool. For a body subject outside Cyber Pro the pool is
+the owner's, so ``reviewers`` only ADD seats and a named subset is recorded as ignored. For a body subject
+in Cyber Pro and for ANY subject outside the body, ``reviewers`` IS the panel (omitted = the whole pool); a
+narrowed panel without a ``reason`` is recorded loudly (``reason_missing``), never refused.
+``coupling_only`` seats answer only the coupling question; like every added seat they stay outside the
+quorum and their findings are ``additional_findings``.
+
+Surfaces (decision 3A): ``change`` is the panel review above. ``preflight`` is the same wave with ONE
+enabled catalog row the author names, pool member or not — the optional pre-commit look at a worktree.
+``system`` (``subject=system``) is ``/review``: one row (default: the direct Main row) reads the whole
+system and writes a report, recorded as a ``surface=system`` record that asks no verdict question. The
+surface is part of every identity, so a preflight record never answers the commit panel.
 """
 
 from __future__ import annotations
@@ -22,7 +28,6 @@ import dataclasses
 import json
 import logging
 import pathlib
-import re
 import subprocess
 from dataclasses import dataclass
 from types import SimpleNamespace
@@ -34,8 +39,8 @@ from ouroboros.config import (
 )
 from ouroboros.review_body_fact import body_fact, layer_for
 from ouroboros.review_ledger import (
-    PART_CHANGE, PART_COUPLING, PARTS, QUESTION_NOT_PERFORMED, build_wave_record, ledger_root, new_record_id,
-    panel_facts, reduce_verdict, revise_record, row_verdict, seat_parts, write_record,
+    PART_CHANGE, PARTS, QUESTION_NOT_PERFORMED, build_wave_record, ledger_root, new_record_id,
+    panel_facts, reduce_verdict, revise_record, row_verdict, write_record,
 )
 from ouroboros.runtime_mode_policy import runtime_mode_at_least
 from ouroboros.settings_scales import EFFORT_SCALE, effort_rank
@@ -50,20 +55,24 @@ from ouroboros.tools.review_subject import (
     ReviewSubjectSpec, checkout_token, freeze_subject, is_gate_subject, isolated_checkout, reuse_or_none,
     review_retry_key, review_reuse_key, review_round_sha,
 )
-from ouroboros.utils import run_cmd
+from ouroboros.utils import run_cmd, utc_now_iso
 
 log = logging.getLogger(__name__)
 
 TOOL_NAME = "review_change"
 SURFACE = "change"
+SURFACES = ("change", "preflight", "system")
 ROOTS = ("active_workspace", "system_repo")
-SUBJECT_KINDS = ("index", "worktree", "base..head")
+CHANGE_KINDS = ("index", "worktree", "base..head")
+SUBJECT_KINDS = (*CHANGE_KINDS, "system")
+# The part a system review's one seat answers: a report, outside the verdict
+# questions (``review_ledger.PARTS``), so its record never states a verdict.
+REPORT_PART = "report"
+MAIN_SEAT = "main"
 # Wave block reasons the seat rows state themselves (findings, quorum, coupling);
 # any other block keeps a verdict recomputed over the assigned seats from PASS.
 _ROW_STATED_BLOCKS = frozenset({"", "critical_findings", "review_quorum", "coupling_not_performed", "change_unanswered"})
 _GIT_PROBE_TIMEOUT_SEC = 30
-_SEAT_PREFIX = "rc-"
-_SEAT_ID_MAX = 64
 
 
 class ReviewChangeArgumentError(ValueError):
@@ -88,9 +97,10 @@ class ReviewChangeRequest:
     reviewer_effort: str = ""
     review_rebuttal: str = ""
     treat_as_body: bool = False
+    surface: str = SURFACE
 
 
-_ARG_NAMES = frozenset({*ReviewChangeRequest.__dataclass_fields__, "surface"})
+_ARG_NAMES = frozenset(ReviewChangeRequest.__dataclass_fields__)
 _TEXT_ARGS = ("root", "workspace_root", "subject", "base", "head", "surface", "goal", "scope",
               "reason", "reviewer_effort", "review_rebuttal")
 
@@ -120,37 +130,48 @@ def parse_request(args: Dict[str, Any]) -> ReviewChangeRequest:
     text = {name: _text(args, name, problems) for name in _TEXT_ARGS}
     root = text["root"].strip() or "active_workspace"
     subject, base, head = text["subject"].strip(), text["base"].strip(), text["head"].strip()
+    surface = text["surface"].strip() or SURFACE
+    lists = {name: _strings(args, name, problems, verbatim=name == "author_questions")
+             for name in ("author_questions", "reviewers", "coupling_only")}
     if root not in ROOTS:
         problems.append(f"root must be one of {', '.join(ROOTS)} (a registered folder goes in workspace_root), got {root!r}")
     if root == "system_repo" and text["workspace_root"].strip():
         problems.append("root=system_repo names the system repository; leave workspace_root empty")
+    if surface not in SURFACES:
+        problems.append(f"surface must be one of {', '.join(SURFACES)}, got {surface!r}")
     if subject not in SUBJECT_KINDS:
         problems.append(f"subject must be one of {', '.join(SUBJECT_KINDS)}, got {subject!r}")
+    elif (subject == "system") != (surface == "system"):
+        problems.append("subject=system goes with surface=system: /review reads the whole system repository")
+    elif subject == "system" and (text["workspace_root"].strip() or base or head):
+        problems.append("subject=system reads the installed system repository; workspace_root, base and head do not apply")
     elif subject == "base..head" and not (base and head):
         problems.append("subject=base..head needs both base and head revisions")
-    elif subject != "base..head" and head:
+    elif subject in ("index", "worktree") and head:
         problems.append(f"head belongs to subject=base..head; subject={subject} is reviewed against base (default HEAD)")
     for name, rev in (("base", base), ("head", head)):
         if rev.startswith("-"):
             problems.append(f"{name} must name a revision, not an option ({rev!r})")
-    surface = text["surface"].strip() or SURFACE
-    if surface != SURFACE:
-        problems.append(f"surface must be {SURFACE!r}, got {surface!r}")
+    if surface in ("preflight", "system") and (lists["coupling_only"] or len(lists["reviewers"]) > 1
+                                               or (surface == "preflight" and not lists["reviewers"])):
+        problems.append(f"surface={surface} seats exactly one reviewer, named in reviewers"
+                        + (" (omitted = the direct Main row)" if surface == "system" else "")
+                        + "; coupling_only does not apply")
     effort = text["reviewer_effort"].strip()
     if effort and effort not in EFFORT_SCALE:
         problems.append(f"reviewer_effort must be one of {', '.join(EFFORT_SCALE)}, got {effort!r}")
     treat = args.get("treat_as_body", False)
     if not isinstance(treat, bool):
         problems.append("treat_as_body must be a boolean")
-    lists = {name: _strings(args, name, problems, verbatim=name == "author_questions")
-             for name in ("author_questions", "reviewers", "coupling_only")}
     if problems:
         raise ReviewChangeArgumentError("; ".join(problems))
     return ReviewChangeRequest(
-        root=root, workspace_root=text["workspace_root"].strip(), subject=subject, base=base, head=head,
+        root="system_repo" if subject == "system" else root, workspace_root=text["workspace_root"].strip(),
+        subject=subject, base=base, head=head,
         goal=text["goal"], scope=text["scope"], author_questions=lists["author_questions"],
         reviewers=lists["reviewers"], reason=text["reason"], coupling_only=lists["coupling_only"],
-        reviewer_effort=effort, review_rebuttal=text["review_rebuttal"], treat_as_body=treat is True)
+        reviewer_effort=effort, review_rebuttal=text["review_rebuttal"], treat_as_body=treat is True,
+        surface=surface)
 
 
 # --- Root -------------------------------------------------------------------------
@@ -227,130 +248,100 @@ def _verify_revisions(root: pathlib.Path, request: ReviewChangeRequest) -> None:
 
 @dataclass(frozen=True)
 class ComposedPanel:
-    triad: Tuple[Any, ...]
-    scope: Tuple[Any, ...]
-    additional: Tuple[str, ...]
+    """The wave's seats as ``reviewer_slot_config.PoolSeat`` tuples
+    ``(ReviewSlot, parts, additional)``; a seat's id is its catalog row's ``subagent_id``."""
+
+    seats: Tuple[Any, ...]
     override: bool
     facts: Dict[str, Any]
 
     @property
+    def additional(self) -> Tuple[str, ...]:
+        return tuple(slot.slot_id for slot, _parts, extra in self.seats if extra)
+
+    @property
     def assigned(self) -> Tuple[Tuple[str, str, str], ...]:
-        """The composition identity: every seat, its part, and whether it counts."""
-        extra = set(self.additional)
-        seats = [(row.slot_id, part) for row in self.triad for part in seat_parts(row)]
-        seats += [(row.slot_id, part) for row in self.scope for part in seat_parts(row, coupling_only=True)]
-        return tuple(sorted((seat, part, "additional" if seat in extra else "assigned") for seat, part in seats))
+        """The composition identity: every seat, each part it answers, and whether it counts."""
+        return tuple(sorted((slot.slot_id, part, "additional" if extra else "assigned")
+                            for slot, parts, extra in self.seats for part in parts))
 
 
-def _configured_seats(config: Any) -> Dict[str, Tuple[str, Any]]:
-    seats: Dict[str, Tuple[str, Any]] = {}
-    for part, rows in ((PART_CHANGE, config.triad), (PART_COUPLING, config.scope)):
-        for row in rows:
-            for key in (row.slot_id, row.subagent_id):
-                if key:
-                    seats.setdefault(str(key), (part, row))
-    return seats
-
-
-def _mint_seat_id(name: str, taken: set) -> str:
-    stem = _SEAT_PREFIX + (re.sub(r"[^A-Za-z0-9_.-]+", "-", name).strip("-") or "seat")
-    stem = stem[:_SEAT_ID_MAX - 4]
-    seat, index = stem, 2
-    while seat in taken:
-        seat, index = f"{stem}-{index}", index + 1
-    taken.add(seat)
-    return seat
-
-
-def _apply_effort(order: str, triad: List[Any], scope: List[Any]) -> Tuple[List[Any], List[Any], Dict[str, Any]]:
-    """``reviewer_effort`` as this wave's ORDER (``plan_task``'s rule): it outranks
-    each row's own effort; a compound route keeps the effort it encodes."""
-    from ouroboros import reviewer_slot_config as slots
-
-    applied, not_applied, weaker = [], [], []
-
-    def ordered(row: Any, surface: str) -> Any:
-        new = slots.row_at_effort_order(row, order)
-        if new is None:
-            not_applied.append(row.slot_id)
-            return row
-        applied.append(row.slot_id)
-        if effort_rank(order) < effort_rank(slots.row_effort(row, surface)):
-            weaker.append(row.slot_id)
-        return new
-
-    if order:
-        triad = [ordered(row, "review") for row in triad]
-        scope = [ordered(row, "scope_review") for row in scope]
-    return triad, scope, {"order": order, "applied": applied, "not_applied": not_applied,
-                          "weaker_than_configured": weaker}
+def _effort_facts(order: str, seats: Sequence[Any], own: Dict[str, str]) -> Dict[str, Any]:
+    """``reviewer_effort`` as this wave's ORDER (``plan_task``'s rule): it outranks every
+    seat's own effort but a compound route's, which keeps the effort it encodes
+    (``declared_effort`` names where the order applied)."""
+    applied = [slot.slot_id for slot, _parts, _extra in seats if order and slot.declared_effort]
+    return {"order": order, "applied": applied,
+            "not_applied": [slot.slot_id for slot, _parts, _extra in seats if order and not slot.declared_effort],
+            "weaker_than_configured": [seat for seat in applied if effort_rank(order) < effort_rank(own.get(seat, ""))]}
 
 
 def compose_panel(request: ReviewChangeRequest, *, adds_only: bool) -> ComposedPanel:
-    """The wave's seats. ``adds_only`` (a body subject outside Cyber Pro): the
-    configured panel plus any named roster subagent. Otherwise the named seats ARE
-    the panel, every configured seat when none is named. A malformed configured
-    panel yields no seats and its error; the wave then reports the typed block."""
+    """The wave's seats over the review pool. A preflight seats the one named row.
+    ``adds_only`` (a body subject outside Cyber Pro): the pool plus any named row
+    outside it as an added seat. Otherwise the named seats ARE the panel, the whole
+    pool when none is named. A named reviewer is a pool seat or any enabled catalog
+    row (its id or handle). A malformed catalog yields no seats and its error; the
+    wave then reports the typed block."""
+    from ouroboros import review_ledger as ledger
     from ouroboros import reviewer_slot_config as slots
+    from ouroboros.configured_subagents import MAX_CONFIGURED_SUBAGENTS
 
+    order = request.reviewer_effort
     try:
-        config = slots.load_reviewer_slot_config()
+        configured = list(slots.review_pool_slots())
+        pool = list(slots.review_pool_slots(default_effort=order)) if order else configured
     except ValueError as exc:
-        return ComposedPanel((), (), (), False, {"composition": "full_pool", "composition_error": str(exc)})
-    by_name = _configured_seats(config)
-    configured = {row.slot_id for row in (*config.triad, *config.scope)}
-    taken = set(configured)
+        return ComposedPanel((), False, {"composition": "full_pool", "composition_error": str(exc)})
+    in_pool = {slot.slot_id: slot for slot in pool}
+    own = {slot.slot_id: slot.effort for slot in configured}
 
-    def seat(name: str) -> Tuple[str, Any]:
-        if name in by_name:
-            return by_name[name]
+    def seat(name: str) -> Any:
+        if name in in_pool:
+            return in_pool[name]
         try:
-            return PART_CHANGE, slots.roster_review_row(_mint_seat_id(name, taken), name)
+            row = slots.catalog_review_row(None, name)
         except ValueError as exc:
-            raise ReviewChangeArgumentError(
-                f"reviewer {name!r} is neither a configured review seat nor an enabled subagent ({exc})") from exc
+            raise ReviewChangeArgumentError(f"reviewer {name!r} is not an enabled catalog row ({exc})") from exc
+        if row.subagent_id in in_pool:
+            return in_pool[row.subagent_id]
+        own.setdefault(row.subagent_id, slots._delivery_slot(row, effort_surface="review", role_hint="").effort)
+        return slots._delivery_slot(row, effort_surface="review", role_hint="", default_effort=order)
 
-    triad, scope, additional = [], [], []
-    named = [seat(name) for name in request.reviewers]
-    if adds_only:
-        triad, scope = list(config.triad), list(config.scope)
-        named_configured = {row.slot_id for _part, row in named if row.slot_id in configured}
-        for _part, row in named:
-            if row.slot_id not in configured and row not in triad:
-                triad.append(row)
-                additional.append(row.slot_id)
-        facts: Dict[str, Any] = {"composition": "full_pool", "chosen_by": "owner",
-                                 "reviewers_subset_ignored": bool(named_configured) and named_configured != configured}
-    elif named:
-        for part, row in named:
-            if row not in triad and row not in scope:
-                (scope if part == PART_COUPLING else triad).append(row)
-        facts = {"composition": "composed", "chosen_by": "author"}
+    def placed(slot: Any, *, additional: bool = False, coupling_only: bool = False) -> Any:
+        return slots.PoolSeat(slot, tuple(ledger.seat_parts(slot, coupling_only=coupling_only)), additional)
+
+    named = list({slot.slot_id: slot for slot in map(seat, request.reviewers)}.values())
+    if request.surface == "preflight" or (named and not adds_only):
+        seats = [placed(slot) for slot in named]
+        facts: Dict[str, Any] = {"composition": "composed", "chosen_by": "author"}
+    elif adds_only:
+        seats = [placed(slot) for slot in pool] + [placed(slot, additional=True) for slot in named if slot.slot_id not in in_pool]
+        chosen = {slot.slot_id for slot in named if slot.slot_id in in_pool}
+        facts = {"composition": "full_pool", "chosen_by": "owner",
+                 "reviewers_subset_ignored": bool(chosen) and chosen != set(in_pool)}
     else:
-        triad, scope = list(config.triad), list(config.scope)
-        facts = {"composition": "full_pool", "chosen_by": "owner"}
-    narrowed = facts["composition"] == "composed" and not configured <= {row.slot_id for row in (*triad, *scope)}
+        seats, facts = [placed(slot) for slot in pool], {"composition": "full_pool", "chosen_by": "owner"}
+    narrowed = (request.surface == SURFACE and facts["composition"] == "composed"
+                and not set(in_pool) <= {slot.slot_id for slot, _parts, _extra in seats})
     ignored: List[str] = []
     for name in request.coupling_only:
-        _part, row = seat(name)
-        if any(row.slot_id == seated.slot_id for seated in (*triad, *scope)):
+        slot = seat(name)
+        if any(seated.slot_id == slot.slot_id for seated, _parts, _extra in seats):
             ignored.append(name)
             continue
-        scope.append(row)
-        additional.append(row.slot_id)
-    triad, scope, effort = _apply_effort(request.reviewer_effort, triad, scope)
-    if not triad:
+        seats.append(placed(slot, additional=True, coupling_only=True))
+    if not any(PART_CHANGE in parts for _slot, parts, extra in seats if not extra):
         raise ReviewChangeArgumentError("the panel has no seat for the change question; name at least one reviewer")
-    if len(triad) > slots.TRIAD_SLOT_LIMIT or len(scope) > slots.SCOPE_SLOT_LIMIT:
+    if len(seats) > MAX_CONFIGURED_SUBAGENTS:
         raise ReviewChangeArgumentError(
-            f"a wave seats at most {slots.TRIAD_SLOT_LIMIT} change and {slots.SCOPE_SLOT_LIMIT} coupling reviewers "
-            f"(this call asks {len(triad)} and {len(scope)})")
+            f"a wave seats at most {MAX_CONFIGURED_SUBAGENTS} reviewers (this call asks {len(seats)})")
     facts.update(reason=request.reason, reason_missing=narrowed and not request.reason.strip(),
                  reviewers_requested=list(request.reviewers), coupling_only=list(request.coupling_only),
-                 coupling_only_ignored=ignored, additional=list(additional), reviewer_effort=effort)
+                 coupling_only_ignored=ignored, additional=[slot.slot_id for slot, _parts, extra in seats if extra],
+                 reviewer_effort=_effort_facts(order, seats, own))
     facts.setdefault("reviewers_subset_ignored", False)
-    override = (tuple(triad), tuple(scope)) != (tuple(config.triad), tuple(config.scope))
-    return ComposedPanel(tuple(triad), tuple(scope), tuple(additional), override, facts)
+    return ComposedPanel(tuple(seats), tuple(seats) != tuple(placed(slot) for slot in configured), facts)
 
 
 @contextlib.contextmanager
@@ -358,9 +349,9 @@ def _panel_in_force(panel: ComposedPanel) -> Iterator[None]:
     if not panel.override:
         yield
         return
-    from ouroboros.reviewer_slot_config import composed_review_panel
+    from ouroboros.reviewer_slot_config import composed_review_pool
 
-    with composed_review_panel(panel.triad, panel.scope):
+    with composed_review_pool(panel.seats):
         yield
 
 
@@ -399,7 +390,8 @@ def _round_sha(request: ReviewChangeRequest, frozen: Any) -> str:
 def _wave_label(request: ReviewChangeRequest, root: pathlib.Path) -> str:
     span = {"base..head": f"{request.base}..{request.head}", "index": "staged index", "worktree": "worktree"}
     against = f" against {request.base}" if request.base and request.subject != "base..head" else ""
-    return f"review_change: {span[request.subject]}{against} of {root.name} (review only; nothing is committed)"
+    surface = "" if request.surface == SURFACE else f" {request.surface}"
+    return f"review_change{surface}: {span[request.subject]}{against} of {root.name} (review only; nothing is committed)"
 
 
 def _prepare_wave(ctx: ToolContext, request: ReviewChangeRequest, frozen: Any, panel: ComposedPanel, *,
@@ -440,6 +432,7 @@ _CTX_FIELDS = (
     "_triad_withheld_seat_records",
     "_review_paid_stamp", "_review_reserved_roster", "_review_reserved_operations",
     "_review_pending_invocation_checkpoint", "_last_review_slot_executions", "_pending_review_attempt",
+    "_commit_preflight",
 )
 
 
@@ -585,7 +578,8 @@ def wave_facts(ctx: ToolContext, wave: _Wave, *, outcome: Dict[str, Any], forens
     return {
         "task_id": task_id, "root_task_id": wave.root_task_id,
         "review_wave_id": resolve_review_wave(ReviewRequest(
-            surface=SURFACE, goal=wave.request.goal or wave.label, task_id=task_id, retry_key=wave.retry_key), {}, ""),
+            surface=wave.request.surface, goal=wave.request.goal or wave.label, task_id=task_id,
+            retry_key=wave.retry_key), {}, ""),
         "subject": wave.frozen, "repo_dir": str(wave.root), "commit_message": wave.label,
         "governance_root": str(wave.frozen.spec.governance_root or ""), "layer": wave.layer,
         "body_fact": str(wave.fact.body), "body_how": str(wave.fact.how),
@@ -655,26 +649,32 @@ def _finish_record(record: Any, wave: _Wave, outcome: Dict[str, Any], *, reuse_k
     record.panel = {**panel, **wave.panel.facts}
 
 
+def _write(drive: Any, record: Any, *, rejoin: bool = False) -> Tuple[Dict[str, Any], bool]:
+    """Write the one record (a rejoin revises the record its open operation left
+    pending); an unwritten record is answered from memory and says so."""
+    try:
+        revised = revise_record(drive, record.record_id, lambda _prior: record.to_dict()) if rejoin else None
+        return revised or write_record(drive, record), True
+    except (OSError, ValueError) as exc:
+        log.warning("review_change ledger record was not written", exc_info=True)
+        payload = record.to_dict() if hasattr(record, "to_dict") else dict(record)
+        verdict = dict(payload.get("verdict") or {})
+        verdict["degraded_reasons"] = [*(verdict.get("degraded_reasons") or []), f"review_ledger_unwritten: {exc}"]
+        payload["verdict"] = verdict
+        return payload, False
+
+
 def _settle(ctx: ToolContext, wave: _Wave, facts: Dict[str, Any], outcome: Dict[str, Any],
             retention: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Build, finish and write the one record; the result is read back from it."""
     from ouroboros.reviewer_slot_config import bind_reviewer_slot_record_id
 
     drive = ledger_root(ctx)
-    record = build_wave_record(facts, surface=SURFACE, record_id=wave.record_id, drive_root=drive)
+    record = build_wave_record(facts, surface=wave.request.surface, record_id=wave.record_id, drive_root=drive)
     _finish_record(record, wave, outcome, reuse_key=str(facts.get("reuse_key") or ""), retention=retention)
-    durable = True
-    try:
-        # A rejoin settles the SAME record the open operation left pending: the gate's
-        # rule (commit_gate: a later settlement raises ``revision``, never a second record).
-        payload = (revise_record(drive, wave.record_id, lambda _prior: record.to_dict())
-                   if wave.rejoin is not None else None) or write_record(drive, record)
-    except (OSError, ValueError) as exc:
-        log.warning("review_change ledger record was not written", exc_info=True)
-        payload, durable = (record.to_dict() if hasattr(record, "to_dict") else dict(record)), False
-        verdict = dict(payload.get("verdict") or {})
-        verdict["degraded_reasons"] = [*(verdict.get("degraded_reasons") or []), f"review_ledger_unwritten: {exc}"]
-        payload["verdict"] = verdict
+    # A rejoin settles the SAME record the open operation left pending: the gate's
+    # rule (commit_gate: a later settlement raises ``revision``, never a second record).
+    payload, durable = _write(drive, record, rejoin=wave.rejoin is not None)
     # The gate's binding: this wave's OWN execution rows (keyed by seat, stamped
     # with the wave's timestamps) take the record id; a later run of a seat by
     # another surface keeps its own.
@@ -734,21 +734,131 @@ def _refuse_exhausted(ctx: ToolContext, wave: _Wave, exhausted: Dict[str, Any]) 
     return result
 
 
+# --- The system review (``/review``) ----------------------------------------------
+
+def system_review_row(reviewer: str = "", effort: str = "") -> Any:
+    """``/review``'s one executor (decision 3A): an enabled catalog row named by id or
+    handle, pool member or not, else the direct Main row; ``effort`` is the call's
+    order (a compound route keeps its own)."""
+    from ouroboros import reviewer_slot_config as slots
+    from ouroboros.deep_self_review import main_review_row
+
+    try:
+        row = slots.catalog_review_row(None, reviewer) if reviewer else main_review_row()
+    except ValueError as exc:
+        raise ReviewChangeArgumentError(f"reviewer {reviewer!r} is not an enabled catalog row ({exc})") from exc
+    return (slots.row_at_effort_order(row, effort) or row) if effort else row
+
+
+def _as_report(record: Any, drive: Any, text: str) -> None:
+    """The system seat answers ``report``, outside the verdict questions: the verdict
+    is recomputed over no question (never PASS) and the report is retained as the
+    seat's answer."""
+    from ouroboros.review_ledger import retain_text_source
+
+    for seat in record.rows:
+        seat["parts"], seat["parts_answered"] = [REPORT_PART], [REPORT_PART] if seat["parts_answered"] else []
+        if text:
+            seat["source_refs"].append(retain_text_source(drive, record.task_id, record_id=record.record_id,
+                                                          seat_id=seat["seat_id"], role="response", part=REPORT_PART,
+                                                          text=text))
+    verdict = reduce_verdict(record.rows, quorum_required={}, gate_blocked=False, gate_reason="",
+                             dispatch_refusal=record.dispatch_refusal, pending=False)
+    verdict["per_row"] = {seat["seat_id"]: REPORT_PART if seat["parts_answered"] else row_verdict(seat)
+                          for seat in record.rows}
+    record.verdict = {**dict(record.verdict or {}), **verdict, "report": {"delivered": bool(text), "chars": len(text)}}
+    record.brief["parts"] = []
+
+
+def run_system_review(ctx: ToolContext, *, reviewer: str = "", effort: str = "", goal: str = "", llm: Any = None,
+                      emit_progress: Any = None, deadline_at: str = "") -> Dict[str, Any]:
+    """``/review`` = ``review_change(subject=system, surface=system)``: one seat (``system_review_row``)
+    reads the whole system against BIBLE.md through ``deep_self_review`` (retrieving delivery, the
+    memory whitelist inline) and writes a report, kept as that seat's answer in one ``surface=system``
+    record. The report becomes ``memory/deep_review.md`` unless the review failed. Returns the
+    record's result plus ``report`` and ``usage``; ``BudgetExceeded`` propagates."""
+    from dataclasses import replace
+
+    from ouroboros.deep_self_review import run_deep_self_review
+    from ouroboros.review_records import new_review_wave_id
+    from ouroboros.usage_accounting import UsageScope, current_usage_scope, usage_scope
+
+    row = system_review_row(reviewer, effort)
+    system, drive, record_id = _system_repo(ctx), ledger_root(ctx), new_record_id()
+    task_id, started = str(getattr(ctx, "task_id", "") or ""), utc_now_iso()
+    if llm is None:
+        from ouroboros.llm import LLMClient
+
+        llm = LLMClient()
+    scope = current_usage_scope() or UsageScope()
+    wave = str(getattr(scope, "review_wave_id", "") or "") or new_review_wave_id()
+    with usage_scope(replace(scope, review_wave_id=wave)):  # the record and its sends share one round
+        report, usage = run_deep_self_review(
+            system, pathlib.Path(ctx.drive_root), llm,
+            emit_progress or getattr(ctx, "emit_progress_fn", None) or (lambda _text: None),
+            task_id=task_id, deadline_at=deadline_at, slot=row)
+    usage = dict(usage or {})
+    failed = str(usage.get("execution_status") or "") == "infra_failed"
+    refused = failed and str(usage.get("reason_code") or "") == "deep_self_review_unavailable"
+    cost = usage.get("cost")
+    fact = body_fact(system, system_repo=system, data_dir=drive, treat_as_body=False)
+    goal = goal or "Deep self-review of the whole system against BIBLE.md."
+    tree, _error = "", ""
+    with contextlib.suppress(Exception):
+        from supervisor.update_candidate import worktree_snapshot_tree
+
+        tree, _error = worktree_snapshot_tree("HEAD", cwd=str(system))
+    head = _git_line(system, "rev-parse", "HEAD")
+    record = build_wave_record({
+        "task_id": task_id, "root_task_id": str(getattr(ctx, "root_task_id", "") or task_id),
+        "review_wave_id": wave,
+        "subject": {"root_kind": "system_repo", "root": str(system), "kind": "system", "base": head, "head": head,
+                    "tree_sha": str(tree or ""), "diff_sha": "", "checkout": ""},
+        "goal": goal, "layer": layer_for(fact), "body_fact": str(fact.body), "body_how": str(fact.how),
+        "enforcement": str(get_review_enforcement() or ""),
+        "structured": {"started_ts": started, "triad_rows": [{
+            "slot_id": row.slot_id, "subagent_id": row.subagent_id, "model": row.target_id, "route": row.kind,
+            "effort": row.effort, "retrieves": True, "session_target": row.session_target,
+            "session_profile": row.profile_id}]},
+        "triad_raw": [] if refused else [{
+            "slot_id": row.slot_id, "status": "error" if failed else "responded", "raw_text": "" if failed else report,
+            "model_id": str(usage.get("resolved_model") or ""), "cost_usd": cost if isinstance(cost, (int, float)) else None,
+            "capability_delta": list(usage.get("capability_delta") or [])}],
+        "dispatch_refusal": {"kind": "reviewer_unavailable", "message": report} if refused else None,
+        "degraded_reasons": [f"system_review_failed: {usage.get('reason_code')}"] if failed and not refused else [],
+    }, surface="system", record_id=record_id)
+    _as_report(record, drive, "" if failed else report)
+    record.panel = {**dict(record.panel or {}), "composition": "composed", "chosen_by": "author" if reviewer else "owner",
+                    "reason": "", "reason_missing": False, "reviewers_requested": [reviewer] if reviewer else [],
+                    "additional": [], "reviewer_effort": {"order": effort}}
+    payload, durable = _write(drive, record)
+    if not failed:
+        target = pathlib.Path(ctx.drive_root) / "memory" / "deep_review.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(report, encoding="utf-8")
+    result = review_result(payload, reused=False)
+    result.update(durable=durable, report=report, usage=usage, report_delivered=not failed)
+    return result
+
+
 def run_review_change(ctx: ToolContext, **args: Any) -> Dict[str, Any]:
     """The tool's runtime entry, shared with the operator script: one subject, at
     most one paid wave, one ledger record. A deterministic call error raises
     ``ReviewChangeArgumentError`` before any reviewer is paid."""
     binding = args.pop("_resolved_binding", None)
     request = parse_request(args)
+    if request.subject == "system":
+        return run_system_review(ctx, reviewer=request.reviewers[0] if request.reviewers else "",
+                                 effort=request.reviewer_effort, goal=request.goal)
     root_kind, root = resolve_review_root(ctx, binding, request)
     _verify_revisions(root, request)
     governance = _governance_repo(ctx)
     fact = body_fact(root, system_repo=governance, data_dir=ledger_root(ctx), treat_as_body=request.treat_as_body)
     layer = layer_for(fact)
-    panel = compose_panel(request, adds_only=layer == "body"
+    panel = compose_panel(request, adds_only=request.surface == SURFACE and layer == "body"
                           and not runtime_mode_at_least(get_runtime_mode(), "cyber_pro"))
     spec = ReviewSubjectSpec(root_kind=root_kind, root=str(root), kind=request.subject, base=request.base,
-                             head=request.head, governance_root=str(governance), surface=SURFACE,
+                             head=request.head, governance_root=str(governance), surface=request.surface,
                              body_fact=str(fact.body), body_how=str(fact.how), layer=layer)
     # The gate's own subject (the body's staged index against HEAD) is read on its live
     # root exactly as the gate reads it; every other subject is materialized in an
@@ -802,6 +912,7 @@ def _handle_review_change(
             treat_as_body=treat_as_body, _resolved_binding=_resolved_binding)
     except ReviewChangeArgumentError as exc:
         return argument_refusal(ctx, "TOOL_ARG_ERROR (review_change)", [str(exc)], effect="No reviewer was dispatched.")
+    result.pop("usage", None)
     text = json.dumps(result, ensure_ascii=False, indent=2, default=str)
     return f"{result['message']}\n\n{text}" if result.get("message") else text
 
@@ -822,10 +933,13 @@ _DESCRIPTION = (
     "(default HEAD); every subject but the body's own staged index is frozen and read in an isolated checkout of "
     "its tree. Rules follow the subject: the body is read against the body "
     "layer, anything else against the universal core checklist. Panel: for a body subject outside Cyber Pro the "
-    "configured panel stands and reviewers only add seats; otherwise reviewers IS the panel (omitted = every "
-    "configured seat) and reason records why. The same subject, rules and panel return the settled record free "
-    "(reused=true); enforcement is recorded and on another root never locks anything. Returns JSON {record_id, "
-    "aggregate, per_question, panel, rows, subject, checklist, tests, cost, reused, findings}."
+    "review pool stands and reviewers only add seats; otherwise reviewers IS the panel (omitted = the whole pool) "
+    "and reason records why. surface=preflight seats exactly the ONE enabled catalog row you name (pool member or "
+    "not): an optional early look, never the commit panel. subject=system with surface=system is /review: one row "
+    "(default: the Main model) reads the whole system against BIBLE.md and returns a report. The same subject, "
+    "surface, rules and panel return the settled record free (reused=true); enforcement is recorded and on another "
+    "root never locks anything. Returns JSON {record_id, aggregate, per_question, panel, rows, subject, checklist, "
+    "tests, cost, reused, findings} (+ report for subject=system)."
 )
 
 
@@ -843,14 +957,16 @@ def get_tools() -> List[ToolEntry]:
                         enum=list(ROOTS), default="active_workspace"),
         "workspace_root": _string("A registered folder to review instead (schedule_subagent's workspace_root policy)."),
         "subject": {"type": "string", "enum": list(SUBJECT_KINDS),
-                    "description": "base..head = commits between two revisions; index = staged; worktree = live."},
+                    "description": ("base..head = commits between two revisions; index = staged; worktree = live; "
+                                    "system = the whole installed system (surface=system only).")},
         "base": _string("Base revision (required for base..head; index/worktree default HEAD)."),
         "head": _string("Head revision (base..head only)."),
-        "surface": _string("The review surface.", enum=[SURFACE], default=SURFACE),
+        "surface": _string("change = the panel review; preflight = one named row's early look; system = /review.",
+                           enum=list(SURFACES), default=SURFACE),
         "goal": _string("What the change is meant to achieve."),
         "scope": _string("What the change deliberately covers."),
         "author_questions": _names("Your own questions to the reviewers, passed verbatim."),
-        "reviewers": _names("Configured seat or subagent ids (see the panel rule)."),
+        "reviewers": _names("Pool seats or enabled catalog rows, by id or handle (see the panel rule)."),
         "reason": _string("Why this panel; recorded with it."),
         "coupling_only": _names("Extra critics for the coupling question only; outside the quorum."),
         "reviewer_effort": {"type": "string", "enum": list(EFFORT_SCALE), "description": (

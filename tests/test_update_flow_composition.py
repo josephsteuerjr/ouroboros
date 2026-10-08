@@ -207,7 +207,6 @@ def test_legacy_pre_redesign_tx_boots_resumes_and_verifies(tmp_path, monkeypatch
 
 
 def test_one_managed_fixture_feeds_all_review_consumers_and_binds(tmp_path, monkeypatch):
-    import ouroboros.tools.claude_advisory_review as adv
     import ouroboros.tools.git as git_mod
     from ouroboros.tools.review_helpers import REPO_ROOT
     from ouroboros.tools.review_subject import (
@@ -231,16 +230,6 @@ def test_one_managed_fixture_feeds_all_review_consumers_and_binds(tmp_path, monk
 
     # Triad + scope api packets read the SHARED capture — byte-identical artifact.
     assert capture_review_diff(ctx, repo) == delta
-
-    # Advisory (worktree surface, HAPPY path — not the oversize skip): same
-    # delta content, scoped to delta ∪ conflict anchors, managed and not early.
-    diff_text, context_paths, early, managed = adv._advisory_review_diff(
-        pathlib.Path(repo), ctx, None
-    )
-    assert managed is True and early is None
-    assert "resolved by the agent" in diff_text
-    assert "released official change" not in diff_text
-    assert {"conflict.txt", "resolver_note.txt"} <= set(context_paths or [])
 
     # Both retrieving deliveries (a packet seat's session task, the two-part
     # brief) inline the same artifact.
@@ -380,7 +369,7 @@ def test_conflicting_restore_after_full_flow_is_disclosed_not_dropped(tmp_path, 
 
 def test_managed_flow_runs_the_hermetic_suite_once_per_head(tmp_path, monkeypatch):
     import ouroboros.tools.git as git_mod
-    from tests.test_advisory_preflight import _stub_preflight_lanes
+    from tests.test_git_review_preflight_gate import _stub_preflight_lanes
 
     repo, ctx, tx = tmrs._managed_resolution_repo(tmp_path, monkeypatch)
     drive = tmp_path / "data"
@@ -403,9 +392,9 @@ def test_managed_flow_runs_the_hermetic_suite_once_per_head(tmp_path, monkeypatc
     # B11 first half: no evidence covers the candidate tree yet -> the managed
     # mandate forces the pre-commit run even under skip_tests + doc-only.
     assert git_mod._managed_candidate_needs_proof(ctx) is True
-    outcome = git_mod._advisory_and_tests_gate(
+    outcome = git_mod._preflight_and_tests_gate(
         ctx, "land the managed resolution", 0.0,
-        classification_paths=["docs/x.md"], advisory_paths=None,
+        classification_paths=["docs/x.md"],
         skip_advisory_pre_review=True, skip_tests=True,
     )
     assert outcome is None
@@ -451,7 +440,7 @@ def test_managed_phase_writes_merge_onto_fresh_tx_not_stale_snapshot(
     that durable telemetry, remains the reuse authority."""
     from ouroboros.commit_admission import run_tests_preflight_with_proof
     from ouroboros.tools.review_helpers import _run_review_preflight_tests
-    from tests.test_advisory_preflight import _stub_preflight_lanes
+    from tests.test_git_review_preflight_gate import _stub_preflight_lanes
 
     repo, head, plan, tx = tua._materialized_conflict_tx(tmp_path, monkeypatch)
     meta = tua._authority_metadata(tx)
@@ -928,17 +917,16 @@ def test_postcommit_site_skips_phase_write_loudly_on_a_corrupt_marker(tmp_path, 
     assert "phase" in skipped[0]["patch_keys"]
 
 
-def test_ctx_proof_survives_the_advisory_to_commit_boundary(tmp_path, monkeypatch):
-    """F2(c): the proof pinned by the ADVISORY recording site is consulted by
+def test_ctx_proof_survives_the_preflight_to_commit_boundary(tmp_path, monkeypatch):
+    """F2(c): the proof pinned by the commit gate's test preflight is consulted by
     the COMMIT-side gates through the same task ctx (one ctx spans every tool
-    call of a task); both recording sites are bound to the shared helper."""
+    call of a task); the recording site is bound to the shared helper."""
     import inspect
 
-    import ouroboros.tools.claude_advisory_review as adv_mod
     import ouroboros.tools.git as git_mod
     from ouroboros.commit_admission import run_tests_preflight_with_proof
     from ouroboros.tools.review_helpers import _run_review_preflight_tests
-    from tests.test_advisory_preflight import _stub_preflight_lanes
+    from tests.test_git_review_preflight_gate import _stub_preflight_lanes
 
     repo, head, plan, tx = tua._materialized_conflict_tx(tmp_path, monkeypatch)
     meta = tua._authority_metadata(tx)
@@ -946,18 +934,14 @@ def test_ctx_proof_survives_the_advisory_to_commit_boundary(tmp_path, monkeypatc
     ctx = SimpleNamespace(task_id="resolver", task_metadata=meta, repo_dir=str(repo),
                           emit_progress_fn=lambda *_a, **_k: None)
 
-    # The advisory's test consumer lets the runner mint the actual proof.
+    # The gate's test consumer lets the runner mint the actual proof.
     assert run_tests_preflight_with_proof(ctx, runner=_run_review_preflight_tests) is None
     proof = ctx._preflight_test_proof
     assert proof and len(lanes) == 2
     tree = proof.tree
-    # Both gates run their pytest preflight through the commit-admission SSOT,
+    # The gate runs its pytest preflight through the commit-admission SSOT,
     # whose helper owns the green-run -> proof binding (Q3=A extraction).
-    for site_src in (
-        inspect.getsource(adv_mod._advisory_pre_sdk_gate),
-        inspect.getsource(git_mod._advisory_and_tests_gate),
-    ):
-        assert "run_tests_preflight_with_proof" in site_src
+    assert "run_tests_preflight_with_proof" in inspect.getsource(git_mod._preflight_and_tests_gate)
     assert "record_managed_tests_proof(ctx)" in inspect.getsource(
         run_tests_preflight_with_proof)
 

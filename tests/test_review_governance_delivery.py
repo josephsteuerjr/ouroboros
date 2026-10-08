@@ -3,8 +3,8 @@
 The sections are read from the shipped ``docs/CHECKLISTS.md`` through the same
 loader the surfaces use, so these tests pin DELIVERY — which actual builder
 carries which canonical section, where in its prompt and how often — not the
-rules' wording. Repository-change reviewers (triad packet and session, scope
-native and delegated, advisory, deep) carry the shared ownership section; plan
+rules' wording. Repository-change reviewers (triad packet and session, the
+preflight's one seat included; scope native and delegated; deep) carry the shared ownership section; plan
 and skill review do not; the plan prompt keeps its code copy of the blocking
 rule only as the named fallback for a missing checklist section. The reviewed
 tree is a proposal whose own CHECKLISTS copy rewrites those sections, as a
@@ -121,25 +121,6 @@ def test_two_part_brief_carries_the_shared_section_once_in_part_one(candidate, m
     assert manifest["parts"] == ["change", "coupling"]
     row = next(row for row in manifest["governance_manifest"] if row["path"] == SHARED_ROW)
     assert row["disposition"] == "inline" and row["chars"] == len(SHARED)
-
-
-@pytest.mark.serial
-def test_advisory_repository_brief_carries_it_and_skill_brief_does_not(candidate):
-    import ouroboros.tools.claude_advisory_review as advisory
-
-    repo_brief = advisory._build_advisory_prompt(
-        candidate, "candidate", goal="g", scope="s", resolved_paths=[TOUCHED],
-        prompt_context={"diff": "DIFF", "changed_files": f"M {TOUCHED}"})
-    assert repo_brief.count(SHARED) == 1 and PROPOSAL_RULE not in repo_brief
-    assert repo_brief.count(CRITICAL_FINDING_CALIBRATION) == 1
-    assert (repo_brief.index("## CHECKLISTS.md (What to review)") < repo_brief.index(SHARED)
-            < repo_brief.index("## Staged diff"))
-
-    skill_brief = advisory._build_advisory_prompt(
-        REPO, "skill advisory", scope="PAYLOAD", resolved_paths=[],
-        prompt_context={"diff": "(not included)", "changed_files": "(not included)",
-                        "review_surface": "skill"})
-    assert SHARED not in skill_brief
 
 
 def test_deep_review_carries_it_without_a_checklist_of_its_own(tmp_path):

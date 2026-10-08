@@ -114,6 +114,9 @@ def test_the_pool_is_the_marked_rows_named_by_their_catalog_handle(tmp_path, mon
     # An api seat's hint is the wave's own estimate or an honest unknown — never a price table.
     for row in (first, second):
         assert row["cost_hint"] == COST_UNKNOWN_HINT or row["cost_hint"].startswith("≈$")
+    # The preflight and /review seat whichever enabled catalog row is named per call
+    # (decision 3A): the block names that rule, not a second panel.
+    assert "catalog row" in block["surfaces"]["preflight"] and "Main" in block["surfaces"]["system_review"]
     assert block["omitted"] == {"rows": 0} and "recent_records" not in block
     assert block["full_source"] == {"pool": "GET /api/review-pool", "records": "## Review records"}
     assert _records(tmp_path) == {"recent_records": [], "omitted": {"records": 0}, "full_source": "state/review_ledger/"}

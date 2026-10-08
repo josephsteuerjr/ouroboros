@@ -157,10 +157,6 @@ EVENT_DISPOSITIONS: Dict[str, EventDisposition] = {
         "supervisor.events_chat_delivery", "ouroboros/agent.py"),
 
     # --- telemetry_only: recorded in the ledger, no runtime action follows -----
-    "advisory_contract_warning": _telemetry(
-        "ouroboros/tools/preflight_review_run.py"),
-    "advisory_suspect_result": _telemetry(
-        "ouroboros/tools/preflight_review_run.py"),
     "plan_task_deadline_skip": _telemetry(
         "ouroboros/tools/plan_review_runtime.py",
         note="the fact that a deadline left no useful planning window"),

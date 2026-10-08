@@ -447,12 +447,14 @@ def test_run_script_timeout_360():
     assert rs[0].timeout_sec == 360
 
 
-def test_advisory_pre_review_timeout_covers_tests_and_review():
-    """Both names share the finite envelope around tests and the critic."""
-    from ouroboros.tools.claude_advisory_review import get_tools, _preflight_tool_timeout_sec
-    entries = {entry.name: entry for entry in get_tools()}
+def test_preflight_review_timeout_is_the_review_change_envelope():
+    """Both names are the same review_change action, so they share its finite envelope."""
+    from ouroboros.tools import preflight_review, review_change
+    [envelope] = [entry.timeout_sec for entry in review_change.get_tools() if entry.name == "review_change"]
+    entries = {entry.name: entry for entry in preflight_review.get_tools()}
+    assert envelope > 0
     for name in ("preflight_review", "advisory_review"):
-        assert entries[name].timeout_sec == _preflight_tool_timeout_sec()
+        assert entries[name].timeout_sec == envelope
 
 
 def test_repository_index_collapses_junk_dirs():

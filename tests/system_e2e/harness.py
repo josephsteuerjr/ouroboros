@@ -98,7 +98,7 @@ SCENARIOS = {
     # integration: the parallel wave-3b lane claimed S11-S13 first.
     "S14": ("plan review: scripted REVISE->ACCEPT cycle, honest durable chronicle, cycle-cap refusal", LANE_MOCK),
     "S15": ("commit triad+scope, ADVISORY class: red verdicts recorded + waved through with durable override, commit lands", LANE_MOCK),
-    "S16": ("commit triad+scope, BLOCKING class: red blocks (HEAD unmoved), identical resubmit refused free, green lands; stale advisory refresh and post-verdict revalidation", LANE_MOCK),
+    "S16": ("commit triad+scope, BLOCKING class: red blocks (HEAD unmoved), identical resubmit refused free, green lands; post-verdict revalidation", LANE_MOCK),
     "S17": ("acceptance loop (required+blocking): reject -> rework -> accept; paid-identity / free-replay invariants", LANE_MOCK),
     # Ф4 wave 4 (plan §8 remainder: update variations, chat-lineage cancel,
     # absorb kill-recovery, delegated interactive answer).
@@ -1288,6 +1288,11 @@ class ArtifactOracle:
 
     def advisory_review(self) -> dict:
         return self._json("state/advisory_review.json")
+
+    def review_ledger_records(self) -> list:
+        """Every review ledger record under this root (state/review_ledger/*.json)."""
+        ledger = self.data_root / "state" / "review_ledger"
+        return [self._json(f"state/review_ledger/{path.name}") for path in sorted(ledger.glob("*.json"))]
 
     def cancel_intents(self) -> dict:
         blob = self._json("state/cancel_intents.json")

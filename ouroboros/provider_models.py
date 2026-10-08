@@ -192,8 +192,7 @@ MODEL_SETTING_KEYS = ACTIVE_MODEL_SETTING_KEYS
 # Settings keys whose value is a Claude Agent SDK / Claude Code model NAME (``opus[1m]``),
 # NOT a routed model identity: they carry no provider prefix, so provider_for_model would
 # mis-route them to OpenRouter.  Their transport is the Anthropic SDK subprocess, which
-# authenticates with ANTHROPIC_API_KEY (the Claude runtime gateways:
-# tools/claude_advisory_review.py), so a non-empty value DECLARES the anthropic provider.
+# authenticates with ANTHROPIC_API_KEY, so a non-empty value DECLARES the anthropic provider.
 
 
 def provider_for_model(model: str) -> str:

@@ -87,9 +87,7 @@ from ouroboros.skill_review_prompt import (  # noqa: F401 — split facade re-ex
     _SKILL_REVIEW_ITEMS,
     _build_review_prompt,
     _build_review_prompt_for_attempt,
-    _emit_skill_advisory_warning,
     _load_governance_artifact,
-    _run_skill_advisory_pre_review,
 )
 from ouroboros.skill_review_output import (  # noqa: F401 — split facade re-exports
     _aggregate_status,

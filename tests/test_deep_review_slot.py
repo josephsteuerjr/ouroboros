@@ -578,7 +578,7 @@ def test_availability_follows_the_row_not_the_model_key(env, monkeypatch):
     reader — agent, tool and runner all call it): an api row needs its model's
     credentials (a bare route and a subagent reference read the SAME rule), a
     session row needs a healthy delegated route (the substrate's own reader),
-    and a malformed setting is the typed reason — never a fallback onto the key."""
+    and with no row named it is the direct Main row's (decision 3A)."""
     for key in ("OPENROUTER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"):
         monkeypatch.delenv(key, raising=False)
     reason, identity = deep_review_route(_row())
@@ -611,10 +611,11 @@ def test_availability_follows_the_row_not_the_model_key(env, monkeypatch):
     monkeypatch.setattr(daemon, "ensure_owned_gateway", lambda **_k: (_ for _ in ()).throw(RuntimeError("daemon down")))
     assert deep_review_route(_session_row())[0].startswith("agent_service_unavailable: RuntimeError")
     assert deep_review_route(_row("agent_session", "=bad", session_target="=bad")) == ("session_target_unparsable", None)
-    # Malformed structured setting: the parser's typed text is the reason.
+    # No row named: the direct Main row — the reviewer-slot setting, malformed or
+    # not, no longer decides `/review`'s executor.
     env.setenv(REVIEWER_SLOTS_ENV, _payload({"route": {"kind": "api_chat", "target_id": "m"}, "bogus": 1}))
-    reason, identity = deep_review_route()
-    assert "deep_review has unknown keys" in reason and identity is None
+    env.setenv("OUROBOROS_MODEL", "openai/main-model")
+    assert deep_review_route() == ("", "openai/main-model")
 
 
 def test_unavailable_row_never_runs_and_returns_typed_usage(review_repo, review_drive, monkeypatch, env):
@@ -626,15 +627,20 @@ def test_unavailable_row_never_runs_and_returns_typed_usage(review_repo, review_
     assert usage == {"execution_status": "infra_failed", "reason_code": "deep_self_review_unavailable"}
     assert not llm.chat.called
     env.setenv(REVIEWER_SLOTS_ENV, _payload({"route": {"kind": "api_chat", "target_id": "m"}, "bogus": 1}))
+    env.setenv("OUROBOROS_MODEL", "openai/main-model")
     text, usage = run_deep_self_review(review_repo, review_drive, llm, lambda _m: None)
-    assert "deep_review has unknown keys" in text and usage["reason_code"] == "deep_self_review_unavailable"
+    assert text.startswith("❌ Deep self-review unavailable: no OpenRouter or direct OpenAI credentials for openai/main-model")
+    assert usage["reason_code"] == "deep_self_review_unavailable" and not llm.chat.called
 
 
 def test_agent_keeps_the_previous_report_when_the_review_fails(tmp_path, monkeypatch):
     """`memory/deep_review.md` is overwritten ONLY by a delivered report: a
-    typed failure goes to the task result and a typed `task_error` event."""
+    typed failure goes to the task result and a typed `task_error` event. The
+    worker runs `review_change(subject=system, surface=system)` and links its
+    record in the task's answer."""
     import ouroboros.agent as agent_module
     from ouroboros.agent import Env, OuroborosAgent
+    from ouroboros.review_ledger import load_record
 
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -644,10 +650,11 @@ def test_agent_keeps_the_previous_report_when_the_review_fails(tmp_path, monkeyp
     (drive / "memory" / "deep_review.md").write_text("PREVIOUS REPORT", encoding="utf-8")
     monkeypatch.setattr(OuroborosAgent, "_log_worker_boot_once", lambda self: None)
     monkeypatch.setattr(agent_module, "build_llm_messages", lambda **_k: ([], {}))
-    monkeypatch.setattr(agent_module, "emit_task_results", lambda *_a, **_k: None)
-    outcome = {"value": ("❌ Deep self-review unavailable: no provider credentials for openai/x. Configure …",
+    answers = []
+    monkeypatch.setattr(agent_module, "emit_task_results", lambda *a, **_k: answers.append(a[5]))
+    outcome = {"value": ("❌ Deep self-review unavailable: no provider credentials for openai/x. Run /review …",
                          {"execution_status": "infra_failed", "reason_code": "deep_self_review_unavailable"})}
-    monkeypatch.setattr(deep_self_review, "run_deep_self_review", lambda **_k: outcome["value"])
+    monkeypatch.setattr(deep_self_review, "run_deep_self_review", lambda *_a, **_k: outcome["value"])
     agent = OuroborosAgent(Env(repo_dir=repo, drive_root=drive))
     task = {"id": "dsr-agent", "type": "deep_self_review", "chat_id": 1, "text": "owner:/review",
             "metadata": {"deadline_at": "2099-01-01T00:00:00+00:00"}}
@@ -657,10 +664,11 @@ def test_agent_keeps_the_previous_report_when_the_review_fails(tmp_path, monkeyp
     errors = [r for r in rows if r.get("type") == "task_error" and r.get("task_id") == "dsr-agent"]
     assert errors and errors[0]["reason_code"] == "deep_self_review_unavailable"
     assert any(e.get("type") == "llm_usage" and e.get("category") == "deep_self_review" for e in events)
-    # A delivered report overwrites it, and the deadline reaches the review.
+    # A delivered report overwrites it, the deadline reaches the review, and the
+    # answer links the surface=system record that keeps the report.
     seen = {}
 
-    def _ok(**kwargs):
+    def _ok(*_args, **kwargs):
         seen.update(kwargs)
         return "<!-- deep-review provenance: delivery=native_tool_rounds -->\n_x_\n\nNEW REPORT", {"resolved_model": "openai/x", "cost": 0.0}
 
@@ -668,8 +676,13 @@ def test_agent_keeps_the_previous_report_when_the_review_fails(tmp_path, monkeyp
     events = agent.handle_task(task)
     assert (drive / "memory" / "deep_review.md").read_text(encoding="utf-8").endswith("NEW REPORT")
     assert seen["task_id"] == "dsr-agent" and seen["deadline_at"] == "2099-01-01T00:00:00+00:00"
+    assert seen["slot"].slot_id == "main"
     usage_events = [e for e in events if e.get("type") == "llm_usage"]
     assert usage_events and usage_events[0]["model"] == "openai/x"
+    body, link = answers[-1].rsplit("\n\nReview record: ", 1)
+    assert body.endswith("NEW REPORT") and link.endswith(" (surface=system)")
+    record = load_record(drive, link.split(" ", 1)[0])
+    assert record["surface"] == "system" and [seat["seat_id"] for seat in record["rows"]] == ["main"]
 
 
 # ---------------------------------------------------------------------------

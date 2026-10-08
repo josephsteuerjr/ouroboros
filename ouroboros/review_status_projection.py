@@ -342,14 +342,15 @@ def _review_status_message(projection: Dict[str, Any]) -> str:
     current = f"Current advisory: {projection['effective_status']}"
     if ca and ca.status in ("blocked", "failed"):
         reason_map = {
-            "no_advisory": "No fresh advisory review found. Run preflight_review first.",
-            "critical_findings": "Reviewers found critical issues. Repair or rebut (review_rebuttal) the findings listed, then re-run advisory.",
+            "no_advisory": "Held by the retired advisory gate (history); commits no longer wait for a preflight.",
+            "critical_findings": "Reviewers found critical issues. Repair or rebut (review_rebuttal) the findings listed, then re-run commit_reviewed.",
             "review_quorum": "Not enough review models responded. Retry — usually transient.",
             "parse_failure": "Review models could not produce parseable output. Retry the commit.",
             "infra_failure": "Infrastructure failure. Check block_details.",
             "scope_blocked": "Scope reviewer blocked the commit. Address scope review findings.",
-            "preflight": "Preflight check failed. Stage all related files.",
-            "revalidation_failed": "The staged diff changed after review. Re-run advisory and review.",
+            "preflight": "A deterministic preflight check failed (release metadata, syntax or staged companions). See block_details.",
+            "tests_preflight_blocked": "The tests preflight failed before review. Fix the failures in block_details.",
+            "revalidation_failed": "The staged diff changed after review. Re-run the review.",
             "fingerprint_unavailable": "The staged diff could not be fingerprinted. Fix git diff and retry.",
             "overlap_guard": "Another reviewed attempt is still active. Wait or expire it before retrying.",
             "attempt_cap_reached": "The same staged diff was review-blocked repeatedly. Change the diff or rebut via review_rebuttal.",

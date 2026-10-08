@@ -1,6 +1,6 @@
 """Reviewers see the owner's words that caused the work.
 
-The triad, scope and advisory reviewers read the change against the author's intent;
+The triad and scope reviewers (a preflight's one seat included) read the change against the author's intent;
 ``build_goal_section`` now adds, right after that intent, the host-attested words of
 the owner the work answers (``owner_words.owner_words_text``: a root's own corpus, a
 child's inherited words, an absence line with the host marker when there are none).
@@ -197,47 +197,6 @@ def test_the_coupling_part_keeps_its_stable_text():
     part2 = build_coupling_part(coupling_checklist="checklist", required_sources_section="sources",
                                 repository_index="index", history_block="", layer="body")
     assert OWNER not in part2 and "GOAL_SENTINEL" not in part2 and part2.startswith("## Part 2")
-
-
-# --- advisory -----------------------------------------------------------------------------------------------
-
-@pytest.mark.parametrize("surface", ["repo", "skill"])
-def test_both_advisory_goal_sections_carry_the_words(tmp_path, surface):
-    from ouroboros.tools import claude_advisory_review as advisory
-
-    repo = tmp_path / "repo"
-    repo.mkdir()
-
-    def prompt(**extra) -> str:
-        return advisory._build_advisory_prompt(
-            repo, "fix: login timeout", goal="GOAL_SENTINEL", scope="PAYLOAD", resolved_paths=[],
-            prompt_context={"diff": "(not included)", "changed_files": "(not included)",
-                            "review_surface": surface, **extra})
-
-    words = _section("root")
-    worded, bare = prompt(owner_words=words), prompt()
-    assert words in worded and worded.index("GOAL_SENTINEL") < worded.index(words)
-    assert OWNER not in bare and worded.replace(f"\n\n\n{words}", "", 1) == bare
-
-
-def test_the_advisory_run_hands_the_runs_words_to_the_prompt(tmp_path, monkeypatch):
-    from tests.test_advisory_observability import _fake_native_result, _get_advisory_module
-
-    advisory = _get_advisory_module()
-    seen = []
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
-    monkeypatch.setattr(advisory, "_run_advisory_native", lambda prompt, repo_dir, ctx_, slot, model, **_: (
-        _fake_native_result(success=True, result_text="(no output)"), model))
-    monkeypatch.setattr(advisory, "_get_staged_diff", lambda *a, **kw: "diff")
-    monkeypatch.setattr(advisory, "_get_changed_file_list", lambda *a, **kw: "M file.py")
-    monkeypatch.setattr(advisory, "_build_advisory_prompt",
-                        lambda *a, **kw: seen.append(kw["prompt_context"]["owner_words"]) or "prompt")
-    for kind in ("root", "conscious"):
-        ctx = SimpleNamespace(repo_dir=tmp_path, drive_root=tmp_path, task_id="root", pending_events=[],
-                              emit_progress_fn=lambda *_: None, **_attrs(kind))
-        advisory._run_claude_advisory(tmp_path, "msg", ctx)
-    assert seen == [_section("root"), ABSENT_CONSCIOUS]
-    assert OWNER in seen[0] and "not the owner's" not in seen[0]
 
 
 def test_reviewers_get_no_memory_or_story(tmp_path, monkeypatch):

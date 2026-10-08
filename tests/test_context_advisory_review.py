@@ -162,7 +162,9 @@ class TestAdvisoryReviewStatusInContext:
         dynamic_text = messages[0]["content"][-1]["text"]
 
         assert "## Review Continuity" in dynamic_text
-        assert "repo_commit_ready=no" in dynamic_text
+        # The debt is still narrated as the retry anchor; since decision 3A it no
+        # longer holds a commit.
+        assert "repo_commit_ready=yes" in dynamic_text
         assert "retry_anchor=commit_readiness_debt" in dynamic_text
         assert "Commit-readiness debt" in dynamic_text
         assert "bypass_reason=manual audit override" in dynamic_text

@@ -103,7 +103,7 @@ def test_review_change_on_the_system_index_is_the_commit_gates_brief(staged_body
                             for row in record["rows"]]
     assert seats(operation_record) == seats(gate_record)
     shared_panel = ("seats", "distinct_models", "observed_unknown_seats", "distinct_engines", "single_model_panel",
-                    "composition", "chosen_by", "assigned", "additional")
+                    "chosen_by", "assigned", "additional")
     assert {key: operation_record["panel"][key] for key in shared_panel} == {
         key: gate_record["panel"][key] for key in shared_panel}
     assert operation_record["panel"]["composition"] == "full_pool"

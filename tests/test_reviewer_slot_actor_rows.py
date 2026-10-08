@@ -229,23 +229,6 @@ def test_legacy_sdk_advisory_target_migration_branches(roster_env):
     assert unmapped.disabled_reason == "legacy_claude_sdk_target_unmapped"
 
 
-def test_migration_disable_reason_reaches_the_gate_diagnostic(roster_env):
-    """advisory_gate_unavailability_reason distinguishes the migration
-    force-disable from a standing owner disable (F2: the typed reason must
-    not dead-end in a parse-time log line)."""
-    import json as _json
-
-    roster_env.setenv(REVIEWER_SLOTS_ENV, _json.dumps({
-        "triad": [{"slot_id": "t1", "route": {"kind": "api_chat", "target_id": "openai/m"}}],
-        "scope": [{"slot_id": "s1", "route": {"kind": "api_chat", "target_id": "openai/m"}}],
-        "advisory": {"enabled": True, "route": {"kind": "api", "target_id": "opus"}},
-    }))
-    from ouroboros.tools.claude_advisory_review import advisory_gate_unavailability_reason
-    assert advisory_gate_unavailability_reason() == (
-        "advisory_slot_disabled:legacy_claude_sdk_target_unmapped"
-    )
-
-
 @pytest.fixture()
 def settings_save(monkeypatch):
     """A hermetic `POST /api/settings`: the returned `(post, saved)` pair drives

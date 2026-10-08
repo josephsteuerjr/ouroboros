@@ -86,7 +86,6 @@ _RETIRED_KEY_MENTION_ALLOWLIST = {
     # -- retirement prose (names the key to say it is retired/ignored).
     ("ouroboros/review_execution.py", "OUROBOROS_REVIEW_ROUTES"): ("retirement prose", 1),
     ("ouroboros/review_execution.py", "OUROBOROS_SCOPE_REVIEW_ROUTES"): ("retirement prose", 1),
-    ("ouroboros/tools/preflight_review_run.py", "OUROBOROS_ADVISORY_REVIEW_ROUTE"): ("retirement prose", 1),
     ("web/modules/settings.js", "OUROBOROS_REVIEW_MODELS"): ("retirement prose (6.1 authoring note)", 1),
     ("web/modules/settings.js", "OUROBOROS_SCOPE_REVIEW_MODELS"): ("retirement prose (6.1 authoring note)", 1),
 }

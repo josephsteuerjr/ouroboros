@@ -291,8 +291,8 @@ def test_the_schema_is_the_planned_call() -> None:
         "reviewers", "reason", "coupling_only", "reviewer_effort", "review_rebuttal", "treat_as_body"]
     props = params["properties"]
     assert props["root"]["enum"] == ["active_workspace", "system_repo"] and props["root"]["default"] == "active_workspace"
-    assert props["subject"]["enum"] == ["index", "worktree", "base..head"]
-    assert props["surface"]["enum"] == ["change"]
+    assert props["subject"]["enum"] == ["index", "worktree", "base..head", "system"]
+    assert props["surface"]["enum"] == ["change", "preflight", "system"] and props["surface"]["default"] == "change"
     assert props["reviewer_effort"]["enum"] == list(EFFORT_SCALE)
     assert (props["treat_as_body"]["type"], props["treat_as_body"]["default"]) == ("boolean", False)
     # The schema states the predicate's rule (review_body_fact.body_fact): the flag raises
@@ -627,10 +627,16 @@ def test_author_questions_reach_the_wave_and_the_record_verbatim(h: Harness) -> 
     ({"subject": "index", "base": "--output=/tmp/x"}, "must name a revision"),
     ({"subject": "index", "root": "/somewhere/else"}, "root must be one of"),
     ({"subject": "index", "root": "system_repo", "workspace_root": "project"}, "leave workspace_root empty"),
-    ({"subject": "index", "surface": "preflight"}, "surface must be 'change'"),
+    ({"subject": "index", "surface": "advisory"}, "surface must be one of change, preflight, system"),
+    ({"subject": "index", "surface": "preflight"}, "surface=preflight seats exactly one reviewer"),
+    ({"subject": "index", "surface": "preflight", "reviewers": ["a", "b"]}, "surface=preflight seats exactly one reviewer"),
+    ({"subject": "index", "surface": "system"}, "subject=system goes with surface=system"),
+    ({"subject": "system"}, "subject=system goes with surface=system"),
+    ({"subject": "system", "surface": "system", "base": "HEAD"}, "workspace_root, base and head do not apply"),
+    ({"subject": "system", "surface": "system", "coupling_only": ["x"]}, "coupling_only does not apply"),
     ({"subject": "index", "reviewer_effort": "turbo"}, "reviewer_effort must be one of"),
     ({"subject": "index", "reviewers": "slot_1"}, "reviewers must be a list of strings"),
-    ({"subject": "index", "reviewers": ["nobody-at-all"]}, "neither a configured review seat nor an enabled subagent"),
+    ({"subject": "index", "reviewers": ["nobody-at-all"]}, "is not an enabled catalog row"),
     ({"subject": "base..head", "base": "0" * 40, "head": "HEAD"}, "is not a commit"),
     ({"subject": "index", "treat_as_body": "yes"}, "treat_as_body must be a boolean"),
 ])

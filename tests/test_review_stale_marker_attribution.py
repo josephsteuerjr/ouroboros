@@ -157,7 +157,7 @@ def test_missing_identity_on_either_side_is_unknown_never_a_guess(tmp_path):
 
 
 def test_review_status_attributes_relative_to_the_caller_not_the_task_filter(tmp_path):
-    from ouroboros.tools.claude_advisory_review import _handle_review_status
+    from ouroboros.tools.preflight_review import _handle_review_status
 
     drive, shared = _drive(tmp_path), _checkout(tmp_path, "shared")
     _fresh(drive, shared)
@@ -173,20 +173,6 @@ def test_review_status_attributes_relative_to_the_caller_not_the_task_filter(tmp
     assert caller_b["repo_commit_ready"] == caller_a["repo_commit_ready"]
 
 
-def test_the_commit_gate_names_whose_edit_invalidated_the_advisory(tmp_path, monkeypatch):
-    from ouroboros.tools.commit_gate import _check_advisory_freshness
-
-    monkeypatch.setenv("OUROBOROS_REVIEW_ENFORCEMENT", "blocking")
-    drive, shared = _drive(tmp_path), _checkout(tmp_path, "shared")
-    _fresh(drive, shared)
-    _edit(drive, shared, "task-a")
-
-    result = _check_advisory_freshness(_ctx(drive, shared, "task-b"), "commit")
-
-    assert result and "ADVISORY_PRE_REVIEW_REQUIRED" in result
-    assert "by another task (task-a); the shared checkout stays stale for every task on it" in result
-
-
 def test_text_surfaces_without_a_reader_identity_state_only_the_recorded_writer(tmp_path):
     from ouroboros.agent_task_pipeline import build_review_context
 
@@ -199,16 +185,6 @@ def test_text_surfaces_without_a_reader_identity_state_only_the_recorded_writer(
     assert "invalidated_by=task task-a" in context
     assert "Invalidated by: task task-a" in context
     assert "this task" not in context and "another task" not in context
-
-
-def test_a_failed_bypass_preflight_is_attributed_to_the_reviewing_task(tmp_path):
-    from ouroboros.tools.git_review_cycle import _mark_failed_bypass_advisory_stale
-
-    drive, shared = _drive(tmp_path), _checkout(tmp_path, "shared")
-    _mark_failed_bypass_advisory_stale(_ctx(drive, shared, "task-a"), "commit", None)
-
-    state = load_state(drive)
-    assert (state.last_stale_reason, state.last_stale_task_id) == ("tests_preflight_blocked", "task-a")
 
 
 def test_the_writer_round_trips_names_the_invalidation_and_clears_with_the_marker(tmp_path):
@@ -281,7 +257,6 @@ def test_registered_writer_persists_identity_without_changing_shared_freshness(t
 
     import ouroboros.safety as safety
     from ouroboros.review_evidence import format_review_evidence_for_prompt
-    from ouroboros.tools.commit_gate import _check_advisory_freshness
     from ouroboros.tools.registry import ToolRegistry
 
     monkeypatch.setenv("OUROBOROS_REVIEW_ENFORCEMENT", "blocking")
@@ -298,8 +273,6 @@ def test_registered_writer_persists_identity_without_changing_shared_freshness(t
     separate = tmp_path / "separate"
     subprocess.run(["git", "clone", "-q", str(shared), str(separate)], check=True)
     _fresh(drive, shared, separate)
-    reader = _ctx(drive, shared, "task-b")
-    assert _check_advisory_freshness(reader, "commit") is None
     tools = ToolRegistry(repo_dir=shared, drive_root=drive)
     tools._ctx.task_id = "task-a"
     # Exercise intentional shared-body edits via the supported Cyber override;
@@ -339,18 +312,16 @@ def test_registered_writer_persists_identity_without_changing_shared_freshness(t
     assert state.advisory_runs[0].status == "stale"
     panel = _panel(drive, shared, "task-b")
     assert panel["stale_attribution"] == "other_task" and panel["stale_reason"]
-    assert not panel["repo_commit_ready"]
+    # The marker is disclosed, never a hold: no advisory freshness gates a commit (3A).
+    assert panel["repo_commit_ready"]
     prompt = format_review_evidence_for_prompt(
         collect_review_evidence(drive, task_id="task-b", repo_dir=shared))
     assert '"stale_task_id": "task-a"' in prompt and '"stale_attribution": "other_task"' in prompt
-    refusal = _check_advisory_freshness(reader, "commit")
-    assert "ADVISORY_PRE_REVIEW_REQUIRED" in refusal and "another task (task-a)" in refusal
     other_checkout = _panel(drive, separate, "task-b")
     assert other_checkout["repo_commit_ready"] and not other_checkout["stale_reason"]
     assert all(other_checkout[key] == "" for key in _ATTRIBUTION_KEYS)
-    assert _check_advisory_freshness(_ctx(drive, separate, "task-b"), "commit") is None
 
-    # A fresh review of the changed bytes clears the marker and admits either task.
+    # A fresh review of the changed bytes clears the marker for either task.
     update_state(drive, lambda current: current.add_run(AdvisoryRunRecord(
         snapshot_hash=compute_snapshot_hash(shared), commit_message="ready", status="fresh",
         ts="2026-10-01T00:00:00+00:00", repo_key=make_repo_key(shared), task_id="task-b")))
@@ -358,4 +329,3 @@ def test_registered_writer_persists_identity_without_changing_shared_freshness(t
         panel = _panel(drive, shared, task_id)
         assert panel["repo_commit_ready"] and not panel["stale_reason"]
         assert all(panel[key] == "" for key in _ATTRIBUTION_KEYS)
-        assert _check_advisory_freshness(_ctx(drive, shared, task_id), "commit") is None

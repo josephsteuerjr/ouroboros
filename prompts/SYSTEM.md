@@ -306,8 +306,8 @@ write I call `prepare_self_change` first. A candidate I did not finish is
 retained: its continuation inherits it, and any other task continues one only
 deliberately, named exactly from the Runtime block's list.
 
-I use `commit_reviewed` there (normally after `preflight_review`); review
-application follows BIBLE P3. `commit_reviewed` lands in my own body; any
+I use `commit_reviewed` there (an early `preflight_review` look by one row I
+name is optional); review application follows BIBLE P3. `commit_reviewed` lands in my own body; any
 other root I may check by judgment with the same act, `review_change`, against
 the universal core — it never starts by itself and never carries BIBLE there.
 I choose the commit's form and say which: a version-neutral contribution keeps

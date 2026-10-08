@@ -9,7 +9,7 @@ MUST include these artifacts as **first-class context sections** — not as
 optional or opportunistic inclusions via touched-file packs. Each registry row
 names its inline and on-demand delivery; neither permits silent truncation.
 
-Commit triad, scope, advisory and deep self-review share
+Commit triad (the preflight's one seat included), scope and deep self-review share
 `ouroboros/tools/governance_context.py`, driven by ONE external switch: the
 checklist `layer`, decided by the body predicate
 (`ouroboros/review_body_fact.py`: `body_fact` → `layer_for`; ARCHITECTURE §6
@@ -24,7 +24,7 @@ for `web/` changes within `runtime_limits.REVIEW_GOVERNANCE_INLINE_SHARE` of
 the usable window; overflow stays named in navigation. Tier 3 delivers the
 ARCHITECTURE book navigation, never the whole map; tool-free triad packet rows
 also receive relevant sections within that share. **Core layer** (another
-repository, or a skill payload in skill advisory): the surface's own universal
+repository): the surface's own universal
 section is the whole rule set; BIBLE, the archive, the shared-contract section,
 DEVELOPMENT, DESIGN and ARCHITECTURE are recorded `not_applicable`, and the
 navigation indexes the subject's own documents plus its required-source
@@ -51,7 +51,7 @@ The context-delivery registry:
 | ↳ Cold-start density rung | — | — | Triad packets only: an oversized packet without fresh exact-model density evidence gets one bounded probe of its own 80,000-char slice and one rebuild; a budget refusal stays disclosed (`review_admission.density_probe_before_size_refusal`). Retrieving surfaces have no packet-fit rung. |
 | ↳ Anti-thrashing | — | — | Open obligations from `review_state` (`load_state(drive_root)` + `make_repo_key(repo_dir)`) enter `_build_review_history_section`; the retrieving seat's two-part brief does the same when `drive_root` is available (`review_brief_coupling.build_retrieving_brief`). |
 | Background consciousness wake-up (`consciousness.py` → `handle_wake_direct`) | = Main task context | = Main task context | = Main task context |
-| Advisory pre-review (`tools/claude_advisory_review.py`) | body layer on both retrieving deliveries: full tier 1 (BIBLE, the standing disclosures, the surface's own section); the repository surface also carries `Shared Contract Ownership`, the skill surface — a payload judged under the constitution but not this repository's code — does not (`repository_rules=False`) | Tier 3: book navigation and on-demand reading | Tier 2 within this row’s transcript-bound share; touched files arrive as a size/disposition manifest with the span-only carrier cut disclosed, while changed lines are in the diff |
+| Preflight (`review_change(surface=preflight)`: one named row over the system repository's live worktree) | the `review_change` body row above | as above | as above |
 | The coupling question (Part 2 of the retrieving seat's brief, `tools/review_brief_coupling.py`) | full, shared tier 1 beside the Intent / Scope checklist, in every context mode | Tier 3: physical chapter navigation and on-demand reading | Tier 2 within the usable-window share; the brief carries the complete staged change inline or as an exact paged source |
 | Skill review (`skill_review.py`) | full inline (`api_chat`) / mandatory full source-root read (`agent_session`) | same two classes | same two classes |
 | Plan review (`tools/plan_review.py`) | full for a SELF-MODIFICATION plan; otherwise a runtime heading-derived navigation map, never a copy | full for a self-modification plan (`api_chat` inline, `agent_session` mandatory full read); otherwise book navigation + a resolvable pointer | not resident: a named on-demand pointer; a reviewer needing it returns `need_evidence` with an exact `::lines=A-B` range |
@@ -185,7 +185,7 @@ If a core governance artifact cannot fit in the available context budget:
 - A reviewer or agent operating without ARCHITECTURE.md MUST NOT be treated as
   operating with full context — findings may be incomplete.
 - Tools returning multi-model review findings (`commit_reviewed`,
-  `skill_review`, scope/advisory review helpers) MUST be in
+  `skill_review`, `preflight_review`, `review_change`) MUST be in
   `UNTRUNCATED_TOOL_RESULTS` or carry an explicit per-tool limit; the default
   15,000-char `DEFAULT_TOOL_RESULT_LIMIT` is not acceptable for review verdicts.
 - Book **navigation** (`context_layout.book_navigation`: per chapter the

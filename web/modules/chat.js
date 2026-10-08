@@ -189,6 +189,24 @@ const CHAT_STORAGE_KEY = 'ouro_chat';
 const CHAT_DRAFT_KEY = 'ouro_chat_draft';
 const CHAT_INPUT_HISTORY_KEY = 'ouro_chat_input_history';
 
+/** `/review` runs on one enabled catalog row (absent `enabled` = on); none = the Main model. */
+export async function chooseAndSendReview({ openConfirmDialog, ws, readSettings }) {
+    let rows = [];
+    try {
+        const roster = (await readSettings())?.OUROBOROS_SUBAGENTS;
+        rows = (typeof roster === 'string' ? JSON.parse(roster) : roster)?.items || [];
+    } catch {}
+    const answer = await openConfirmDialog({
+        title: 'Deep self-review', body: 'Who reviews the whole system?', input: true, confirmLabel: 'Queue review',
+        choices: [{ value: '', label: 'Main model (default)' }, ...rows
+            .filter((row) => row?.enabled !== false && row?.subagent_id)
+            .map((row) => ({ value: row.subagent_id, label: row.name || row.subagent_id }))],
+    });
+    if (!answer?.confirmed) return false;
+    ws.send({ type: 'command', cmd: `/review ${answer.value || ''}`.trim() });
+    return true;
+}
+
 export function initChat(ctx) {
     // Back-compat main-chat entry: one full-page instance bound to chat 1.
     return createChatInstance(ctx);
@@ -3169,7 +3187,8 @@ export function createChatInstance({
             return;
         }
         if (command === 'review') {
-            ws.send({ type: 'command', cmd: '/review' });
+            await chooseAndSendReview({ openConfirmDialog, ws,
+                readSettings: async () => (await apiFetch('/api/settings', { cache: 'no-store' })).json() });
             return;
         }
         if (command === 'restart') {

@@ -190,27 +190,6 @@ def test_format_obligation_excerpt_redacts_secrets_before_collapsing():
     assert "***REDACTED***" in out or "REDACTED" in out, "Redaction marker must be present"
 
 
-def test_advisory_prompt_includes_verdict_authoritative_and_anti_rephrase_rules():
-    """The advisory prompt must carry the same verdict-authoritative and anti-rephrase
-    rules as the triad/scope history sections (step 6.e and 6.f)."""
-    from ouroboros.tools.claude_advisory_review import _build_advisory_prompt
-    import pathlib
-    prompt = _build_advisory_prompt(
-        repo_dir=pathlib.Path("/tmp/test-repo"),
-        commit_message="test commit",
-        goal="",
-        scope="",
-        drive_root=None,
-        prompt_context={
-            "diff": "--- a/foo.py\n+++ b/foo.py\n@@ -1 +1 @@\n-old\n+new",
-            "changed_files": "foo.py",
-        },
-    )
-    assert "VERDICT IS AUTHORITATIVE" in prompt
-    assert "DO NOT REPHRASE" in prompt
-    assert "VERIFICATION ONLY" in prompt
-
-
 # ---------------------------------------------------------------------------
 # Integration tests: real obligation loading via review_state machinery.
 # These catch wiring regressions (e.g. wrong load_state argument, wrong

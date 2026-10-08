@@ -8,8 +8,8 @@ Also covers advisory-run ATTRIBUTION. Repository readiness is repository-scoped
 by design, but the run lists are not: a root's reflection received another
 task's failed advisory rows with their identity stripped and narrated them as
 its own failures. The split is a projection over existing records, so it is the
-same under advisory and blocking review enforcement; only ``repo_commit_ready``
-reads enforcement at all.
+same under advisory and blocking review enforcement; ``repo_commit_ready`` is
+always ready since decision 3A retired the advisory gate it mirrored.
 """
 
 
@@ -255,7 +255,9 @@ def test_collect_review_evidence_includes_commit_readiness_debt(tmp_path):
 
     evidence = collect_review_evidence(tmp_path, repo_dir=repo_dir)
 
-    assert evidence["current_repo"]["repo_commit_ready"] is False
+    # The debt stays a disclosed diagnostic; since decision 3A it no longer holds a
+    # commit, so the repository is commit-ready on this axis.
+    assert evidence["current_repo"]["repo_commit_ready"] is True
     assert len(evidence["commit_readiness_debts"]) >= 1
     assert evidence["commit_readiness_debts"][0]["category"] in {"obligation_repeat", "readiness_warning"}
 

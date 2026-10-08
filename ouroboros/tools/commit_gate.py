@@ -1,4 +1,5 @@
-"""Advisory freshness gate, durable commit-attempt recording, and the
+"""The commit preflight (the author's named row, decision 3A) and the free deterministic
+checks every commit runs before review, durable commit-attempt recording, and the
 commit-side Max-Review-Cycles machinery (block classification, the free
 identical-diff refusal, the per-root-task paid-cycle ceiling, and the
 review-contract fingerprint)."""
@@ -915,232 +916,99 @@ def review_failure_is_technical(facts: Dict[str, Any]) -> bool:
     )
 
 
-def _check_advisory_freshness(ctx: ToolContext, commit_message: str,
-                              skip_advisory_pre_review: bool = False,
-                              paths: Optional[List[str]] = None, *,
-                              review_rebuttal: str = "",
-                              decision: Optional[Dict[str, Any]] = None) -> Optional[str]:
-    from ouroboros.review_state import AdvisoryRunRecord, compute_snapshot_hash, load_state, make_repo_key, update_state, _utc_now
-    from ouroboros.config import get_review_enforcement
-    from ouroboros.utils import append_jsonl
-    drive_root = pathlib.Path(ctx.drive_root)
+PREFLIGHT_STATUSES = ("performed", "not_performed", "skipped")
+
+
+def preflight_reviewer_error(selector: str) -> str:
+    """``commit_reviewed(preflight_reviewer=…)`` names one ENABLED catalog row, a pool member
+    or not; an unknown or disabled row is the caller's argument error ("" = the row stands)."""
+    from ouroboros import reviewer_slot_config as slots
+
+    try:
+        slots.catalog_review_row(None, selector)
+    except ValueError as exc:
+        return f"preflight_reviewer {selector!r} is not an enabled catalog row ({exc})"
+    return ""
+
+
+def commit_preflight_choice_error(selector: str, *, skipped: bool, continuation: bool) -> str:
+    """A commit's preflight is a named row, an explicit skip, or neither; an author
+    continuation dispatches no critic, so it names no row either ("" = the choice stands)."""
+    if not selector:
+        return ""
+    if skipped:
+        return "preflight_reviewer and skip_advisory_review=True are opposite choices; pass one."
+    if continuation:
+        return "preflight_reviewer and an author continuation are separate choices (the continuation dispatches no critic)."
+    return preflight_reviewer_error(selector)
+
+
+def release_diagnostics(ctx: ToolContext, paths: Optional[List[str]], source: str) -> Dict[str, Any]:
+    """``preflight_review(deterministic_only=True)``: every release-metadata finding of the
+    worktree or the index, with no sync, staging, tests, provider or review state."""
+    if source not in ("worktree", "index"):
+        return {"status": "error", "failure_code": "PREFLIGHT_SOURCE_REQUIRED",
+                "message": "deterministic_only requires explicit source=worktree or source=index."}
+    from ouroboros import body_candidate
+    from ouroboros.commit_admission import release_metadata_diagnostics
+
+    return {**release_metadata_diagnostics(
+        ctx.repo_dir, paths, source=source, neutral_allowed=True if source == "index" else body_candidate.is_bound(ctx)),
+            "deterministic_only": True, "review_freshness": False}
+
+
+def deterministic_preflight(ctx: ToolContext, commit_message: str, paths: Optional[List[str]]) -> str:
+    """The free checks that ran ahead of the retired advisory delivery, kept whole for every
+    commit: size headroom and readiness (information and warnings), release metadata of the
+    staged index, and the syntax of staged ``.py`` files. Returns the blocking message or ""."""
+    from ouroboros.commit_admission import release_metadata_preflight, syntax_preflight_staged_py_files
+    from ouroboros.tools.review_helpers import check_worktree_readiness
+    from ouroboros.utils import append_jsonl, utc_now_iso
+
     repo_dir = pathlib.Path(ctx.repo_dir)
-    repo_key = make_repo_key(repo_dir)
-    enforcement = get_review_enforcement()
-
-    snapshot_hash = compute_snapshot_hash(repo_dir, commit_message, paths=paths)
-    state = load_state(drive_root)
-    open_obs = state.get_open_obligations(repo_key=repo_key)
-    open_debts = state.get_open_commit_readiness_debts(repo_key=repo_key)
-
-    matching_run = state.find_by_hash(snapshot_hash, repo_key=repo_key)
-    same_rebuttal = compute_rebuttal_sha256(review_rebuttal) == compute_rebuttal_sha256(
-        getattr(matching_run, "review_rebuttal", "")
-    )
-    fresh = state.is_fresh(snapshot_hash, repo_key=repo_key) and same_rebuttal
-    if decision is not None:
-        execution = getattr(matching_run, "execution", {}) or {}
-        decision["pending"] = bool(execution.get("pending_invocation_id")) or execution.get("operation_state") in {"in_flight", "custody_lost"}
-        decision["refresh_required"] = (
-            not skip_advisory_pre_review and not fresh
-            and str(getattr(matching_run, "status", "")) != "preflight_blocked"
-        )
-
-    def _render_obligations() -> list[str]:
-        return [
-            f"  [{o.obligation_id}] {o.item}: {_truncate_review_reason(o.reason, limit=80)}"
-            for o in open_obs
-        ]
-
-    def _render_debts() -> list[str]:
-        return [
-            f"  [{debt.debt_id}] {debt.category}: {_truncate_review_reason(debt.summary, limit=80)}"
-            for debt in open_debts
-        ]
-
-    technical_failure = bool(matching_run is not None and matching_run.status in {"error", "parse_failure"}
-                             and same_rebuttal and enforcement == "advisory"
-                             and review_failure_is_technical(matching_run.execution))
-    if technical_failure:
-        from ouroboros.tools.review import _record_advisory_override
-
-        warning = (
-            f"Preflight {matching_run.status} ({matching_run.execution.get('failure_phase')}): "
-            f"{matching_run.raw_result}\nReview enforcement=advisory permits continuing; "
-            "this failed preflight is not a PASS. Its full source and findings remain recorded."
-        )
-        if open_obs or open_debts:
-            warning += "\nExisting unresolved obligations and commit-readiness debt:\n" + "\n".join(
-                [*_render_obligations(), *_render_debts()])
-        ctx._last_review_block_reason = "advisory_technical_failure"
-        _record_advisory_override(ctx, warning)
-        ctx._review_advisory = list(getattr(ctx, "_review_advisory", []) or []) + [warning, *matching_run.items]
-
-    if not review_enforcement_blocks("blocking"):
-        from ouroboros.tools.review import _record_advisory_override
-
-        if not fresh or open_obs or open_debts:
-            warning = ("Cyber Pro: preflight status=" + str(getattr(matching_run, "status", "missing"))
-                       + ("; current" if fresh else "; stale or unavailable")
-                       + ". Ouroboros may continue; this does not create review evidence.\n"
-                       + str(getattr(matching_run, "raw_result", "") or "")
-                       + "\n" + "\n".join([*_render_obligations(), *_render_debts()]))
-            ctx._last_review_block_reason = "advisory_cyber_authority"
-            _record_advisory_override(ctx, warning)
-            ctx._review_advisory = list(getattr(ctx, "_review_advisory", []) or []) + [warning]
-        return None
-
-    if (fresh or technical_failure) and not open_obs and not open_debts:
-        return None
-
-    if skip_advisory_pre_review and not technical_failure:
-        task_id = str(getattr(ctx, "task_id", "") or "")
-        reason = "skip_advisory_review=True passed to commit_reviewed"
+    information: List[str] = []
+    warnings = check_worktree_readiness(repo_dir, paths=paths, information=information)
+    if information:
+        ctx.emit_progress_fn("Size headroom (information):\n" + "\n".join(information))
+    if warnings:
+        ctx.emit_progress_fn(f"⚠️ Readiness: {'; '.join(warnings)}")
         try:
-            append_jsonl(ctx.drive_logs() / "events.jsonl", {
-                "ts": _utc_now(), "type": "advisory_review_bypassed",
-                "snapshot_hash": snapshot_hash, "commit_message": commit_message,
-                "bypass_reason": reason, "task_id": task_id,
-            })
+            append_jsonl(pathlib.Path(ctx.drive_root) / "logs" / "events.jsonl", {
+                "ts": utc_now_iso(), "type": "commit_readiness_gate", "warnings": warnings,
+                "task_id": str(getattr(ctx, "task_id", "") or "")})
         except Exception:
             pass
+    return (release_metadata_preflight(repo_dir, commit_message, paths, source="index")
+            or syntax_preflight_staged_py_files(repo_dir, list(paths or [])) or "")
 
-        def _mutate(bypass_state):
-            bypass_state.add_run(AdvisoryRunRecord(
-                snapshot_hash=snapshot_hash,
-                commit_message=commit_message,
-                status="bypassed",
-                ts=_utc_now(),
-                bypass_reason=reason,
-                bypassed_by_task=task_id,
-                snapshot_paths=paths,
-                repo_key=repo_key,
-                tool_name="advisory_review",
-                task_id=task_id,
-            ))
 
-        update_state(drive_root, _mutate)
+def run_commit_preflight(ctx: ToolContext, reviewer: str, *, commit_message: str, goal: str, scope: str,
+                         review_rebuttal: str) -> Dict[str, Any]:
+    """The author's preflight (decision 3A): ``review_change(subject=worktree, surface=preflight,
+    reviewers=[reviewer])`` over the system repository. It informs and never gates (the commit
+    panel holds the gate); a refused or crashed call is still ``performed`` with its cause."""
+    from ouroboros.budget_pause import BudgetPauseRequested
+    from ouroboros.tools import review_change as rc
+    from ouroboros.usage_accounting import BudgetExceeded
 
-        return None  # audited bypass
-
-    if (fresh or technical_failure) and (open_obs or open_debts):
-        if enforcement == "advisory":
-            drive_logs = ctx.drive_logs() if callable(getattr(ctx, "drive_logs", None)) else drive_root / "logs"
-            event = {
-                "ts": _utc_now(),
-                "type": "advisory_obligations_acknowledged",
-                "snapshot_hash": snapshot_hash,
-                "repo_key": repo_key,
-                "open_obligations_count": len(open_obs),
-                "open_debts_count": len(open_debts),
-                "open_obligations": [
-                    f"[{o.obligation_id}] {o.item}: {_truncate_review_reason(o.reason, limit=120)}"
-                    for o in open_obs
-                ],
-                "open_debts": [
-                    f"[{debt.debt_id}] {debt.category}: {_truncate_review_reason(debt.summary, limit=120)}"
-                    for debt in open_debts
-                ],
-            }
-            if append_jsonl(drive_logs / "events.jsonl", event):
-                return None
-        debt_parts = []
-        if open_obs:
-            debt_parts.append(f"{len(open_obs)} open obligation(s)")
-        if open_debts:
-            debt_parts.append(f"{len(open_debts)} commit-readiness debt item(s)")
-        state_label = "Failed advisory disclosure could not be recorded" if technical_failure else "Advisory is current"
-        lines = [
-            f"⚠️ ADVISORY_PRE_REVIEW_REQUIRED: {state_label} (hash={snapshot_hash[:12]}) "
-            f"but {' and '.join(debt_parts)} remain unresolved.\n"
-        ]
-        if open_obs:
-            lines.append("Unresolved obligations:")
-            lines += _render_obligations()
-        if open_debts:
-            lines.append("\nCommit-readiness debt:")
-            lines += _render_debts()
-        lines.append("\nFix the flagged issues and re-run preflight_review so it can verify them PASS.")
-        lines.append("Or bypass: commit_reviewed(commit_message='...', skip_advisory_review=True) (audited).")
-        return "\n".join(lines)
-
-    matching_run = state.find_by_hash(snapshot_hash, repo_key=repo_key)
-    scoped_runs = state.filter_advisory_runs(repo_key=repo_key)
-    latest = scoped_runs[-1] if scoped_runs else None
-
-    if matching_run and matching_run.status == "parse_failure":
-        obs_section = ""
-        if state.get_open_obligations(repo_key=repo_key):
-            open_obs = state.get_open_obligations(repo_key=repo_key)
-            obs_lines = [f"\nOpen obligations ({len(open_obs)}):"]
-            obs_lines += [f"  [{o.obligation_id}] {o.item}: {_truncate_review_reason(o.reason, limit=80)}"
-                          for o in open_obs]
-            obs_section = "\n".join(obs_lines)
-        return (
-            f"⚠️ ADVISORY_PRE_REVIEW_REQUIRED: Last advisory run for this snapshot returned "
-            f"parse_failure (hash={snapshot_hash[:12]}, ts={matching_run.ts}). "
-            f"The advisory ran but its output could not be parsed — re-run it.{obs_section}\n"
-            "Re-run: preflight_review(commit_message='...')\n"
-            "Or bypass: commit_reviewed(commit_message='...', skip_advisory_review=True) (audited)."
-        )
-
-    if matching_run and (matching_run.status == "preflight_blocked" or
-                         matching_run.reason_kind == "release_metadata_unavailable"):
-        preflight_detail = (matching_run.raw_result or "").strip()
-        # H4 (capinv-447): the status is shared by several deterministic checks;
-        # name the problem class only when the typed cause is recorded.
-        reason_kind = str(getattr(matching_run, "reason_kind", "") or "")
-        cause = {
-            "syntax": "The advisory delivery was skipped because a staged `.py` file has a SyntaxError.",
-            "release_metadata": "The advisory delivery was skipped because the deterministic release metadata preflight failed.",
-            "release_metadata_unavailable": "Release metadata evidence could not be read; this is not a reviewer verdict or proof of a changed snapshot.",
-        }.get(reason_kind, "The advisory delivery was skipped by a deterministic preflight check (exact cause below).")
-        return (
-            f"⚠️ ADVISORY_PRE_REVIEW_REQUIRED: Last advisory run for this snapshot "
-            f"was blocked by a preflight check (hash={snapshot_hash[:12]}, "
-            f"ts={matching_run.ts}). {cause}\n\n"
-            f"{preflight_detail}\n\n"
-            "Re-run after fixing: preflight_review(commit_message='...')"
-        )
-
-    if latest and latest.status == "stale" and state.last_stale_from_edit_ts:
-        # Attribution only for a marker scoped to this checkout (or unscoped).
-        writer = (f" by {state.stale_marker_attribution_note(str(getattr(ctx, 'task_id', '') or ''))}"
-                  if state.last_stale_repo_key in ("", repo_key) else "")
-        stale_reason = (f"Advisory invalidated by worktree edit at "
-                        f"{state.last_stale_from_edit_ts}{writer}. Re-run advisory after all edits.")
-    elif latest:
-        stale_reason = (f"Latest run: status={latest.status}, hash={latest.snapshot_hash[:12]}, "
-                        f"ts={latest.ts}. Snapshot changed (files edited after advisory ran).")
-    else:
-        stale_reason = "No advisory runs recorded yet."
-
-    obs_section = ""
-    if open_obs:
-        lines = [f"\nOpen obligations ({len(open_obs)}):"]
-        lines += _render_obligations()
-        lines.append("  → preflight_review will verify each obligation is resolved.")
-        obs_section = "\n".join(lines)
-    debt_section = ""
-    if open_debts:
-        debt_lines = [f"\nCommit-readiness debt ({len(open_debts)}):"]
-        debt_lines += _render_debts()
-        debt_lines.append("  → clear or rebut these debt items before the next reviewed attempt.")
-        debt_section = "\n".join(debt_lines)
-
-    return (
-        f"⚠️ ADVISORY_PRE_REVIEW_REQUIRED: No fresh advisory run found for this snapshot "
-        f"(hash={snapshot_hash[:12]}).\n"
-        f"{stale_reason}\n"
-        f"{obs_section}{debt_section}\n\n"
-        "Correct workflow:\n"
-        "  1. Finish ALL edits first\n"
-        "  2. preflight_review(commit_message='your message')       ← run AFTER all edits\n"
-        "  3. commit_reviewed(commit_message='your message')       ← run IMMEDIATELY after advisory\n\n"
-        "⚠️ Any edit after step 2 makes the advisory stale and requires re-running it.\n\n"
-        "To bypass (will be durably audited):\n"
-        "  commit_reviewed(commit_message='...', skip_advisory_review=True)"
-    )
+    ctx.emit_progress_fn(f"Preflight: {reviewer} reads the worktree before the panel...")
+    try:
+        result = rc.run_review_change(ctx, root="system_repo", subject="worktree", surface="preflight",
+                                      reviewers=[reviewer], goal=goal or commit_message, scope=scope,
+                                      review_rebuttal=review_rebuttal)
+    except (BudgetExceeded, BudgetPauseRequested):
+        raise
+    except Exception as exc:
+        log.warning("commit preflight did not complete", exc_info=True)
+        return {"status": "performed", "record_id": "", "reviewer": reviewer, "aggregate": "",
+                "error": f"{type(exc).__name__}: {exc}"}
+    findings = dict(result.get("findings") or {})
+    fact = {"status": "performed", "record_id": str(result.get("record_id") or ""), "reviewer": reviewer,
+            "aggregate": str(result.get("aggregate") or "")}
+    critical = list(findings.get("critical_findings") or [])
+    ctx.emit_progress_fn(f"Preflight {fact['aggregate'] or 'recorded'} (record {fact['record_id'] or 'unwritten'}); "
+                         f"{len(critical)} critical finding(s) for the author to weigh before the panel.")
+    return fact
 
 
 def _return_commit_feedback(ctx: ToolContext, message: str, started: float, before: dict, after: dict,
@@ -1264,18 +1132,14 @@ def prepare_author_commit_request(ctx: ToolContext, review_reference: Any, autho
 
 # ---- Review ledger hook (ARCHITECTURE §6 "Review ledger record") ------------
 
-def _review_preflight_facts(ctx: ToolContext, commit_message: str, advisory_paths: Optional[List[str]]) -> Dict[str, Any]:
-    """The advisory pre-review that admitted this candidate, keyed by its snapshot identity."""
-    from ouroboros.review_state import compute_snapshot_hash, load_state, make_repo_key
-
-    try:
-        snapshot_hash = compute_snapshot_hash(pathlib.Path(ctx.repo_dir), commit_message, paths=advisory_paths)
-        run = load_state(pathlib.Path(ctx.drive_root)).find_by_hash(snapshot_hash, repo_key=make_repo_key(pathlib.Path(ctx.repo_dir)))
-    except Exception:
-        return {"status": "not_performed", "record_id": "", "advisory_status": "unknown"}
-    status = str(getattr(run, "status", "") or "")
-    return {"status": "not_performed" if run is None else "skipped" if status == "bypassed" else "performed",
-            "record_id": snapshot_hash if run is not None else "", "advisory_status": status or "missing"}
+def _review_preflight_facts(ctx: ToolContext) -> Dict[str, Any]:
+    """THIS attempt's preflight: ``performed`` names the ``surface=preflight`` record of the row
+    the author chose, ``skipped`` is an explicit ``skip_advisory_review``, and ``not_performed``
+    is the plain fact that none was asked for (never an audited bypass)."""
+    fact = getattr(ctx, "_commit_preflight", None)
+    if isinstance(fact, dict) and fact.get("status") in PREFLIGHT_STATUSES:
+        return dict(fact)
+    return {"status": "not_performed", "record_id": ""}
 
 
 def _review_body_facts(ctx: ToolContext) -> Dict[str, Any]:
@@ -1298,7 +1162,7 @@ def _review_body_facts(ctx: ToolContext) -> Dict[str, Any]:
 
 
 def _review_ledger_facts(ctx: ToolContext, commit_message: str, *, goal: str, scope: str, pre_fingerprint: dict,
-                         advisory_paths: Optional[List[str]], blocked: bool, block_reason: str,
+                         blocked: bool, block_reason: str,
                          combined_findings: Optional[list], dispatch_refusal: Optional[dict], pending: bool) -> Dict[str, Any]:
     """Everything the ledger record states about THIS attempt, read from the gate's own
     forensic fields (no second reading of any reviewer output)."""
@@ -1337,7 +1201,7 @@ def _review_ledger_facts(ctx: ToolContext, commit_message: str, *, goal: str, sc
         "critical_findings": list(combined_findings or getattr(ctx, "_last_review_critical_findings", []) or []),
         "advisory_findings": list(getattr(ctx, "_last_review_advisory_findings", []) or []),
         "tests": _review_tests_facts(ctx, tests_passed),
-        "preflight": _review_preflight_facts(ctx, commit_message, advisory_paths),
+        "preflight": _review_preflight_facts(ctx),
     }
 
 
@@ -1373,7 +1237,7 @@ def _review_tests_facts(ctx: ToolContext, tests_passed: Any) -> Dict[str, Any]:
 
 
 def settle_commit_review_ledger(ctx: ToolContext, commit_message: str, *, goal: str = "", scope: str = "",
-                                pre_fingerprint: Optional[dict] = None, advisory_paths: Optional[List[str]] = None,
+                                pre_fingerprint: Optional[dict] = None,
                                 blocked: bool = False, block_reason: str = "", combined_findings: Optional[list] = None,
                                 author_source: Any = None, advisory_replay: Optional[dict] = None) -> str:
     """Write THIS attempt's review ledger record once the gate has aggregated its verdict
@@ -1407,7 +1271,7 @@ def settle_commit_review_ledger(ctx: ToolContext, commit_message: str, *, goal: 
         pending = advisory_replay is None and bool(git_mod._review_custody_pending(ctx))
         facts = _review_ledger_facts(
             ctx, commit_message, goal=goal, scope=scope, pre_fingerprint=pre_fingerprint or {},
-            advisory_paths=advisory_paths, blocked=blocked, block_reason=block_reason,
+            blocked=blocked, block_reason=block_reason,
             combined_findings=combined_findings, dispatch_refusal=refusal, pending=pending)
         # The exact retry of a pending attempt (same retry key, overlap check bound it)
         # settles THAT attempt's record; the roster release already cleared the

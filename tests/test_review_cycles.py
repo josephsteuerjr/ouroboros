@@ -400,30 +400,6 @@ def test_commit_gate_has_no_import_time_cap_constant():
     assert not hasattr(commit_gate, "blocked_attempt_fingerprint_cap")
 
 
-def test_advisory_review_schema_note_states_paid_cycle_semantics(monkeypatch):
-    from ouroboros.tools.claude_advisory_review import _identical_diff_cap_note
-
-    note = _identical_diff_cap_note()
-    assert "identical bytes are never re-reviewed for pay" in note
-    assert "identical_diff_refused" in note
-    assert "after 2 paid cycle(s)" in note
-    assert "per ROOT task" in note  # wording-5: the tree shares one ceiling
-    # Honesty caveat (synthesis F6): the identical-diff refusal replays only
-    # recorded VERDICT blocks, which a pure advisory line never mints — there
-    # the no-new-spend guarantee is the exhaustion free replay.
-    assert "Under blocking enforcement an identical resubmission after a recorded" in note
-    assert "a pure advisory line never mints verdict blocks" in note
-    assert "exhaustion free replay" in note
-    monkeypatch.setenv(KEY, "5")
-    assert "after 5 paid cycle(s)" in _identical_diff_cap_note()
-    monkeypatch.setenv(KEY, "unlimited")
-    note = _identical_diff_cap_note()
-    assert "no per-root-task ceiling" in note
-    assert "identical bytes are never re-reviewed for pay" in note  # knob-independent
-    source = (REPO / "ouroboros" / "tools" / "claude_advisory_review.py").read_text(encoding="utf-8")
-    assert "after 3 genuine" not in source
-
-
 # ---------------------------------------------------------------------------
 # Settings POST boundary (mirrors the post-task evolution cadence rule)
 
