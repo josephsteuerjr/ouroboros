@@ -117,6 +117,33 @@ def _image_429_refusal(reset_fact: str) -> str:
     return line
 
 
+class _ImageOperationFailed(Exception):
+    """The engine settled the operation at a non-succeeded terminal state.
+
+    Carries the typed ``problem`` from ``ControlImageOperationDetail`` — the
+    terminal detail has no ``error``/``reason`` fields, so ``problem`` IS the
+    failure report (``code``/``message``/``context.resetsAt``). ``interrupted``
+    means dispatch-unknown per the engine: possibly billed, outcome genuinely
+    unknown, never silently retried.
+    """
+
+    def __init__(self, state: str, problem: Optional[Dict[str, Any]] = None):
+        engine_code = ""
+        provider_message = ""
+        reset_at = ""
+        if isinstance(problem, dict):
+            engine_code = str(problem.get("code") or "")
+            provider_message = str(problem.get("message") or "")
+            context = problem.get("context")
+            if isinstance(context, dict):
+                reset_at = str(context.get("resetsAt") or context.get("reset_at") or "")
+        super().__init__(f"image_operation_failed:{state}:{engine_code}:{provider_message}")
+        self.state = str(state)
+        self.engine_code = engine_code
+        self.provider_message = provider_message
+        self.reset_at = reset_at
+
+
 def _generate_image(ctx: ToolContext, prompt: str, n: int = 1, quality: str = "auto",
                     size: str = "auto", background: str = "auto",
                     image_paths: Optional[List[str]] = None, caption: str = "",
@@ -193,25 +220,32 @@ def _generate_image(ctx: ToolContext, prompt: str, n: int = 1, quality: str = "a
     op_id_ref = [""]
 
     def _remaining(deadline: float) -> float:
-        return max(_READ_TIMEOUT_SEC, deadline - time.monotonic())
+        # A READ BOUND for the poll loop: never longer than the read cap, and
+        # never past the deadline (the cap stays a cap, not a floor — a floor
+        # here let the last read outlive the deadline by up to 30 s). The small
+        # minimum keeps httpx from a degenerate zero timeout.
+        return max(0.5, min(_READ_TIMEOUT_SEC, deadline - time.monotonic()))
 
     def _send() -> Dict[str, Any]:
         op = create_image_operation(gateway, request, images=edit_inputs or None,
                                     idempotency_key=idempotency_key)
-        op_id = str(op.get("operationId") or op.get("id") or "")
+        op_id = str(op.get("id") or op.get("operationId") or "")
         op_id_ref[0] = op_id
         deadline = time.monotonic() + _UPSTREAM_TIMEOUT_SEC
         while True:
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"image_operation_timeout:{op_id}")
             state_op = get_image_operation(gateway, op_id, timeout_sec=_remaining(deadline))
             state = str(state_op.get("state") or state_op.get("status") or "")
             if state in ("succeeded", "ready", "complete", "completed"):
                 return get_image_result(gateway, op_id, timeout_sec=_remaining(deadline))
-            if state in ("failed", "error", "cancelled"):
-                raise RuntimeError(
-                    f"image_operation_failed:{state}:{state_op.get('error') or state_op.get('reason') or ''}")
-            if time.monotonic() >= deadline:
-                raise TimeoutError(f"image_operation_timeout:{op_id}")
-            time.sleep(_POLL_INTERVAL_SEC)
+            if state in ("failed", "cancelled", "interrupted", "error"):
+                # Terminal per the engine's RunLifecycle. The typed failure
+                # report is the detail's ``problem`` — there is no
+                # error/reason field on the terminal detail.
+                raise _ImageOperationFailed(state, state_op.get("problem"))
+            # Bounded sleep: never past the deadline.
+            time.sleep(min(_POLL_INTERVAL_SEC, max(0.05, deadline - time.monotonic())))
 
     # Accounting: one physical attempt covering create+poll+result — the
     # budget fence of the task tree is inherited by execute_physical_attempt.
@@ -227,27 +261,17 @@ def _generate_image(ctx: ToolContext, prompt: str, n: int = 1, quality: str = "a
         category="image_generation",
         source="imagegen",
     )
-    try:
-        result_body = execute_physical_attempt(attempt_request, _send)
-    except Exception as exc:
-        code = str(getattr(exc, "code", "") or "")
-        status = getattr(exc, "status_code", None)
-        message = str(exc)
-        if code == "image_generation_limit_reached" or status == 429:
-            reset_fact = (str(getattr(exc, "reset_at", "") or "")
-                          or str(getattr(exc, "retry_after", "") or ""))
-            return _refuse(ctx, _image_429_refusal(reset_fact), "IMAGE_RATE_LIMITED")
+    drive_root = getattr(ctx, "budget_drive_root", None) or getattr(ctx, "drive_root", None)
+
+    def _record_unknown_outcome(error_text: str) -> str:
         # Interrupted/unknown generation — NEVER retried here; the durable row
         # carries the operation id so a NEW request can be made deliberately.
-        append_jsonl_safe(
-            getattr(ctx, "budget_drive_root", None) or getattr(ctx, "drive_root", None),
-            {
-                "type": "image_outcome_unknown",
-                "operation_id": op_id_ref[0] or "",
-                "idempotency_key": idempotency_key,
-                "error": f"{type(exc).__name__}: {message}"[:500],
-            },
-        )
+        append_jsonl_safe(drive_root, {
+            "type": "image_outcome_unknown",
+            "operation_id": op_id_ref[0] or "",
+            "idempotency_key": idempotency_key,
+            "error": error_text[:500],
+        })
         return _refuse(
             ctx,
             f"⚠️ IMAGE_OUTCOME_UNKNOWN: the generation attempt ended without a settled "
@@ -257,17 +281,41 @@ def _generate_image(ctx: ToolContext, prompt: str, n: int = 1, quality: str = "a
             "IMAGE_OUTCOME_UNKNOWN",
         )
 
+    try:
+        result_body = execute_physical_attempt(attempt_request, _send)
+    except _ImageOperationFailed as exc:
+        # A KNOWN terminal outcome from the engine's own detail — not an
+        # unknown dispatch, so no "may have been billed" row is written.
+        if exc.engine_code == "image_generation_limit_reached":
+            return _refuse(ctx, _image_429_refusal(exc.reset_at), "IMAGE_RATE_LIMITED")
+        if exc.state == "interrupted":
+            # Dispatch-unknown per the engine: possibly billing-unknown, genuinely unknown.
+            return _record_unknown_outcome(
+                f"engine_interrupted:{exc.engine_code or 'no_code'}: {exc.provider_message}")
+        engine_detail = f", engine code {exc.engine_code}" if exc.engine_code else ""
+        return _refuse(
+            ctx,
+            f"⚠️ IMAGE_ERROR: the engine settled the operation as '{exc.state}'"
+            f"{engine_detail} — {exc.provider_message or 'no problem reported'}.",
+            "IMAGE_ERROR",
+        )
+    except Exception as exc:
+        code = str(getattr(exc, "code", "") or "")
+        status = getattr(exc, "status_code", None)
+        message = str(exc)
+        if code == "image_generation_limit_reached" or status == 429:
+            reset_fact = (str(getattr(exc, "reset_at", "") or "")
+                          or str(getattr(exc, "retry_after", "") or ""))
+            return _refuse(ctx, _image_429_refusal(reset_fact), "IMAGE_RATE_LIMITED")
+        return _record_unknown_outcome(f"{type(exc).__name__}: {message}")
+
     # Result custody: decode each b64 payload straight to a chat-media artifact;
     # ACK the exact bytes retained (sha256 of the payload, not a field).
     data_rows = result_body.get("data") if isinstance(result_body, dict) else None
     if not isinstance(data_rows, list) or not data_rows:
-        append_jsonl_safe(
-            getattr(ctx, "budget_drive_root", None) or getattr(ctx, "drive_root", None), {
-                "type": "image_outcome_unknown", "operation_id": op_id_ref[0] or "",
-                "idempotency_key": idempotency_key, "error": "empty_data_rows"})
+        _record_unknown_outcome("empty_data_rows")
         return _refuse(ctx, "⚠️ IMAGE_OUTCOME_UNKNOWN: engine returned no image data.", "IMAGE_OUTCOME_UNKNOWN")
 
-    drive = getattr(ctx, "budget_drive_root", None) or getattr(ctx, "drive_root", None)
     artifact_rows: List[Dict[str, Any]] = []
     delivery_submitted = 0
     delivery_failed: List[int] = []
@@ -284,7 +332,7 @@ def _generate_image(ctx: ToolContext, prompt: str, n: int = 1, quality: str = "a
         if len(raw) > _MAX_IMAGE_BYTES or not _sniff_mime(raw):
             continue
         mime = _sniff_mime(raw)
-        stored = store_chat_media_bytes(drive, str(getattr(ctx, "task_id", "") or ""), raw, mime)
+        stored = store_chat_media_bytes(drive_root, str(getattr(ctx, "task_id", "") or ""), raw, mime)
         if stored:
             artifact_rows.append(stored)
             try:

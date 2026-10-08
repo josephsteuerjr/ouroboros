@@ -16,10 +16,11 @@ def _png_bytes(size=64):
 
 
 class _FakeGateway:
-    def __init__(self, *, supported=True, result_body=None, fail_with=None):
+    def __init__(self, *, supported=True, result_body=None, fail_with=None, detail_sequence=None):
         self.supported = supported
         self.result_body = result_body or {}
         self.fail_with = fail_with
+        self.detail_sequence = list(detail_sequence or [])
         self.calls = []
 
     def operations(self):
@@ -35,8 +36,10 @@ class _FakeGateway:
         if path.endswith("/result"):
             return self.result_body
         if method == "GET" and path.count("/") == 3:
+            if self.detail_sequence:
+                return self.detail_sequence.pop(0)
             return {"state": "succeeded"}
-        return {"operationId": "img-op-1"}
+        return {"id": "img-op-1", "state": "queued"}
 
     # Compatibility with the module-level functions' gateway contract:
     # they call gateway._request directly, so _request above IS the seam.
@@ -227,6 +230,71 @@ class TestGenerateImageTool:
         assert "NOT parked" in out
         assert "2026-10-08T12:00:00Z" in out
         assert len(captured) == 1  # the attempt was made and accounted
+
+    def test_image_429_typed_refusal_from_engine_detail_problem(self, monkeypatch, tmp_path):
+        """The real engine shape: HTTP 202 → poll → terminal detail with
+        state='failed' and the typed ControlProblem. The client must classify
+        from problem.code/context.resetsAt — the detail has NO error/reason
+        fields, so the old reader misclassified this as OUTCOME_UNKNOWN."""
+        detail = {
+            "id": "img-op-1",
+            "state": "failed",
+            "problem": {
+                "code": "image_generation_limit_reached",
+                "message": "Image limit reached; text allowance unchanged",
+                "retryable": False,
+                "context": {"resetsAt": "2026-10-09T00:00:00Z"},
+            },
+        }
+        gw = _FakeGateway(detail_sequence=[detail])
+        _patch_gateway(monkeypatch, gw)
+        captured = []
+        _patch_accounting(monkeypatch, captured)
+        ctx = _Ctx(tmp_path)
+        out, code = _last_code(monkeypatch, ctx, lambda: _generate_image(ctx, "a castle"))
+        assert code == "IMAGE_RATE_LIMITED"
+        assert "NOT parked" in out
+        assert "2026-10-09T00:00:00Z" in out
+        assert len(captured) == 1
+        # A KNOWN failed terminal is not an unknown dispatch: no
+        # image_outcome_unknown row may be written.
+        assert not (tmp_path / "logs" / "events.jsonl").exists()
+
+    def test_engine_interrupted_is_outcome_unknown_and_never_retried(self, monkeypatch, tmp_path):
+        """Engine dispatch-unknown: state='interrupted'. The tool must surface
+        IMAGE_OUTCOME_UNKNOWN with the durable row, and never POST twice."""
+        detail = {"id": "img-op-1", "state": "interrupted", "problem": None}
+        gw = _FakeGateway(detail_sequence=[detail])
+        _patch_gateway(monkeypatch, gw)
+        captured = []
+        _patch_accounting(monkeypatch, captured)
+        ctx = _Ctx(tmp_path)
+        out, code = _last_code(monkeypatch, ctx, lambda: _generate_image(ctx, "a castle"))
+        assert code == "IMAGE_OUTCOME_UNKNOWN"
+        creates = [c for c in gw.calls if c[0] == "POST"]
+        assert len(creates) == 1  # never retried
+        events = (tmp_path / "logs" / "events.jsonl").read_text(encoding="utf-8")
+        assert "image_outcome_unknown" in events
+        assert "engine_interrupted" in events
+
+    def test_engine_failed_terminal_with_other_problem_is_image_error(self, monkeypatch, tmp_path):
+        """A KNOWN failed terminal with a non-quota problem code is a typed
+        IMAGE_ERROR carrying the engine's code — not OUTCOME_UNKNOWN."""
+        detail = {
+            "id": "img-op-1",
+            "state": "failed",
+            "problem": {"code": "image_upstream_error", "message": "provider refused",
+                        "retryable": False, "context": {}},
+        }
+        gw = _FakeGateway(detail_sequence=[detail])
+        _patch_gateway(monkeypatch, gw)
+        _patch_accounting(monkeypatch, [])
+        ctx = _Ctx(tmp_path)
+        out, code = _last_code(monkeypatch, ctx, lambda: _generate_image(ctx, "a castle"))
+        assert code == "IMAGE_ERROR"
+        assert "image_upstream_error" in out
+        assert "provider refused" in out
+        assert not (tmp_path / "logs" / "events.jsonl").exists()
 
     def test_unknown_outcome_recorded_not_retried(self, monkeypatch, tmp_path):
         gw = _FakeGateway(fail_with=TimeoutError("image_operation_timeout:img-op-1"))
