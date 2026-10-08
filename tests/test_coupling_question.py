@@ -125,6 +125,50 @@ def test_the_payload_form_check_is_form_only():
     assert two_part_payload([{"item": "x"}]) == {"change": [{"item": "x"}], "change_clean": False}
 
 
+FENCED_REASON = "the helper is documented in a ```python``` block and the diff keeps it"
+
+
+@pytest.mark.parametrize("wrap", [False, True])
+def test_a_fence_spelling_inside_a_json_string_is_content_not_a_fence(wrap):
+    """A reviewer who quotes a code fence in a finding's reason has still answered
+    ONE JSON object: the value is read whole first, and a fence is only ever the
+    lines that open and close the text — never a split point inside a string."""
+    change = [{"item": "docs", "verdict": "FAIL", "severity": "advisory", "reason": FENCED_REASON}]
+    raw = _b(change=change, coupling=_matrix())
+    if wrap:
+        raw = "```json\n" + raw + "\n```"
+    answers = parse_two_part_answer(raw, BOTH)
+    assert answers is not None, raw
+    assert answers["change"]["status"] == "responded" and answers["change"]["findings"][0]["reason"] == FENCED_REASON
+    assert answers["coupling"]["status"] == "responded"
+    record = parse_seat_answers({"results": [_seat("s1", raw)]}, {"s1": BOTH}).actor_records[0]
+    assert record.status == "responded" and record.answers["change"]["verdict"] == "PASS"
+
+
+def test_a_fence_is_only_the_lines_that_open_and_close_the_text():
+    body = _b(coupling=_matrix())
+    assert parse_two_part_answer("```\n" + body + "\n```", BOTH) is not None
+    assert parse_two_part_answer("```json\n" + body + "\n```  ", BOTH) is not None
+    # Prose beside the fence, or a second fenced block, is still a non-response.
+    assert parse_two_part_answer("Here you go:\n```json\n" + body + "\n```", BOTH) is None
+    assert parse_two_part_answer("```json\n" + body + "\n```\n```json\n[]\n```", BOTH) is None
+
+
+@pytest.mark.parametrize("spelled, clean", [("true", True), ("True", True), ("false", False), (" FALSE ", False)])
+def test_change_clean_spelled_as_a_string_is_the_bool_it_names(spelled, clean):
+    raw = json.dumps({"change": [], "change_clean": spelled, "coupling": _matrix()})
+    assert two_part_payload(json.loads(raw))["change_clean"] is clean
+    answers = parse_two_part_answer(raw, BOTH)
+    assert answers is not None
+    assert answers["change"]["status"] == ("responded" if clean else "unanswered")
+    assert answers["coupling"]["status"] == "responded"
+
+
+def test_any_other_change_clean_spelling_is_still_a_form_error():
+    for value in ("yes", 1, "", None):
+        assert two_part_payload({"change": [], "change_clean": value, "coupling": _matrix()}) is None
+
+
 # ---------------------------------------------------------------------------
 # The seat records of one wave: contract A seats beside contract B seats
 # ---------------------------------------------------------------------------

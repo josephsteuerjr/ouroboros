@@ -321,26 +321,34 @@ def two_part_payload(payload: Any) -> Optional[Dict[str, Any]]:
                 return None
             out[key] = list(payload[key])
     if "change_clean" in payload:
-        if not isinstance(payload["change_clean"], bool):
+        clean = payload["change_clean"]
+        if isinstance(clean, str) and clean.strip().lower() in ("true", "false"):
+            clean = clean.strip().lower() == "true"  # the bool spelled as its JSON word
+        if not isinstance(clean, bool):
             return None
-        out["change_clean"] = payload["change_clean"]
+        out["change_clean"] = clean
     return out
 
 
 def _whole_json(raw_text: str) -> Any:
-    """The response as ONE JSON value — bare or inside one code fence; prose around
-    the value is a non-response (the same discipline as the array contract)."""
+    """The response as ONE JSON value — bare, or inside one code fence that opens
+    on the first line and closes on the last; prose around the value is a
+    non-response (the same discipline as the array contract). The whole text is
+    parsed first, and a fence is recognized by its fence LINES only, so a fence
+    spelling inside a JSON string is content, never a split point."""
     text = str(raw_text or "").strip()
-    if "```" in text:
-        chunks = [chunk.strip() for chunk in text.split("```") if chunk.strip()]
-        if len(chunks) != 1:
-            return None
-        text = chunks[0]
-        tag, _, rest = text.partition("\n")
-        if rest.strip() and tag.strip().isalnum():
-            text = rest.strip()
     try:
         return json.loads(text)
+    except (json.JSONDecodeError, ValueError, TypeError):
+        pass
+    lines = text.splitlines()
+    if len(lines) < 3 or not lines[0].startswith("```") or lines[-1].strip() != "```":
+        return None
+    tag = lines[0][3:].strip()
+    if tag and not tag.isalnum():
+        return None
+    try:
+        return json.loads("\n".join(lines[1:-1]).strip())
     except (json.JSONDecodeError, ValueError, TypeError):
         return None
 
