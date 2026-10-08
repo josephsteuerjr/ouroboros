@@ -152,7 +152,7 @@ def test_review_skill_malformed_reviewer_slots_block_before_any_reviewer(tmp_pat
         outcome = review_skill(ctx, "weather")
 
     assert outcome.status == "pending"
-    assert "invalid reviewer-slot configuration blocks skill review" in outcome.error
+    assert "invalid review pool configuration blocks skill review" in outcome.error
     assert "not valid JSON" in outcome.error
 
 

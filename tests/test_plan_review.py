@@ -358,7 +358,7 @@ def test_malformed_reviewer_slots_block_plan_review_before_any_dispatch(tmp_path
     ):
         result = pr._handle_plan_task(ctx, plan="P", goal="G", spec={"in_scope": ["x"], "affected_paths": []})
 
-    assert "Invalid reviewer-slot configuration blocks plan review" in result
+    assert "Invalid review pool configuration blocks plan review" in result
     assert "not valid JSON" in result
     # The pointer names a place that EXISTS: D-10 moved these rows out of the
     # Models tab and renamed the section, so the old wording sent the owner

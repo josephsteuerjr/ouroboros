@@ -76,9 +76,10 @@ test('the ladder is three rungs and states the launch gate honestly', () => {
 test('the footnote refuses both easy lies: "free", and "every reviewer moves"', () => {
     assert.match(LADDER_FOOTNOTE, /not free/i);
     assert.match(LADDER_FOOTNOTE, /already\s+pay for/i);
-    // Owner R2 (2026-09-01): task acceptance follows the triad rows too — the
+    // Owner R2 (2026-09-01): task acceptance runs on the review pool too — the
     // footnote states the RULE (what is routed moves), never "everything moves".
-    assert.match(LADDER_FOOTNOTE, /task acceptance each follow their configured\s+triad row/i);
+    assert.match(LADDER_FOOTNOTE, /task acceptance all run on the review pool\s+\(the rows marked Reviewer\)/i);
+    assert.doesNotMatch(LADDER_FOOTNOTE, /triad/i);
     assert.match(LADDER_FOOTNOTE, /acceptance panel on the subscription/i);
     // R12: the migration disclosure carries the measured numbers, not adjectives.
     assert.match(LADDER_FOOTNOTE, /about 12 s and\s+\$0\.07 per model row per task/i);

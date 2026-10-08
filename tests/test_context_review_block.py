@@ -246,6 +246,8 @@ def test_one_rule_sentence_per_effective_authority(monkeypatch, enforcement, mod
 
     assert (block["enforcement"], block["mode"], block["enforcement_blocks"]) == (enforcement, mode, blocks)
     assert block["rule"].startswith(opening) and block["rule"].count(".") == 1
+    if opening == "Blocking:":  # NOT_PERFORMED stops the commit too (an all-Packet pool, a failed coupling part)
+        assert "a review that was not performed" in block["rule"]
     if opening == "Advisory:":  # the handback before Git effects, never an automatic commit (DEVELOPMENT 05)
         assert "before any Git effect" in block["rule"] and "continue explicitly" in block["rule"]
         assert "commit proceeds" not in block["rule"]

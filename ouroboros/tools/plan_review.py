@@ -678,7 +678,7 @@ def _plan_slots_for_wave(ctx: ToolContext, slots_fn: Any, existing: dict, resume
 
     if not resume_in_flight and (err := reviewer_slot_config_error()):
         return [], _plan_unavailable(
-            ctx, f"ERROR: Invalid reviewer-slot configuration blocks plan review — {err}. "
+            ctx, f"ERROR: Invalid review pool configuration blocks plan review — {err}. "
             "Fix the Reviewer rows on the Agents tab in Settings.", "reviewer_slot_config_invalid")
     if resume_in_flight:
         from ouroboros.tools.plan_review_artifacts import frozen_plan_slots

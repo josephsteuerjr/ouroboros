@@ -1454,7 +1454,7 @@ def build_evolution_task_text(cycle: int) -> str:
         "",
         "## Execution Contract",
         "- Work as a normal Ouroboros self-improvement task.",
-        "- Use standard tests and the normal advisory + triad + scope review flow before committing code.",
+        "- Use standard tests and the normal commit review by the review panel (`commit_reviewed`) before committing code.",
         "- Land at most ONE reviewed self-modification commit in this cycle. Fold reviewer fixes into that commit before committing; do not churn follow-up commits.",
         "- After a reviewed commit lands, call request_restart once and stop. Restart verification is the absorption boundary for the cycle.",
         "- An honest no-op is a legitimate outcome when the objective is unsafe, already solved, too broad, or needs owner input; do not commit just to make a cycle non-empty.",
