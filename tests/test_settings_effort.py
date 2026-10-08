@@ -48,10 +48,11 @@ def test_effort_defaults_in_config():
     """All effort keys have correct defaults in SETTINGS_DEFAULTS."""
     assert SETTINGS_DEFAULTS.get("OUROBOROS_EFFORT_TASK") == "medium"
     assert SETTINGS_DEFAULTS.get("OUROBOROS_EFFORT_EVOLUTION") == "high"
-    assert SETTINGS_DEFAULTS.get("OUROBOROS_EFFORT_REVIEW") == "high"
-    assert SETTINGS_DEFAULTS.get("OUROBOROS_EFFORT_SCOPE_REVIEW") == "high"
-    assert SETTINGS_DEFAULTS.get("OUROBOROS_EFFORT_DEEP_SELF_REVIEW") == "high"
     assert SETTINGS_DEFAULTS.get("OUROBOROS_EFFORT_CONSCIOUSNESS") == ""  # empty = the Task / Chat effort
+    # The review surface efforts are retired settings (review pool: effort is a field of
+    # the reviewer row); the resolver keeps its own "high" default for callers.
+    for retired in ("OUROBOROS_EFFORT_REVIEW", "OUROBOROS_EFFORT_SCOPE_REVIEW", "OUROBOROS_EFFORT_DEEP_SELF_REVIEW"):
+        assert retired not in SETTINGS_DEFAULTS
 
 
 def test_review_effort_default_carriers_stay_in_sync():
@@ -68,8 +69,11 @@ def test_review_effort_default_carriers_stay_in_sync():
     slots_ui = (root / "web" / "modules" / "reviewer_slots.js").read_text(encoding="utf-8")
     assert "review effort" in slots_ui and "scope review effort" in slots_ui
     assert "effort: 'low'" in slots_ui  # the advisory default (D14)
-    assert SETTINGS_DEFAULTS["OUROBOROS_EFFORT_REVIEW"] == "high"
-    assert SETTINGS_DEFAULTS["OUROBOROS_EFFORT_SCOPE_REVIEW"] == "high"
+    # The surface effort keys are retired (review pool: effort lives on the reviewer
+    # row); the read seam migrates them, so they are no shipped default any more.
+    assert "OUROBOROS_EFFORT_REVIEW" not in SETTINGS_DEFAULTS
+    assert "OUROBOROS_EFFORT_SCOPE_REVIEW" not in SETTINGS_DEFAULTS
+    assert resolve_effort("review") == "high" and resolve_effort("scope_review") == "high"
 
 
 def test_deep_self_review_effort_slot(monkeypatch):
@@ -484,6 +488,8 @@ def test_apply_settings_to_env_includes_effort_keys(monkeypatch, tmp_path):
     settings = {
         "OUROBOROS_EFFORT_TASK": "low",
         "OUROBOROS_EFFORT_EVOLUTION": "medium",
+        # Retired review-lane efforts in a stale settings dict are ghosts too (the read
+        # seam migrates them into the reviewer rows): apply must NOT export them.
         "OUROBOROS_EFFORT_REVIEW": "high",
         "OUROBOROS_EFFORT_SCOPE_REVIEW": "low",
         "OUROBOROS_EFFORT_CONSCIOUSNESS": "none",
@@ -499,8 +505,8 @@ def test_apply_settings_to_env_includes_effort_keys(monkeypatch, tmp_path):
     apply_settings_to_env(settings)
     assert os.environ.get("OUROBOROS_EFFORT_TASK") == "low"
     assert os.environ.get("OUROBOROS_EFFORT_EVOLUTION") == "medium"
-    assert os.environ.get("OUROBOROS_EFFORT_REVIEW") == "high"
-    assert os.environ.get("OUROBOROS_EFFORT_SCOPE_REVIEW") == "low"
+    assert os.environ.get("OUROBOROS_EFFORT_REVIEW") is None
+    assert os.environ.get("OUROBOROS_EFFORT_SCOPE_REVIEW") is None
     assert os.environ.get("OUROBOROS_EFFORT_CONSCIOUSNESS") == "none"
     # ABI-10: the retired comma-list INPUT is ignored; the env carries the projection of the
     # configured reviewer slots (defaults here), never the retired value.

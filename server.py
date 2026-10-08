@@ -91,6 +91,7 @@ from ouroboros.server_maintenance import (  # noqa: F401
     _resume_interrupted_project_deletions,
     _run_startup_task_recovery,
     _startup_retired_settings_notice,
+    _startup_review_pool_notice,
     _startup_custody_sweep,
     _startup_prune_sweeps,
     _startup_worktree_prune,
@@ -726,6 +727,7 @@ def _run_supervisor(settings: dict) -> None:
                     )
                 send_with_budget(int(st_boot["owner_chat_id"]), " ".join(notice), role="system", system_type="startup_notice")
         _startup_retired_settings_notice(settings)
+        _startup_review_pool_notice(settings)
         from ouroboros.upgrade_notices import startup_upgrade_notices
         startup_upgrade_notices(settings)
 

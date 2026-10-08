@@ -232,7 +232,8 @@ def test_antigravity_install_succeeds_without_inventing_reviewer_seats(onboardin
         "target_id": "agy=gemini-3.8-flash-high",
         "credential_profile_id": "",
     }
-    assert saved["OUROBOROS_REVIEWER_SLOTS"] == ""
+    # The review lanes are retired (PR-3): the onboarding authors no lane key at all.
+    assert "OUROBOROS_REVIEWER_SLOTS" not in saved
 
 
 def test_daemon_unavailable_persists_nothing_and_keeps_the_wizard_open(onboarding):

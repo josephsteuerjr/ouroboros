@@ -100,7 +100,7 @@ A registry of `config.SETTINGS_DEFAULTS` (exact defaults canonical in `settings_
 | OUROBOROS_FALLBACK_COOLDOWN_SEC | 120 | Cooldown window |
 | OUROBOROS_FALLBACK_ATTEMPTS_PER_MODEL | 1 | Attempts per model in the fallback walk |
 | OUROBOROS_REVIEW_NATIVE_MAX_TRANSCRIPT_CHARS | 900000 | Owner ceiling (chars) on ONE working view of the native review episode; effective bound = min(this, calibrated route capacity); mandatory reading uses successive views and never raises it (shortfall disclosed as `native_multiple_windows_required`); no round cap (the retired round-cap key: §11.4) — exhaustion fails closed for verdicts and discloses an incomplete report, never a silent truncation (§6 Review delivery) |
-| OUROBOROS_MODEL_DEEP_SELF_REVIEW | (empty) | Legacy source for an absent `deep_review` row; native retrieval. Nonempty choices stay pinned. Empty uses Main on a fresh compatible-only panel, otherwise the OpenRouter default; a saved panel retains its legacy default. The row in Agents → Review lanes overrides this key. |
+| OUROBOROS_MODEL_DEEP_SELF_REVIEW | (migrated) | Retired with the review lanes: a stored value becomes the deep-review helper row of `OUROBOROS_SUBAGENTS` (no Reviewer mark) at load (`review_pool_migration.py`); `/review` takes its reviewer per call (default Main); env inert |
 | OUROBOROS_MAX_WORKERS | 10 | Active worker dispatch capacity; required owner waits retain additional sleeping processes |
 | OUROBOROS_MAX_ACTIVE_SUBAGENTS_PER_ROOT | 6 | Live-subagent cap per root (hard cap 500 ids; depth hard cap 10) |
 | OUROBOROS_MAX_SUBAGENT_DEPTH | 3 | Subagent tree depth |
@@ -138,7 +138,7 @@ A registry of `config.SETTINGS_DEFAULTS` (exact defaults canonical in `settings_
 | OUROBOROS_OBSERVABILITY_KEEP_RAW | unset | Env-only: truthy enables raw observability payload persistence |
 | OUROBOROS_GENERATIVE_PROBE | 1 (on) | Generative-write probe toggle |
 | OUROBOROS_GENERATIVE_PROBE_CHARS | 5000000 | Generative-probe size companion |
-| OUROBOROS_REVIEWER_SLOTS | (empty) | Structured reviewer-slot SSOT (`reviewer_slot_config.py`); empty = the shipped default panel; contract: #### Reviewer slots |
+| OUROBOROS_REVIEWER_SLOTS | (migrated) | Retired review-lane SSOT: a stored document is read ONCE by the frozen lane readers of `review_pool_migration.py` and every effective seat becomes a reviewer row of `OUROBOROS_SUBAGENTS` (`review_eligible: true`, Settings → Agents); an unreadable value stays in the document for the owner; snapshot `state/review_migrations/<ts>-slots-to-pool.json` |
 | OUROBOROS_SUBSCRIPTION_PRESET_VERSION | (empty) | One-shot install-preset marker; endpoint-authored, DISK-ONLY (`ENDPOINT_AUTHORED_SETTINGS`); its absence authorizes nothing (§2) |
 | OUROBOROS_SUBAGENT_PRESET_RECEIPT | (empty) | Install-preset receipt; endpoint-authored, disk-only |
 | OUROBOROS_ONBOARDING_COMPLETED_AT | (empty) | Durable completion fact; endpoint-authored, disk-only |
@@ -177,9 +177,9 @@ A registry of `config.SETTINGS_DEFAULTS` (exact defaults canonical in `settings_
 | OUROBOROS_PROMPT_CACHE_TTL | 1h | Prompt-cache tier default/5m/1h for cache markers on compatible Anthropic-family wire payloads; the final send boundary legalizes ordering, so prompt builders own no provider TTL policy; `review_helpers.cached_prompt_blocks` and `usage_accounting._reservation_cost` also consult it; usage records the applied tier |
 | OUROBOROS_EFFORT_TASK | medium | Task reasoning effort (none/minimal/low/medium/high/xhigh/max/ultra; Settings hides `minimal`), the start of every ordinary root that names no explicit `reasoning_effort` (§6 Explicit starting effort of a root); preferred tier; exact-route, success-confirmed adaptation, original/sent/reported facts stay in usage/Logs. Controls Light post-task synthesis (reflection, Pattern Register update, episodic summary), which has no separate level |
 | OUROBOROS_EFFORT_EVOLUTION | high | Evolution effort |
-| OUROBOROS_EFFORT_REVIEW | high | Review effort for rows that pin none; a plan envelope's `reviewer_effort` outranks it and a row's pinned effort for that plan (a compound route slug keeps its encoded effort); the effective per-seat effort is recorded and a panel ordered weaker than the owner's setting is named |
-| OUROBOROS_EFFORT_SCOPE_REVIEW | high | Effort of the transitional coupling-only rows still configured under the old scope role |
-| OUROBOROS_EFFORT_DEEP_SELF_REVIEW | high | Deep-self-review surface default; a saved `deep_review` row's own effort outranks it |
+| OUROBOROS_EFFORT_REVIEW | (migrated) | Retired surface default: at load each triad seat without its own effort is given this value on its reviewer row (`review_pool_migration.py`); afterwards the row's `effort` is the only effort; env inert |
+| OUROBOROS_EFFORT_SCOPE_REVIEW | (migrated) | Retired surface default: consumed into the scope seats' reviewer rows at load; env inert |
+| OUROBOROS_EFFORT_DEEP_SELF_REVIEW | (migrated) | Retired surface default: consumed into the deep-review helper row at load; env inert |
 | OUROBOROS_EFFORT_CONSCIOUSNESS | (empty) | Consciousness effort; empty = the Task / Chat effort (a wake is an ordinary Main turn), a set value is honored |
 | OUROBOROS_RETURN_REASONING | true | Ask OpenRouter to return reasoning; direct/local request copies strip OpenRouter-only fields |
 | OUROBOROS_REASONING_SUMMARY | auto | Readable reasoning-summary rendering; presentation-only, never added to history or returned to providers |

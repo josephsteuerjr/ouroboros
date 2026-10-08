@@ -2,21 +2,24 @@
 
 ``config.normalize_settings_raw`` drops the keys a release retired and says so on the
 module logger — a line an owner who never opens the Logs panel does not see. The
-supervisor boot now tells the OWNER once, in their chat, from the sets that read seam
+supervisor boot tells the OWNER once, in their chat, from the sets that read seam
 recorded, with the same sentence, deduplicated durably per retired-key set in
 ``state.json``. These tests pin: emitted once for a document carrying a retired key,
 not emitted without one, not repeated on a second boot, not sent (and not marked)
-before an owner chat is bound, the active panel source named truthfully in each of its three
-states (absent / authored / invalid), and the boot wiring itself.
+before an owner chat is bound, the successor named truthfully (the reviewer comma-lists
+are replaced by the review pool), the review-lane keys consumed by the pool migration
+never reported as a loss, and the boot wiring itself.
 """
 
 from __future__ import annotations
 
+import json
 import pathlib
 
 import pytest
 
 from ouroboros import config as cfg
+from ouroboros import review_pool_migration as rpm
 from ouroboros import server_maintenance
 from supervisor import message_bus, state
 
@@ -29,8 +32,10 @@ def boot_state(tmp_path, monkeypatch):
     (tmp_path / "locks").mkdir(parents=True, exist_ok=True)
     state.save_state({})  # an initialized install: only explicit init creates state (#1307)
     cfg._RETIREMENT_NOTICE_SEEN.clear()
+    rpm._MIGRATIONS_SEEN.clear()
     yield tmp_path
     cfg._RETIREMENT_NOTICE_SEEN.clear()
+    rpm._MIGRATIONS_SEEN.clear()
 
 
 @pytest.fixture
@@ -67,8 +72,8 @@ def test_notice_reaches_the_owner_chat_once_per_retired_key_set(boot_state, sent
     for key in ("OUROBOROS_REVIEW_MODELS", "OUROBOROS_SCOPE_REVIEW_MODEL"):
         assert key in text, key
     assert "NOT honored" in text
-    assert "OUROBOROS_REVIEWER_SLOTS" in text, "the successor setting is named"
-    assert "shipped" in text.lower(), "the ACTIVE panel source is named"
+    assert "OUROBOROS_SUBAGENTS" in text, "the successor surface (the review pool) is named"
+    assert "review pool" in text
     assert "TOTAL_BUDGET" not in text
 
     # The durable marker is keyed by the exact retired-key set.
@@ -140,20 +145,57 @@ AUTHORED_SLOTS = (
 MALFORMED_SLOTS = '{"triad": [{"model": "x/y"}]}'  # a row without slot_id/route: rejected
 
 
-def test_a_malformed_reviewer_slots_setting_names_no_panel_and_the_parse_error(boot_state, sent, caplog):
-    """Non-empty is not authored, and malformed is not absent either: the loader
-    (``load_reviewer_slot_config``) RAISES on text the strict parser rejects, so no panel
-    serves — commit review blocks, plan and skill review refuse — until the owner repairs
-    the setting. The notice must say exactly that, with the row-precise parse error, in the
-    chat and in the read-seam log line; it must claim neither the authored panel nor the
-    shipped default (astra M4 finding 8: the earlier pin asserted "SHIPPED default" here)."""
+def test_the_comma_list_clause_names_the_review_pool():
+    """The sentence itself: the reviewer comma-lists are replaced by the rows of the
+    subagent catalog marked Reviewer — one static fact, because which rows run is the
+    review-pool migration's own report, not this notice's."""
+    from ouroboros.settings_defaults import retired_setting_keys_notice
+
+    text = retired_setting_keys_notice(("OUROBOROS_REVIEW_MODELS",))
+    assert "OUROBOROS_REVIEW_MODELS" in text and "review pool" in text
+    assert "OUROBOROS_SUBAGENTS" in text and "Settings → Agents" in text
+    for stale in ("SHIPPED", "authored in that setting", "NO reviewer panel", "OUROBOROS_REVIEWER_SLOTS"):
+        assert stale not in text, (stale, text)
+
+
+def test_migrated_review_lane_keys_are_consumed_not_reported_as_a_loss(boot_state, sent, caplog):
+    """An authored panel is migrated into the subagent catalog BEFORE the purge: the lane
+    key and the surface effort keys leave the document as consumed, so neither the chat
+    notice nor the read-seam log line lists them among the dropped keys — only the
+    comma-lists, which the migration never read (ABI-10), are a loss to report."""
     import logging
 
-    from ouroboros.reviewer_slot_config import parse_reviewer_slots
+    _bind_owner(1)
+    doc = dict(RETIRED_DOC, OUROBOROS_REVIEWER_SLOTS=AUTHORED_SLOTS, OUROBOROS_EFFORT_REVIEW="medium")
+    with caplog.at_level(logging.WARNING, logger="ouroboros.config"):
+        loaded = cfg.normalize_settings_raw(doc)
+    server_maintenance._startup_retired_settings_notice(loaded)
 
-    with pytest.raises(ValueError) as err:
-        parse_reviewer_slots(MALFORMED_SLOTS)
-    parse_error = str(err.value)
+    assert "OUROBOROS_REVIEWER_SLOTS" not in loaded and "OUROBOROS_EFFORT_REVIEW" not in loaded
+    catalog = json.loads(loaded["OUROBOROS_SUBAGENTS"])
+    # t1 (packet, medium from the surface key) and s1 (reads, high) are two engines: two rows.
+    assert [row["subagent_id"] for row in catalog["items"] if row.get("review_eligible")] == ["review-1", "review-2"]
+    assert len(sent) == 1
+    text = sent[0][1]
+    assert "OUROBOROS_REVIEW_MODELS" in text
+    assert "OUROBOROS_REVIEWER_SLOTS" not in text and "OUROBOROS_EFFORT_REVIEW" not in text
+    log_lines = [r.getMessage() for r in caplog.records if "retired" in r.getMessage()]
+    assert len(log_lines) == 1 and "OUROBOROS_REVIEWER_SLOTS" not in log_lines[0]
+    assert list(state.load_state()["retired_settings_notified"]) == [
+        "OUROBOROS_REVIEW_MODELS,OUROBOROS_SCOPE_REVIEW_MODEL"]
+
+
+def test_a_malformed_reviewer_slots_setting_is_kept_for_the_owner_not_dropped(boot_state, sent, caplog):
+    """A lane value the strict parser rejects cannot be migrated, and a key the owner must
+    still repair is not a loss to announce: the migration keeps it in the document (its own
+    report names the error), the purge leaves it alone, and the retired-keys notice lists
+    only the comma-lists."""
+    import logging
+
+    from ouroboros.review_pool_migration import parse_reviewer_slots
+
+    with pytest.raises(ValueError):
+        parse_reviewer_slots({}, MALFORMED_SLOTS)
 
     _bind_owner(1)
     doc = dict(RETIRED_DOC, OUROBOROS_REVIEWER_SLOTS=MALFORMED_SLOTS)
@@ -161,57 +203,22 @@ def test_a_malformed_reviewer_slots_setting_names_no_panel_and_the_parse_error(b
         loaded = cfg.normalize_settings_raw(doc)
     server_maintenance._startup_retired_settings_notice(loaded)
 
-    assert len(sent) == 1
-    text = sent[0][1]
-    assert "OUROBOROS_REVIEWER_SLOTS" in text and "NO reviewer panel" in text
-    assert "refused" in text and "repaired" in text
-    assert parse_error in text, "the row-precise parse error is what the owner has to fix"
-    assert "shipped" not in text.lower() and "authored in that setting" not in text
-    log_lines = [r.getMessage() for r in caplog.records if "retired" in r.getMessage()]
-    assert len(log_lines) == 1 and "NO reviewer panel" in log_lines[0] and parse_error in log_lines[0]
+    assert loaded["OUROBOROS_REVIEWER_SLOTS"] == MALFORMED_SLOTS, "kept until the owner's catalog save"
+    assert "OUROBOROS_SUBAGENTS" not in loaded, "no partial migration"
+    assert len(sent) == 1 and "OUROBOROS_REVIEWER_SLOTS" not in sent[0][1]
+    outcomes = cfg.review_pool_migrations_seen()
+    assert len(outcomes) == 1 and outcomes[0].error and outcomes[0].retained_keys == ("OUROBOROS_REVIEWER_SLOTS",)
+    not_migrated = [r.getMessage() for r in caplog.records if "not migrated" in r.getMessage()]
+    assert len(not_migrated) == 1
 
 
-@pytest.mark.parametrize("slots_state,expected,forbidden", [
-    (("absent", ""), "SHIPPED default", ("authored in that setting", "NO reviewer panel")),
-    (("authored", ""), "authored in that setting", ("SHIPPED", "NO reviewer panel")),
-    (("invalid", "OUROBOROS_REVIEWER_SLOTS: triad[0] is not an object"),
-     "NO reviewer panel", ("SHIPPED", "authored in that setting")),
-], ids=["absent", "authored", "invalid"])
-def test_the_notice_sentence_has_three_honest_panel_states(slots_state, expected, forbidden):
-    """The sentence itself, per state the reviewer-slot seam derives: absent -> the shipped
-    default runs; authored -> that panel runs; invalid -> no panel, the parse error named."""
-    from ouroboros.settings_defaults import retired_setting_keys_notice
-
-    text = retired_setting_keys_notice(("OUROBOROS_REVIEW_MODELS",), reviewer_slots=slots_state)
-    assert expected in text, text
-    for phrase in forbidden:
-        assert phrase not in text, (phrase, text)
-    if slots_state[0] == "invalid":
-        assert slots_state[1] in text
-
-def test_an_authored_reviewer_slots_setting_is_named_as_the_active_panel(boot_state, sent, caplog):
-    """The notice names what runs NOW: an owner who already authored the structured
-    setting is not told they are on the shipped default panel — in the chat, and in the
-    log line the read seam emits from the same sentence."""
-    import logging
-
-    _bind_owner(1)
-    doc = dict(RETIRED_DOC, OUROBOROS_REVIEWER_SLOTS=AUTHORED_SLOTS)
-    with caplog.at_level(logging.WARNING, logger="ouroboros.config"):
-        loaded = cfg.normalize_settings_raw(doc)
-    server_maintenance._startup_retired_settings_notice(loaded)
-
-    assert len(sent) == 1
-    text = sent[0][1]
-    assert "authored" in text and "shipped" not in text.lower()
-    log_lines = [r.getMessage() for r in caplog.records if "retired" in r.getMessage()]
-    assert len(log_lines) == 1 and "shipped" not in log_lines[0].lower()
-
-
-def test_the_supervisor_boot_calls_the_notice_after_the_queue_restore():
-    """The wiring pin: the notice runs in ``server._run_supervisor`` once the message bus
-    and the state file are initialised, next to the other boot-time owner notices."""
+def test_the_supervisor_boot_calls_the_notices_after_the_queue_restore():
+    """The wiring pin: both notices run in ``server._run_supervisor`` once the message bus
+    and the state file are initialised, next to the other boot-time owner notices; the
+    review-pool report follows the retired-keys notice."""
     source = (pathlib.Path(__file__).resolve().parents[1] / "server.py").read_text(encoding="utf-8")
-    body = source.split("def _run_supervisor(settings: dict) -> None:", 1)[1]
-    assert "_startup_retired_settings_notice(settings)" in body.split("\ndef ", 1)[0]
+    body = source.split("def _run_supervisor(settings: dict) -> None:", 1)[1].split("\ndef ", 1)[0]
+    assert "_startup_retired_settings_notice(settings)" in body
+    assert "_startup_review_pool_notice(settings)" in body
     assert body.index("restore_pending_from_snapshot(") < body.index("_startup_retired_settings_notice(settings)")
+    assert body.index("_startup_retired_settings_notice(settings)") < body.index("_startup_review_pool_notice(settings)")

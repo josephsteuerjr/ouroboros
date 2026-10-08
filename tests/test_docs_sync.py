@@ -796,8 +796,10 @@ def test_architecture_endpoint_table_mirrors_route_registries(tmp_path):
 
 
 # Rows the settings table documents on purpose although `config.SETTINGS_DEFAULTS`
-# has no such key: operator env-only levers (never a settings.json carrier) and the
-# retired alias whose migration the table still explains (pinned by test_review_cycles).
+# has no such key: operator env-only levers (never a settings.json carrier), the
+# retired alias whose migration the table still explains (pinned by test_review_cycles),
+# and the review-lane keys the review-pool migration consumes at load
+# (`settings_defaults.REVIEW_POOL_MIGRATED_SETTING_KEYS`; tests/test_review_pool_migration.py).
 SETTINGS_TABLE_ENV_ONLY_ROWS = frozenset({
     "OUROBOROS_TRUST_NONLOCAL_BIND_WITHOUT_PASSWORD", "OUROBOROS_DISABLE_MANAGED_UPDATES",
     "OUROBOROS_PRESENTATION", "OUROBOROS_DESKTOP_BACKGROUND", "OUROBOROS_USER_FILES_ROOT", "OUROBOROS_OBSERVABILITY_KEEP_RAW",
@@ -806,7 +808,11 @@ SETTINGS_TABLE_ENV_ONLY_ROWS = frozenset({
     "OUROBOROS_PREFLIGHT_TEST_WORKERS", "OUROBOROS_BUNDLE_DIR",
     "OUROBOROS_EXTERNAL_HOST_UPDATE", "OUROBOROS_EXTERNAL_HOST_RESULT",
 })
-SETTINGS_TABLE_RETIRED_ROWS = frozenset({"OUROBOROS_ACCEPTANCE_MAX_IMPROVEMENT_PASSES"})
+SETTINGS_TABLE_RETIRED_ROWS = frozenset({
+    "OUROBOROS_ACCEPTANCE_MAX_IMPROVEMENT_PASSES",
+    "OUROBOROS_REVIEWER_SLOTS", "OUROBOROS_EFFORT_REVIEW", "OUROBOROS_EFFORT_SCOPE_REVIEW",
+    "OUROBOROS_EFFORT_DEEP_SELF_REVIEW", "OUROBOROS_MODEL_DEEP_SELF_REVIEW",
+})
 
 
 def _normalize_default_cell(cell: str) -> str:

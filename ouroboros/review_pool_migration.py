@@ -48,10 +48,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 from ouroboros.model_slots import normalize_processing_preference, resolve_processing_preference
+from ouroboros.review_dispatch import slot_id_for_row
 from ouroboros.route_spec import (
     ROUTE_KIND_AGENT_SESSION as SHARED_ROUTE_KIND_SESSION,
     ROUTE_KIND_API_MODEL as SHARED_ROUTE_KIND_API,
@@ -68,6 +70,8 @@ from ouroboros.settings_defaults import (
     REVIEW_POOL_MIGRATED_SETTING_KEYS,
 )
 from ouroboros.settings_scales import EFFORT_SCALE
+
+log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Frozen vocabulary (copies of the lane constants the live module is losing).
@@ -567,7 +571,7 @@ def factory_lanes(document: Mapping[str, Any]) -> ReviewLanes:
 
     def rows(models: list[str], prefix: str, delivery: str) -> Tuple[LaneRow, ...]:
         return tuple(
-            LaneRow(slot_id=f"{prefix}_{idx + 1}", kind=ROUTE_KIND_API, target_id=str(model),
+            LaneRow(slot_id=slot_id_for_row(idx + 1, prefix=prefix), kind=ROUTE_KIND_API, target_id=str(model),
                     processing_preference=processing, delivery=delivery)
             for idx, model in enumerate(m for m in models if str(m or "").strip())
         )
@@ -1258,6 +1262,41 @@ def apply_outcome(loaded: Dict[str, Any], outcome: MigrationOutcome) -> None:
         loaded.pop(key, None)
 
 
+# Migrations this process's settings reads have computed, keyed by the digest of the
+# document facts the migration reads (insertion order kept). The read seam runs on every
+# settings read, so one document is migrated once and the recorded outcome is re-applied;
+# the supervisor boot writes the snapshot and tells the owner from ``migrations_seen()``.
+_MIGRATIONS_SEEN: Dict[str, MigrationOutcome] = {}
+
+
+def migrations_seen() -> Tuple[MigrationOutcome, ...]:
+    """The outcomes this process has computed, oldest first."""
+    return tuple(_MIGRATIONS_SEEN.values())
+
+
+def apply_at_read_seam(loaded: Dict[str, Any]) -> Tuple[str, ...]:
+    """Run (or replay) the migration on ``loaded`` inside ``config.normalize_settings_raw``;
+    returns the lane keys the retired-key purge must leave in place (an error outcome
+    keeps them for the owner's save)."""
+    if not migration_applies(loaded):
+        return ()
+    digest = input_sha256(loaded)
+    outcome = _MIGRATIONS_SEEN.get(digest)
+    if outcome is None:
+        outcome = migrate_review_lanes(loaded)
+        if outcome is None:
+            return ()
+        _MIGRATIONS_SEEN[digest] = outcome
+        summary = outcome.snapshot.get("summary") or {}
+        if outcome.error:
+            log.warning("settings: review lanes not migrated: %s", outcome.error)
+        elif not outcome.noop:
+            log.info("settings: review lanes migrated into the review pool (%s seats -> %s reviewer rows)",
+                     summary.get("seats_before"), summary.get("rows_marked_after"))
+    apply_outcome(loaded, outcome)
+    return tuple(outcome.retained_keys)
+
+
 # ---------------------------------------------------------------------------
 # The owner's one message.
 # ---------------------------------------------------------------------------
@@ -1335,6 +1374,7 @@ __all__ = [
     "MigrationOutcome",
     "ReviewLanes",
     "Seat",
+    "apply_at_read_seam",
     "apply_outcome",
     "effective_executions",
     "factory_lanes",
@@ -1342,6 +1382,7 @@ __all__ = [
     "input_sha256",
     "migrate_review_lanes",
     "migration_applies",
+    "migrations_seen",
     "owner_message",
     "parse_reviewer_slots",
 ]

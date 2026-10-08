@@ -37,7 +37,7 @@ from ouroboros.settings_defaults import (
     PACING_INTERVAL_DEFAULT_SEC,  # noqa: F401
     RETIRED_COMMA_LIST_SETTING_KEYS,  # noqa: F401
     RETIRED_SETTING_KEYS,  # noqa: F401
-    RETIRED_SETTING_SUCCESSORS,  # noqa: F401
+    RETIRED_SETTING_SUCCESSORS, REVIEW_POOL_MIGRATED_SETTING_KEYS, REVIEW_POOL_MIGRATION_CLASS_LINE,  # noqa: F401
     retired_setting_keys_notice,  # noqa: F401
     SETTINGS_DEFAULTS,  # noqa: F401
     SETTINGS_KEYS_NOT_EXPORTED_TO_ENV,  # noqa: F401
@@ -722,6 +722,12 @@ def retired_key_sets_seen() -> tuple[tuple[str, ...], ...]:
     return tuple(sorted(_RETIREMENT_NOTICE_SEEN))
 
 
+def review_pool_migrations_seen() -> tuple:
+    """Review-lane -> review-pool ``MigrationOutcome`` records this process computed, oldest first."""
+    from ouroboros.review_pool_migration import migrations_seen
+    return migrations_seen()
+
+
 def normalize_settings_raw(raw: dict) -> dict:
     """THE raw-stage normalization every settings READER applies BEFORE defaults.
 
@@ -729,12 +735,13 @@ def normalize_settings_raw(raw: dict) -> dict:
     reader's first job is to translate it into today's vocabulary: coerce every known key to
     the type its default declares, fold the deprecated per-subsystem retention keys into the
     unified one, seed the shared review-cycle cap from the retired acceptance-pass count,
-    drop the keys a release retired, promote the renamed model slots, and repair secret
-    placeholders. Every step exists to PRESERVE an owner customization written under a
-    former key, which is why the order matters: the pass count is consumed BEFORE the retired
-    purge would drop it, and the purge runs BEFORE the slot rename so a retired spelling is
-    never promoted into a live key. Unknown keys pass through untouched — ``settings.json``
-    is the owner's document.
+    turn the former review lanes into reviewer rows of the subagent catalog (``review_pool_migration``:
+    pure, once per document digest; one that cannot finish keeps its keys for the owner's next save),
+    drop the keys a release retired, promote the renamed model slots, and repair secret placeholders.
+    Every step exists to PRESERVE an owner customization written under a former key, which is why
+    the order matters: the pass count and the lanes are consumed BEFORE the retired purge would drop
+    them, and the purge runs BEFORE the slot rename so a retired spelling is never promoted into a
+    live key. Unknown keys pass through untouched — ``settings.json`` is the owner's document.
 
     Pure — it reads no file, persists no document, and consults no environment, so a reader
     can apply it and a read stays a read. It is the seam BECAUSE it was previously inline in
@@ -772,16 +779,14 @@ def normalize_settings_raw(raw: dict) -> dict:
         _passes = 1  # 1 = shipped legacy default: nothing to seed
     if _passes != 1 and "OUROBOROS_REVIEW_MAX_CYCLES" not in loaded:
         loaded["OUROBOROS_REVIEW_MAX_CYCLES"] = str(max(0, _passes) + 1)
-    dropped = tuple(key for key in RETIRED_SETTING_KEYS if key in loaded)
-    for _retired in RETIRED_SETTING_KEYS:
+    from ouroboros.review_pool_migration import apply_at_read_seam
+    _retained = apply_at_read_seam(loaded)  # the lanes become reviewer rows BEFORE the purge
+    dropped = tuple(key for key in RETIRED_SETTING_KEYS if key in loaded and key not in _retained)
+    for _retired in dropped:
         loaded.pop(_retired, None)
     if dropped and dropped not in _RETIREMENT_NOTICE_SEEN:
         _RETIREMENT_NOTICE_SEEN.add(dropped)
-        from ouroboros.reviewer_slot_config import authored_reviewer_slots_state
-
-        log.warning("settings: %s", retired_setting_keys_notice(
-            dropped, reviewer_slots=authored_reviewer_slots_state(
-                str(loaded.get("OUROBOROS_REVIEWER_SLOTS") or ""))))
+        log.warning("settings: %s", retired_setting_keys_notice(dropped))
     migrate_legacy_slot_keys(loaded)
     return strip_masked_secrets(loaded, known_setting_keys=SETTINGS_DEFAULTS)
 

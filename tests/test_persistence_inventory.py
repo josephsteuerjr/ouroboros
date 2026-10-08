@@ -696,7 +696,10 @@ def scan_data_paths(root: pathlib.Path = REPO) -> frozenset[str]:
 # ``state/scope_delivery_migration.json`` is gone with the scope role — the one
 # brief has two parts and no separate scope wave to migrate (its PERSISTENCE.md row
 # was removed with the writer).
-EXPECTED_SCAN_PATHS = 346
+# 346 -> 348 (review pool, PR-3): the review-lane -> review-pool migration receipt
+# ``state/review_migrations/<ts>-slots-to-pool.json`` and its directory
+# (``ouroboros/server_maintenance.py`` ``_startup_review_pool_notice``; one section-2 row).
+EXPECTED_SCAN_PATHS = 348
 
 # Scanned paths that must always be present — guards the scanner itself
 # against a silent regression that would shrink coverage while keeping counts

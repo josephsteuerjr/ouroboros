@@ -138,6 +138,12 @@ _MOVED_OWNERS = {
     # retired keys whose successor SETTING the table states, so the first-boot
     # notice can name it instead of claiming there is none.
     "RETIRED_SETTING_SUCCESSORS": settings_defaults,
+    # PR-3 (review pool): the third classification inside the retirement SSOT —
+    # the review-lane keys whose stored value is MIGRATED into reviewer rows of
+    # the subagent catalog at load (`review_pool_migration`), never dropped — and
+    # the one «migrated» class line the RC auditor and the boot notice share.
+    "REVIEW_POOL_MIGRATED_SETTING_KEYS": settings_defaults,
+    "REVIEW_POOL_MIGRATION_CLASS_LINE": settings_defaults,
     # D-07: the ONE sentence both the read seam's log line and the boot-time
     # owner chat notice say about retired keys, next to the tables it reads.
     "retired_setting_keys_notice": settings_defaults,
@@ -333,5 +339,8 @@ def test_settings_extraction_size_bounds_have_meaningful_headroom():
     assert all(count <= 1000 for count in counts.values())
     # 500 -> 520: the Z.ai direct provider adds its key and plan rows to the leaf (PR #1207).
     # 520 -> 521: the desktop keep-running consent key's default row (PR #1404; its disk-authored entry adds none).
-    assert counts["ouroboros.settings_defaults"] <= 521
+    # 521 -> 538: PR-3 (review pool) — the five review-lane keys leave SETTINGS_DEFAULTS
+    # for RETIRED_SETTING_KEYS and gain the REVIEW_POOL_MIGRATED_SETTING_KEYS class
+    # (+ its shared «migrated» line) the read seam, the RC auditor and the boot notice read.
+    assert counts["ouroboros.settings_defaults"] <= 538
     assert (PACKAGE / "config.py").is_file()

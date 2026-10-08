@@ -47,10 +47,9 @@ def test_settings_defaults_include_phase2_keys():
     assert SETTINGS_DEFAULTS["OUROBOROS_MODEL_CONSCIOUSNESS"] == ""
     assert SETTINGS_DEFAULTS["OUROBOROS_MODEL_LIGHT"] == "openai/gpt-5.6-luna"
     assert SETTINGS_DEFAULTS["OUROBOROS_MODEL_FALLBACKS"] == "openai/gpt-5.6-luna"
-    assert (
-        SETTINGS_DEFAULTS["OUROBOROS_MODEL_DEEP_SELF_REVIEW"]
-        == ""  # unauthored; the getter resolves the route's default
-    )
+    # Retired (review pool): the deep-review model is a reviewer row of the subagent
+    # catalog; the read seam migrates the key, so it is no shipped default any more.
+    assert "OUROBOROS_MODEL_DEEP_SELF_REVIEW" not in SETTINGS_DEFAULTS
     assert SETTINGS_DEFAULTS["TOTAL_BUDGET"] == 200.0
     assert SETTINGS_DEFAULTS["OUROBOROS_PER_TASK_COST_USD"] == 50.0
 

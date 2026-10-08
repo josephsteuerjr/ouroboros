@@ -251,7 +251,7 @@ def test_startup_notice_matches_loaded_runtime_bounds_and_raw_presence(
     from ouroboros.startup_migrations import prepare_startup_state
     prepare_startup_state(tmp_path)
     monkeypatch.setattr(bus, "get_bridge", lambda: None)
-    ss.save_state({"owner_chat_id": 7, "owner_id": 1, "reviewer_default_delivery_notified": "already"})
+    ss.save_state({"owner_chat_id": 7, "owner_id": 1})
 
     settings = cfg.load_settings()
     projected = {}
@@ -304,19 +304,16 @@ def notice_world(monkeypatch, tmp_path):
 
 
 def test_an_upgraded_untouched_install_hears_each_notice_once(notice_world):
+    # Which reviewers run is the review-pool migration's own report
+    # (server_maintenance._startup_review_pool_notice), not an upgrade notice.
     notice_world.notices.startup_upgrade_notices({})
-    assert [kw["system_type"] for _chat, _text, kw in notice_world.sent] == [
-        "reviewer_default_notice", "optional_bounds_notice"]
+    assert [kw["system_type"] for _chat, _text, kw in notice_world.sent] == ["optional_bounds_notice"]
     assert all(kw["require_write"] and kw["role"] == "system" for _c, _t, kw in notice_world.sent)
-    assert "200 rounds" in notice_world.sent[1][1] and "21600 seconds" in notice_world.sent[1][1]
+    assert "200 rounds" in notice_world.sent[0][1] and "21600 seconds" in notice_world.sent[0][1]
     notice_world.notices.startup_upgrade_notices({})
-    assert len(notice_world.sent) == 2  # never repeated
-    assert set(notice_world.state) >= {"reviewer_default_delivery_notified", "optional_bounds_notified"}
-
-
-def test_a_saved_panel_hears_nothing_about_the_default(notice_world):
-    notice_world.notices.startup_upgrade_notices({"OUROBOROS_REVIEWER_SLOTS": _panel(_api("t"))})
-    assert [kw["system_type"] for _c, _t, kw in notice_world.sent] == ["optional_bounds_notice"]
+    assert len(notice_world.sent) == 1  # never repeated
+    assert "optional_bounds_notified" in notice_world.state
+    assert not hasattr(notice_world.notices, "REVIEWER_DEFAULT_NOTICE")
 
 
 def test_no_owner_chat_or_a_failed_write_leaves_the_notice_owed(notice_world, monkeypatch):
@@ -328,7 +325,7 @@ def test_no_owner_chat_or_a_failed_write_leaves_the_notice_owed(notice_world, mo
     notice_world.state["owner_chat_id"] = 7
     monkeypatch.setattr(bus, "send_with_budget", lambda *a, **k: (_ for _ in ()).throw(OSError("disk")))
     notice_world.notices.startup_upgrade_notices({})
-    assert "reviewer_default_delivery_notified" not in notice_world.state
+    assert "optional_bounds_notified" not in notice_world.state
 
 
 @pytest.mark.parametrize("quality", ["unavailable", "recovered", "recovered_transient"])
@@ -337,7 +334,6 @@ def test_notice_never_uses_unconfirmed_display_owner(notice_world, quality):
                                          "unconfirmed": ["owner_chat_id"]}
     notice_world.notices.startup_upgrade_notices({})
     assert not notice_world.sent
-    assert "reviewer_default_delivery_notified" not in notice_world.state
     assert "optional_bounds_notified" not in notice_world.state
 
 
@@ -361,7 +357,6 @@ def test_notice_bookkeeping_preserves_recovered_control_uncertainty(monkeypatch,
     assert ss.control_value(before, "bg_consciousness_enabled") == (False, None)
     notices.startup_upgrade_notices({})
     after = ss.load_state()
-    assert after[notices.REVIEWER_DEFAULT_NOTICE_KEY]
     assert after[notices.OPTIONAL_BOUNDS_NOTICE_KEY]
     assert ss.control_value(after, "bg_consciousness_enabled") == (False, None)
     assert ss.control_value(after, "owner_chat_id") == (True, 7)
