@@ -155,7 +155,7 @@ def test_project_work_name_survives_real_outbox_bus_live_and_history(tmp_path, m
     ({"suggested_name": "**Suggested › title**"}, "Suggested › title"),
     ({}, "Task"),
 ])
-def test_legacy_work_name_uses_cached_structured_result_and_preserves_recorded_name(tmp_path, monkeypatch, fields, expected):
+def test_legacy_work_name_uses_cached_structured_result_and_preserves_recorded_name(tmp_path, activity_queue, monkeypatch, fields, expected):
     from ouroboros import task_status
 
     write_task_result(tmp_path, "root", "completed", **fields)
