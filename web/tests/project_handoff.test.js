@@ -350,3 +350,49 @@ test('current retry evidence heals a failed detail read; owner Continue stays a 
         assert.equal(status.textContent, 'Working');
     } finally { h.done(); }
 });
+
+test('census-only outcomes survive disconnection and partial omission without reviving motion', () => {
+    const h = setup(async () => null);
+    try {
+        const card = h.mount();
+        const secondary = card.node.querySelector('.chat-live-phase-secondary');
+        const activity = { activity_id: 't', phase: 'finalizing', status: 'failed',
+            root_phase_checkpoint: { post_task_synthesis: 'running' } };
+        h.controller.snapshot(census([activity]));
+        assert.equal(card.status.textContent, 'Failed');
+        assert.equal(secondary.textContent, 'Finalizing…');
+        assert.equal(secondary.dataset.motion, '1');
+        h.controller.snapshot(census([], false));
+        assert.equal(card.status.textContent, 'Failed');
+        assert.equal(secondary.textContent, 'Activity unconfirmed');
+        assert.equal(secondary.dataset.motion, '0');
+        h.controller.snapshot(census([activity]));
+        h.controller.setConnected(false);
+        h.controller.setConnected(true);
+        assert.equal(card.status.textContent, 'Failed');
+        assert.equal(secondary.textContent, 'Activity unconfirmed');
+        assert.equal(secondary.dataset.motion, '0');
+        h.controller.snapshot(census([activity]));
+        assert.equal(secondary.textContent, 'Finalizing…');
+        assert.equal(secondary.dataset.motion, '1');
+        h.controller.snapshot(census([{ activity_id: 'retry', timeout_retry_from: 't', phase: 'working' }]));
+        assert.equal(card.status.textContent, 'Working', 'a successor cannot borrow the predecessor result');
+        assert.equal(secondary.hidden, true);
+    } finally { h.done(); }
+});
+
+test('fresh outcome facts replace cached open finalization, including offline', () => {
+    const h = setup(async () => null);
+    try {
+        const card = h.mount();
+        const secondary = card.node.querySelector('.chat-live-phase-secondary');
+        h.controller.snapshot(census([{ activity_id: 't', phase: 'finalizing', status: 'failed',
+            root_phase_checkpoint: { post_task_synthesis: 'running' } }]));
+        h.controller.snapshot(census([{ activity_id: 't', phase: 'finalizing', status: 'completed',
+            root_phase_checkpoint: { post_task_synthesis: 'completed' } }]));
+        h.controller.setConnected(false);
+        assert.equal(card.status.textContent, 'Done');
+        assert.equal(secondary.hidden, true, 'a completed checkpoint replaces the cached running checkpoint');
+        assert.equal(card.status.dataset.motion, '0');
+    } finally { h.done(); }
+});

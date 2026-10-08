@@ -1132,7 +1132,7 @@ export function chatStatusCounts(activities, records, isWaiting = () => false) {
         if (projectHold) counts.projectWaitLabel = projectHold;
         else if (isWaiting(id)) continue;
         const waitPhase = activityWaitPhase(entry);
-        if (entry?.phase === 'unknown') counts.unknownActivityCount += 1;
+        if (entry?._activityUnconfirmed || entry?.phase === 'unknown') counts.unknownActivityCount += 1;
         else if (entry?.phase === 'budget_pausing') counts.pausingManagedCount += 1;
         else if (entry?.phase === 'budget_paused') { counts.pausedManagedCount += 1; pauseCauses.add(entry.pause_cause || ''); }
         else if (waitPhase === 'unknown') counts.unknownActivityCount += 1;
@@ -1309,8 +1309,8 @@ export function routingAnnotationText(annotation) {
  * authority follows from that — on a
  * `complete` snapshot every id the census does not list is gone, whatever its
  * kind, with no wall-clock barrier and no generation marker. An incomplete
- * snapshot (supervisor not ready, or a source failed) is a partial listing and
- * deletes nothing.
+ * snapshot retains omitted rows as unconfirmed; only its positive rows can
+ * affirm current activity.
  *
  * `concludedIds` (Set/Map with .has) is the client-side conclusion ledger: a
  * turn already concluded by its keyed final must never be re-inserted by a
@@ -1318,7 +1318,8 @@ export function routingAnnotationText(annotation) {
  * never restart, so conclusion is final).
  */
 export function computeHydratedDirectActivities(existingMap, turnsList, chatId, concludedIds = null, complete = true) {
-    const nextMap = new Map(existingMap || []);
+    const nextMap = new Map(Array.from(existingMap || [], ([id, row]) => [id,
+        complete ? row : { ...row, _activityUnconfirmed: true }]));
     if (!Array.isArray(turnsList)) return nextMap;
     const listed = new Set();
     for (const turn of turnsList) {
@@ -1327,14 +1328,10 @@ export function computeHydratedDirectActivities(existingMap, turnsList, chatId, 
         if (!aid || (concludedIds && concludedIds.has(aid))) continue;
         listed.add(aid);
         nextMap.set(aid, {
+            ...turn, _activityUnconfirmed: false,
             activityId: aid,
             kind: turn.kind || 'direct_chat',
             phase: turn.phase || 'thinking',
-            ...(turn.pause_cause ? { pause_cause: turn.pause_cause } : {}),
-            ...(turn.required_question ? { required_question: turn.required_question } : {}),
-            ...(turn.owner_wait ? { owner_wait: turn.owner_wait } : {}),
-            ...(turn.required_question_unavailable ? { required_question_unavailable: true } : {}),
-            ...(turn.project_admission_hold ? { project_admission_hold: turn.project_admission_hold } : {}),
             clientMessageId: turn.client_message_id || nextMap.get(aid)?.clientMessageId || '',
         });
     }

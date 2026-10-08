@@ -85,10 +85,9 @@ export function taskActivityPresentation({ phase = 'working', outcome = '', ende
     return current;
 }
 
-// Current census facts supersede cached detail, while a missing/disconnected
-// census cannot prove ongoing work. Model-wait admission stays with its owner;
-// callers pass its validated current-attempt boolean, avoiding an import cycle.
-export function censusTaskPhase(activity, detail = null, connected = true, modelWaiting = false) {
+// Outcome knowledge and finalization are shared by the census presenter and
+// the full-card adapter. Neither copy infers outcome from its rendered phase.
+export function censusTaskFacts(activity, detail = null) {
     const facts = { ...detail, ...activity };
     const observedFinalizing = activity?.phase === 'finalizing';
     const summary = taskTerminalSummary({ ...facts, ...(observedFinalizing ? { task_phase: 'finalizing' } : {}) });
@@ -98,9 +97,15 @@ export function censusTaskPhase(activity, detail = null, connected = true, model
         ? { ...facts, root_phase_checkpoint: { post_task_synthesis: 'running' } } : facts);
     const finalizing = observedFinalizing || Boolean(!summary.terminal && summary.observedOutcome
         && facts.root_phase_checkpoint?.post_task_synthesis);
+    return { outcome: summary.observedOutcome || (ended ? summary.phase : ''), ended, finalizing };
+}
+
+// Current census facts supersede cached detail; a missing/disconnected census
+// cannot prove ongoing work. The model-wait owner supplies its validated fact.
+export function censusTaskPhase(activity, detail = null, connected = true, modelWaiting = false) {
     return taskActivityPresentation({
+        ...censusTaskFacts(activity, detail),
         phase: connected && activity && !activity._activityUnconfirmed ? activity.phase || 'unknown' : 'unknown',
-        outcome: summary.observedOutcome || (ended ? summary.phase : ''), ended, finalizing,
         ownerWait: activityWaitPhase(activity || {}), modelWaiting,
         hold: activity?.project_admission_hold?.label || '', pauseCause: activity?.pause_cause || '',
     });
@@ -135,13 +140,16 @@ export function desiredLiveCardPhase(record = {}, terminalPhase = 'done') {
  * phase releases it. true when the chip changed.
  */
 export function syncParkedPhase(record, phase = '', activity = {}) {
+    if (!record || record.finished) return false;
+    const facts = censusTaskFacts({ ...activity, phase: activity.phase || phase });
+    if (facts.outcome) record.observedOutcome = facts.outcome;
+    if (facts.finalizing) record.finalizingHold = true;
+    if (activity._activityUnconfirmed) phase = 'unknown';
     const wait = activityWaitPhase(activity);
     const observed = ['budget_paused', 'budget_pausing', 'unknown'].includes(phase) ? phase
         : wait || phase;
     const parked = ['budget_paused', 'budget_pausing', 'unknown', 'queued', 'owner_wait'].includes(observed) ? observed : '';
     const cause = ['budget_paused', 'budget_pausing'].includes(parked) ? String(activity.pause_cause || '') : '';
-    if (!record || record.finished || (record.parkedPhase || '') === parked && (record.pauseCause || '') === cause
-        && (record.censusPhase || '') === phase) return false;
     record.parkedPhase = parked;
     record.pauseCause = cause;
     record.censusPhase = phase;

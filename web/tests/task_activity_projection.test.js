@@ -162,6 +162,19 @@ test('an optional question gap does not erase a later positive model wait on the
     assert.equal(desiredLiveCardPhase(full).text, 'Activity unconfirmed');
 });
 
+test('same-phase census outcome enrichment reaches the existing card without erasing absent facts', () => {
+    const full = { phaseEl: element(), phaseSecondaryEl: element(true) };
+    const row = { phase: 'finalizing', status: 'completed', root_phase_checkpoint: { post_task_synthesis: 'running' } };
+    syncParkedPhase(full, row.phase, row);
+    assert.equal(full.phaseEl.textContent, 'Done');
+    assert.equal(syncParkedPhase(full, row.phase, { ...row, outcome_axes: { execution: { status: 'degraded' } } }), true);
+    assert.equal(full.phaseEl.textContent, 'Done with warnings');
+    assert.equal(full.phaseSecondaryEl.textContent, 'Finalizing…');
+    assert.equal(syncParkedPhase(full, row.phase, {}), false);
+    assert.equal(full.phaseEl.textContent, 'Done with warnings');
+    assert.equal(full.phaseSecondaryEl.dataset.motion, '1');
+});
+
 test('the common DOM writer neither rewrites nor re-announces an unchanged status', () => {
     const primary = element(), late = element(true);
     const view = censusTaskPhase({ phase: 'finalizing', status: 'failed' });

@@ -55,6 +55,7 @@ import { bindEnterSubmit } from './ui_interactions.js';
 import { mountEmptyChatWelcome } from './welcome_preference.js';
 import {
     captureLiveCardPhaseState,
+    censusTaskFacts,
     desiredLiveCardPhase,
     liveCardCountBits,
     liveCardLabel,
@@ -608,8 +609,11 @@ export function createChatInstance({
             ? data.active_chat_activities
             : data?.active_direct_turns;
         if (Array.isArray(activities)) {
-            hydrateDirectActivities(activities, snapshotRequestedAt,
-                data.active_chat_activities_complete === true && data.supervisor_ready === true);
+            withStableViewport(() => {
+                hydrateDirectActivities(activities, snapshotRequestedAt,
+                    data.active_chat_activities_complete === true && data.supervisor_ready === true);
+                return true;
+            });
             for (const activity of activities) {
                 if (activity.required_question) chatDecision.appendActivityQuestion(activity.required_question, snapshotRequestedAt);
                 if (Number(activity.chat_id ?? 1) === chatId) modelWaits.observe(activity.activity_id, activity);
@@ -1376,6 +1380,8 @@ export function createChatInstance({
             if (record.titleEl) record.titleEl.textContent = _pendingName;
         }
         resetLiveCardRecord(record);
+        const activity = activeDirectActivities.get(normalizedGroupId);
+        if (activity) syncParkedPhase(record, activity.phase, activity);
         // P5: the cancelable marker may have arrived (scheduled progress frame /
         // history replay) before this card was minted.
         syncCancelRunButton(record);
@@ -3520,6 +3526,8 @@ export function createChatInstance({
 
     function hydrateDirectActivities(turnsList, snapshotBarrierMs = Infinity, complete = false) {
         if (!Array.isArray(turnsList)) return;
+        const connected = ws.isConnected?.() !== false;
+        complete &&= connected;
         const {
             activities: nextMap,
             departedManagedTaskIds,
@@ -3533,6 +3541,13 @@ export function createChatInstance({
         activeDirectActivities.clear();
         for (const [k, v] of nextMap.entries()) {
             const record = liveCardRecords.get(k);
+            if (!connected) v._activityUnconfirmed = true;
+            const facts = censusTaskFacts(v);
+            if (facts.ended) {
+                recordTerminalActivity(k);
+                if (record) finishLiveCardMutation(k, facts.outcome);
+                continue;
+            }
             activeDirectActivities.set(k, v);
             restoreCardActivity(liveCardRecords.get(k), v.project_admission_hold);
             syncParkedPhase(record, v.phase, v);
@@ -3822,6 +3837,16 @@ export function createChatInstance({
     onWs('close', () => {
         unconfirmed.unsettle();
         handoffs?.setConnected(false);
+        withStableViewport(() => {
+            for (const [id, activity] of activeDirectActivities) {
+                activeDirectActivities.set(id, { ...activity, _activityUnconfirmed: true });
+            }
+            let changed = false;
+            for (const [id, record] of liveCardRecords) {
+                changed = syncParkedPhase(record, 'unknown', activeDirectActivities.get(id)) || changed;
+            }
+            return changed;
+        });
         hostReady = false;
         hideTypingIndicatorOnly();
         syncChatStatus();

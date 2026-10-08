@@ -13,10 +13,11 @@ pytestmark = [pytest.mark.ui_browser, pytest.mark.serial]
 WEB = Path(__file__).resolve().parents[1] / "web"
 BOOT = """<script type="module">
 import {createChatInstance} from '/static/modules/chat.js';
-const handlers=new Map();
+const handlers=new Map();let connected=true;
 const ws={on(type,fn){const rows=handlers.get(type)||[];rows.push(fn);handlers.set(type,rows);return()=>{};},
-    isConnected:()=>true,send(){}};
+    isConnected:()=>connected,send(){}};
 window.emit=(type,row)=>(handlers.get(type)||[]).forEach(fn=>fn(row));
+window.connection=value=>{connected=value;window.emit(value?'open':'close');};
 window.chat=createChatInstance({ws,state:{activePage:'chat',projectChatIds:new Set([7,8]),unreadCount:0},
     updateUnreadBadge(){},openSettingsTab(){},openDashboardTab(){},chatId:1,
     mountEl:document.getElementById('content'),stateSnapshots:{begin:()=>({generation:1,requestedAt:Date.now()}),
@@ -140,6 +141,35 @@ def test_project_work_entries_share_live_phase_title_and_motion(engine, theme, w
                 playwright.expect(start).to_have_count(1)
                 playwright.expect(start).to_be_hidden()
                 playwright.expect(page.locator('.project-handoff:not([hidden])')).to_have_count(2)
+
+                # Exercise hydration and disconnect through the actual chat,
+                # without pre-populating private record outcome flags.
+                page.evaluate("""()=>emit('chat',{chat_id:1,task_id:'observed',role:'assistant',
+                    is_progress:true,content:'Reviewing the current work',ts:'2026-10-08T14:00:00Z'})""")
+                card = page.locator('.chat-live-card[data-task-id="observed"]')
+                outcome = card.locator('[data-live-phase]')
+                secondary = card.locator('[data-live-phase-secondary]')
+                fact = {"activity_id": "observed", "chat_id": 1, "kind": "managed_task",
+                        "phase": "finalizing", "status": "failed",
+                        "root_phase_checkpoint": {"post_task_synthesis": "running"}}
+                page.evaluate("a=>chat.hydrateStateSnapshot({supervisor_ready:true,active_chat_activities_complete:true,active_chat_activities:[a]})", fact)
+                playwright.expect(outcome).to_have_text("Failed")
+                playwright.expect(secondary).to_have_text("Finalizing…")
+                assert secondary.get_attribute("data-motion") == "1"
+                fact["status"] = "completed"
+                page.evaluate("a=>chat.hydrateStateSnapshot({supervisor_ready:true,active_chat_activities_complete:true,active_chat_activities:[a]})", fact)
+                playwright.expect(outcome).to_have_text("Done")
+                state.update(active_chat_activities=[], active_chat_activities_complete=False)
+                page.evaluate("connection(false)")
+                playwright.expect(outcome).to_have_text("Done")
+                playwright.expect(secondary).to_have_text("Activity unconfirmed")
+                assert secondary.get_attribute("data-motion") == "0"
+                assert secondary.evaluate("e=>getComputedStyle(e).animationName") == "none"
+                page.evaluate("connection(true)")
+                playwright.expect(secondary).to_have_text("Activity unconfirmed")
+                page.evaluate("a=>chat.hydrateStateSnapshot({supervisor_ready:true,active_chat_activities_complete:true,active_chat_activities:[a]})", fact)
+                playwright.expect(secondary).to_have_text("Finalizing…")
+                assert secondary.get_attribute("data-motion") == "1"
                 assert not errors
             finally:
                 browser.close()

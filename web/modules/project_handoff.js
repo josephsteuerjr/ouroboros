@@ -44,7 +44,11 @@ export function createProjectHandoffs({ feed, fetchDetail, mutate }) {
     const matching = (taskId, projectId) => [...rows.values()].find(row =>
         row.projectId === projectId && row.subjects.has(taskId) && inFeed(row.node));
     function paint(row) {
-        const phase = handoffPhase(activities.get(row.taskId), row.detail, connected);
+        const activity = activities.get(row.taskId);
+        // Keep already observed result facts when connectivity or a partial
+        // census withdraws activity. A retry clears this same-subject cache.
+        if (activity?.status || activity?.outcome_axes) row.detail = { ...activity };
+        const phase = handoffPhase(activity, row.detail, connected);
         paintTaskPhase(row.status, phase, row.secondary);
     }
     function reconcileStarted(node) {

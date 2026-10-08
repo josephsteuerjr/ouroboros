@@ -19,7 +19,7 @@ ElementStub.prototype.querySelector = function (selector) {
     return null;
 };
 
-function makeInstance({ details = {}, calls = [], state = { census: null } } = {}) {
+function makeInstance({ details = {}, calls = [], state = { census: null }, chatId = 1 } = {}) {
     const env = installDom(async (url) => {
         calls.push(String(url));
         const id = String(url).split('/').at(-1);
@@ -35,11 +35,12 @@ function makeInstance({ details = {}, calls = [], state = { census: null } } = {
     });
     const handlers = new Map();
     let generation = 0;
+    let connected = true;
     let inst = null;
     const instance = createChatInstance({
         ws: {
             on(type, fn) { handlers.set(type, fn); return () => handlers.delete(type); },
-            isConnected: () => true,
+            isConnected: () => connected,
             send: () => ({ status: 'sent', clientMessageId: 'cm-send' }),
         },
         state: { activePage: 'chat', projectChatIds: new Set(), unreadCount: 0 },
@@ -50,7 +51,7 @@ function makeInstance({ details = {}, calls = [], state = { census: null } } = {
             // The page-wide sequencer fans a fetched census into the instance.
             apply: (request, data) => { inst?.hydrateStateSnapshot(data, request.requestedAt); },
         },
-        chatId: 1, idPrefix: 'chat', mountEl: env.mount,
+        chatId, idPrefix: 'chat', mountEl: env.mount,
     });
     inst = instance;
     const status = () => env.mount.querySelector('.status-badge')?.textContent;
@@ -69,6 +70,8 @@ function makeInstance({ details = {}, calls = [], state = { census: null } } = {
     const settle = async () => { for (let i = 0; i < 6; i += 1) await new Promise((resolve) => setTimeout(resolve, 0)); };
     return {
         ...env, handlers, instance, calls, state, status, watchStatus, settle,
+        close() { connected = false; handlers.get('close')(); },
+        open() { connected = true; handlers.get('open')({ previouslyConnected: true }); },
         // The indicator is created with createElement, so it never lands in the
         // fixture's id index — find it by its class among the message children.
         typingHidden: () => globalThis.document.byId.get('chat-messages').children
@@ -112,6 +115,85 @@ test('incident replay: a finished turn whose subagent typed with no kind returns
         assert.equal(fx.typingHidden(), true);
     } finally { fx.instance.destroy(); restoreDom(fx.prior); }
 });
+
+for (const chatId of [1, 7]) {
+    const progress = (fx, id) => fx.handlers.get('chat')({ chat_id: chatId, task_id: id,
+        role: 'assistant', is_progress: true, content: 'Inspecting the work.', ts: '2026-10-08T10:00:00Z' });
+    const observed = fx => id => {
+        const card = fx.card(id);
+        return { text: card.querySelector('[data-live-phase]').textContent,
+            motion: card.querySelector('[data-live-phase]').dataset.motion,
+            secondary: card.querySelector('[data-live-phase-secondary]').textContent,
+            secondaryMotion: card.querySelector('[data-live-phase-secondary]').dataset.motion,
+            typing: card.querySelector('[data-live-typing]').style.display, finished: card.dataset.finished };
+    };
+    test(`R1 census-only outcome reaches the actual full card and updates at the same phase (chat ${chatId})`, () => {
+        const fx = makeInstance({ chatId });
+        try {
+            const id = 'census-outcome', row = { activity_id: id, chat_id: chatId, kind: 'managed_task', phase: 'finalizing' };
+            progress(fx, id);
+            fx.census([row], true);
+            assert.equal(observed(fx)(id).text, 'Finalizing…');
+            const failed = { ...row, status: 'failed', root_phase_checkpoint: { post_task_synthesis: 'running' },
+                outcome_axes: { lifecycle: { status: 'failed' }, execution: { status: 'infra_failed' } } };
+            fx.census([failed], true);
+            assert.deepEqual(observed(fx)(id), { text: 'Failed', motion: '0', secondary: 'Finalizing…',
+                secondaryMotion: '1', typing: '', finished: '0' });
+            fx.census([row], true); // Missing optional metadata cannot erase already observed evidence.
+            assert.equal(observed(fx)(id).text, 'Failed');
+            fx.census([{ ...failed, status: 'cancelled', outcome_axes: { lifecycle: { status: 'cancelled' } } }], true);
+            assert.deepEqual(observed(fx)(id), { text: 'Cancelled', motion: '0', secondary: '',
+                secondaryMotion: '0', typing: 'none', finished: '1' });
+            fx.census([failed], true); // The original in-flight snapshot cannot revive a concluded task.
+            assert.equal(observed(fx)(id).text, 'Cancelled');
+            const later = `${id}-mounted-after-census`;
+            fx.census([{ ...failed, activity_id: later }], true);
+            progress(fx, later);
+            assert.equal(observed(fx)(later).text, 'Failed');
+            assert.equal(observed(fx)(later).secondary, 'Finalizing…');
+        } finally { fx.instance.destroy(); restoreDom(fx.prior); }
+    });
+
+    test(`R1 real close/open parks full cards until each receives a fresh positive activity (chat ${chatId})`, async () => {
+        const fx = makeInstance({ chatId });
+        try {
+            const id = 'late-failure', sibling = 'independent-work', settled = 'already-done';
+            progress(fx, id); progress(fx, sibling); progress(fx, settled);
+            fx.handlers.get('chat')({ chat_id: chatId, task_id: id, role: 'system', system_type: 'task_summary',
+                status: 'failed', task_phase: 'finalizing', content: 'Task failed.', ts: '2026-10-08T10:00:01Z' });
+            fx.handlers.get('chat')({ chat_id: chatId, task_id: settled, role: 'system', system_type: 'task_summary',
+                status: 'completed', content: 'Task done.', ts: '2026-10-08T10:00:02Z' });
+            const failed = { activity_id: id, chat_id: chatId, kind: 'managed_task', phase: 'finalizing', status: 'failed',
+                root_phase_checkpoint: { post_task_synthesis: 'running' } };
+            const working = { activity_id: sibling, chat_id: chatId, kind: 'managed_task', phase: 'working' };
+            fx.census([failed, working], true);
+            assert.equal(observed(fx)(id).secondaryMotion, '1');
+            fx.close();
+            const offline = { text: 'Failed', motion: '0', secondary: 'Activity unconfirmed',
+                secondaryMotion: '0', typing: 'none', finished: '0' };
+            assert.deepEqual(observed(fx)(id), offline);
+            fx.census([failed, working], true); // A REST answer while the socket is down cannot restore motion.
+            assert.deepEqual(observed(fx)(id), offline);
+            assert.equal(observed(fx)(sibling).motion, '0');
+            assert.equal(observed(fx)(settled).text, 'Done');
+            assert.equal(observed(fx)(settled).finished, '1');
+            fx.state.fail = true; // Open is connectivity, not a successful new census/history read.
+            fx.open();
+            await fx.settle();
+            assert.deepEqual(observed(fx)(id), offline);
+            fx.census([], false);
+            assert.deepEqual(observed(fx)(id), offline);
+            fx.census([working], false);
+            assert.equal(observed(fx)(sibling).motion, '1');
+            assert.deepEqual(observed(fx)(id), offline);
+            fx.census([failed], false);
+            assert.equal(observed(fx)(id).text, 'Failed');
+            assert.equal(observed(fx)(id).secondaryMotion, '1');
+            assert.equal(observed(fx)(sibling).motion, '0', 'an omitted row is retained as unknown, not reanimated');
+            assert.equal(observed(fx)(settled).text, 'Done');
+        } finally { fx.instance.destroy(); restoreDom(fx.prior); }
+    });
+}
 
 test('the census alone moves the header between Thinking... and Online', () => {
     const fx = makeInstance();
@@ -165,7 +247,7 @@ for (const kind of ['', undefined, 'direct_chat', 'managed_task', 'future_kind']
                 fx.census(seed, true);
                 assert.equal(fx.status(), kind === 'managed_task' ? 'Working...' : 'Thinking...');
                 fx.census([], complete);
-                assert.equal(fx.status(), complete ? 'Online' : (kind === 'managed_task' ? 'Working...' : 'Thinking...'));
+                assert.equal(fx.status(), complete ? 'Online' : 'Activity unconfirmed');
             } finally { fx.instance.destroy(); restoreDom(fx.prior); }
         }
     });
