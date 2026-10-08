@@ -391,9 +391,12 @@ def test_triad_mixed_panel_builds_the_pack_once_for_api_rows_only(tmp_path, fake
 
 def test_triad_session_task_carries_criteria_and_nav_maps_not_evidence():
     import ouroboros.tools.review as review_mod
+    from ouroboros.tools.review_subject import build_triad_session_task
 
-    task = review_mod._triad_session_task(
-        None,
+    # One builder: the wave's two-part brief calls review_subject directly, and
+    # the old `review._triad_session_task` shim that only tests exercised is gone.
+    assert not hasattr(review_mod, "_triad_session_task")
+    task = build_triad_session_task(
         goal_section="## Goal\nDo the thing.",
         scope_section="## Scope\nOnly here.",
         checklist_section="## Review Checklist\n- correctness",

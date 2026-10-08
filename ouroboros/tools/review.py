@@ -906,21 +906,6 @@ def _build_preflight_staged(target_repo: str, fallback: str = "") -> str:
 from ouroboros.tools.review_admission import fit_triad_prompt as _fit_triad_prompt
 
 
-def _triad_session_task(ctx: ToolContext, governance_root=None, **sections) -> str:
-    """Compat shim over ``review_subject.build_triad_session_task`` (5.2/5.3):
-    same session task text; a managed subject inlines its authoritative delta."""
-    from ouroboros.tools.review_subject import build_triad_session_task
-
-    # Governance always comes from the system repository (a frozen subject names
-    # it explicitly), and the nav maps must address the physical chapter a
-    # section lives in.
-    governance_root = governance_root or getattr(ctx, "repo_dir", None)
-    return build_triad_session_task(
-        governance_repo_dir=pathlib.Path(governance_root) if governance_root else None,
-        **sections,
-    )
-
-
 def _triad_governance_usable_window(api_models: list, api_slots: list) -> int:
     """The usable input window the packet's governance share is taken against.
 

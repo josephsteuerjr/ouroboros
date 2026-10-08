@@ -22,7 +22,6 @@ from ouroboros.review_evidence import (
     materialize_commit_review_session_view,
     pending_commit_review_evidence,
     release_commit_review_session_view,
-    restore_commit_review_evidence,
 )
 from ouroboros.tools.registry import ToolContext
 from tests._workspace_executor_shared import _init_repo
@@ -166,7 +165,7 @@ def test_multiple_tools_share_one_following_response(evidence_context):
     assert "evidence_delivery=complete_selected" in commit_review_evidence_section(source, delivery="packet")
 
 
-def test_session_view_is_identical_ignored_restorable_and_disposable(evidence_context):
+def test_session_view_is_identical_ignored_rematerializable_and_disposable(evidence_context):
     ctx = evidence_context
     model_response(ctx, "before", "Before")
     tool_response(ctx, "one", "before")
@@ -180,8 +179,12 @@ def test_session_view_is_identical_ignored_restorable_and_disposable(evidence_co
     status = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all"], cwd=ctx.repo_dir, check=True, capture_output=True, text=True)
     assert ".review-drive" not in status.stdout
     path.unlink()
-    restored = restore_commit_review_evidence(ctx, source["source_ref"])
-    materialize_commit_review_session_view(restored, ctx.repo_dir)
+    # The same recorded source (a pending rejoin re-reads it from the frozen
+    # request through pending_commit_review_evidence) materializes the identical
+    # bytes again; no separate preflight-view restorer exists any more.
+    import ouroboros.review_evidence as evidence_module
+    assert not hasattr(evidence_module, "restore_commit_review_evidence")
+    materialize_commit_review_session_view(source, ctx.repo_dir)
     assert path.read_bytes() == exact
     release_commit_review_session_view(view)
     assert not path.exists()
