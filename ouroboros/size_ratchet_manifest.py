@@ -103,6 +103,7 @@ BAND_PATHS = {
     "devtools/benchmarks/swe_bench_pro/e1v2/run_pro.py": None,
     "devtools/benchmarks/terminal_bench/harbor_installed_agent.py": None,
     "devtools/benchmarks/terminal_bench/run_tb.py": None,
+    "devtools/e2e_live/scenarios.py": "Entered the band from 992 lines (FIX5 T2b/NEW-T2): SW1's catalog composed beside the lane template's reviewers and the SM1 wave oracle that rejects reserved rows and non-answers belong with the scenarios they prove; the SM1 durable-fact oracles are the next split when the stand grows again.",
     "ouroboros/agent.py": "Subagent message identity now lives in a shared helper; keep agent.py below the giant-file threshold rather than re-expanding it.",
     "ouroboros/agent_task_pipeline.py": "Shrank INTO the band from 1599 lines: the post-task synthesis family moved byte-preserving into ouroboros/post_task_synthesis.py (D01 lane); no new content was added.",
     "ouroboros/budget_pause.py": "Entered the band from 990 lines (#1196): the direct-turn pause, the typed restore refusal beside the boolean gate and the authoritative Q10 refresh belong with the one pause/resume owner they extend; the supervisor-side grant lifecycle moved out to supervisor/budget_resume.py instead of growing here.",

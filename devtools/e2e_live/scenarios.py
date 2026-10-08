@@ -231,34 +231,24 @@ def commit_refusal_facts(ledger: dict, tools_rows: list, stored: dict) -> dict:
     }
 
 
-WAVE_ANSWERS = {"PASS", "FAIL"}   # review_ledger.VERDICT_PASS / VERDICT_FAIL: a substantive answer to a question
-
-
-def _seat_dispatched(row: dict) -> bool:
-    """A seat that was really sent: the ledger reserves a row per planned seat BEFORE dispatch
-    (``status`` and ``operation_state`` ``not_dispatched``), so a reserved row is no evidence."""
-    return "not_dispatched" not in (str(row.get("status") or ""), str(row.get("operation_state") or ""))
+WAVE_ANSWERS = {"PASS", "FAIL"}  # review_ledger.VERDICT_PASS / VERDICT_FAIL: a substantive answer to a question
 
 
 def commit_wave_fact(records: list, task_id: str) -> dict:
-    """SM1's durable fact of the review WAVE: the commit gate's review-ledger record of this task
-    (``state/review_ledger/<record_id>.json``, ``surface=commit_gate``) that is SETTLED, had at least
-    one seat dispatched and carries a substantive answer — PASS or FAIL — to BOTH questions of the
-    brief (``verdict.per_question``: ``change`` and ``coupling``). FAIL is wave evidence too (the
-    wave ran and spoke); ``unanswered`` and ``not_performed`` are not answers, and a NOT_DISPATCHED
-    record keeps its reserved rows, so neither a row count nor a non-empty verdict string proves a
-    wave (NEW-T2). The retired ``scope_review_complete`` event is gone with the scope reviewer; the
-    one record the wave writes is what proves it ran. ``{}`` when no such record exists; otherwise
-    the newest one's ``record_id``, ``aggregate``, ``per_question``, ``seats`` and ``dispatched_seats``
-    (never a verdict judgement: under blocking enforcement the landing itself required PASS, and
-    that is ``commit_landed``'s check)."""
+    """SM1's durable fact of the review WAVE: the newest commit-gate review-ledger record of this task
+    (``surface=commit_gate``) that is SETTLED, dispatched at least one seat (the ledger reserves a row
+    per planned seat BEFORE dispatch, so a NOT_DISPATCHED record's rows prove nothing) and answers
+    BOTH questions (``verdict.per_question`` ``change``/``coupling``) with PASS or FAIL — ``unanswered``
+    and ``not_performed`` are not answers; FAIL is wave evidence too, the wave ran and spoke (NEW-T2).
+    ``{}`` when none; never a verdict judgement (the landing's PASS is ``commit_landed``'s check)."""
     waves = sorted((r for r in records if isinstance(r, dict) and r.get("surface") == "commit_gate"
                     and str(r.get("task_id") or "") == str(task_id)), key=lambda r: str(r.get("ts") or ""))
     for record in reversed(waves):
         verdict = record.get("verdict") if isinstance(record.get("verdict"), dict) else {}
         answers = verdict.get("per_question") if isinstance(verdict.get("per_question"), dict) else {}
         rows = [row for row in (record.get("rows") or []) if isinstance(row, dict)]
-        dispatched = [row for row in rows if _seat_dispatched(row)]
+        dispatched = [row for row in rows
+                      if "not_dispatched" not in (str(row.get("status") or ""), str(row.get("operation_state") or ""))]
         substantive = all(str(answers.get(part) or "").upper() in WAVE_ANSWERS for part in ("change", "coupling"))
         if (dispatched and substantive and str(record.get("state") or "") == "settled"
                 and str(verdict.get("aggregate") or "") != "NOT_DISPATCHED"):
@@ -716,33 +706,20 @@ def sm1_stub_script(clone: pathlib.Path) -> dict:
 # --------------------------------------------------------------------------- #
 
 def sw1_roster(child_model: str, template: dict | None = None) -> str:
-    """SW1's catalog: the scout row BESIDE the lane template's reviewers — both roles kept.
-
-    The catalog is one document key, so replacing it with the scout alone made the lane's
-    pool: a structural catalog with no marked row is a loud EMPTY pool (no reviewer runs,
-    nothing is minted — that rule stands), which under ``--production-panel`` and in the stub
-    lane left SW1 without the reviewers every other lane has (T2b). A template that carries a
-    catalog (the stub lane's keyless reviewers) keeps its rows and the catalog is switched on
-    for the scout; a template with neither a catalog nor the lanes key (``--production-panel``:
-    the never-configured document) gets exactly the factory reviewer rows the tree would mint
-    for it (``factory_review_rows``); the stand panel (lanes key) migrates its own rows beside
-    the scout at the read seam, as before."""
+    """SW1's catalog: the scout row BESIDE the lane template's reviewers (T2b). The catalog is one
+    document key, so a scout-only catalog made the lane's pool a loud EMPTY one (no reviewer runs,
+    nothing is minted — that rule stands). A template with a catalog (the stub lane's keyless
+    reviewers) keeps its rows; one with neither a catalog nor the lanes key (``--production-panel``)
+    gets exactly the factory rows the tree would mint for it (``factory_review_rows``); the stand
+    panel (lanes key) migrates its own rows beside the scout at the read seam, as before."""
     from ouroboros.subscription_install_presets import factory_review_rows
 
     template = dict(template or {})
     stored = str(template.get("OUROBOROS_SUBAGENTS") or "").strip()
-    if stored:
-        reviewers = [dict(row) for row in json.loads(stored).get("items") or []]
-    elif "OUROBOROS_REVIEWER_SLOTS" in template:
-        reviewers = []
-    else:
-        reviewers = factory_review_rows(template)
-    scout = {
-        "subagent_id": SW1_ROSTER_ID,
-        "recommended_use": "Read-only scout for parallel repository surveys.",
-        "route": {"kind": "api_model", "target_id": child_model},
-        "effort": "low",
-    }
+    reviewers = ([dict(row) for row in json.loads(stored).get("items") or []] if stored
+                 else [] if "OUROBOROS_REVIEWER_SLOTS" in template else factory_review_rows(template))
+    scout = {"subagent_id": SW1_ROSTER_ID, "recommended_use": "Read-only scout for parallel repository surveys.",
+             "route": {"kind": "api_model", "target_id": child_model}, "effort": "low"}
     return json.dumps({"enabled": True, "items": [scout, *reviewers]})
 
 
@@ -989,9 +966,8 @@ class Scenario:
     expects_absorb: bool = False
 
     def overrides(self, model: str, template: dict | None = None) -> dict:
-        """The scenario's keys over the lane ``template`` (the document the runner wrote so
-        far: run template, or the stub lane's keyless settings); SW1 composes its catalog
-        from that template's reviewers (:func:`sw1_roster`)."""
+        """The scenario's keys over the lane ``template`` (the document the runner wrote so far);
+        SW1 composes its catalog from that template's reviewers (:func:`sw1_roster`)."""
         out = dict(self.settings_overrides)
         if self.id == "SW1":
             out["OUROBOROS_SUBAGENTS"] = sw1_roster(model, template)
