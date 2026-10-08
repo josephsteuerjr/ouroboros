@@ -22,6 +22,7 @@ import pytest
 
 from ouroboros import reviewer_slot_config as rsc
 from ouroboros.reviewer_slot_config import REVIEWER_SLOTS_ENV, parse_reviewer_slots
+from tests.test_owner_settings_write_seam import isolated_settings  # noqa: F401  (fixture)
 
 _SCOPE = [{"slot_id": "s1", "route": {"kind": "api_chat", "target_id": "m/scope"}}]
 
@@ -103,6 +104,43 @@ def test_the_triad_multi_model_row_runs_its_native_delivery(monkeypatch, tmp_pat
         session_task="WORK ORDER", session_root="/repo"))
     (request, slot), = seen
     assert slot.native_retrieval and request.messages == [] and request.session_task.startswith("WORK ORDER")
+
+
+def test_a_pool_rows_delivery_is_native_unless_the_row_says_packet(monkeypatch, isolated_settings):
+    """The catalog's reading of delivery, through the owner's save and the pool's own
+    endpoint: an api row saved without ``delivery`` reads natively (the catalog
+    default — the lane reader's packet default does not carry over); a row saved
+    with ``delivery: packet`` packs the brief; a session row always reads (F8)."""
+    from starlette.testclient import TestClient
+
+    from ouroboros import server_maintenance
+    from ouroboros.gateway import settings as settings_mod
+    from tests.test_owner_settings_write_seam import _settings_app
+
+    catalog = {"enabled": True, "items": [
+        {"subagent_id": "bare", "recommended_use": "Reads the work itself.", "review_eligible": True,
+         "route": {"kind": "api_model", "target_id": "openai/gpt-5.6-sol"}},
+        {"subagent_id": "packed", "recommended_use": "Reads the brief.", "review_eligible": True,
+         "route": {"kind": "api_model", "target_id": "openai/gpt-5.6-luna"}, "delivery": "packet"},
+        {"subagent_id": "session", "recommended_use": "Reads the repository.", "review_eligible": True,
+         "route": {"kind": "agent_session", "target_id": "cursor=gpt-5.6-sol-xhigh"}},
+    ]}
+    saved = TestClient(_settings_app(monkeypatch, isolated_settings)).post(
+        "/api/settings", json={"OUROBOROS_SUBAGENTS": catalog})
+    assert saved.status_code == 200, saved.text
+    stored = json.loads(isolated_settings.read_text(encoding="utf-8"))["OUROBOROS_SUBAGENTS"]
+    assert "delivery" not in json.loads(stored)["items"][0], "an absent field stays absent on disk"
+
+    monkeypatch.setenv("OUROBOROS_SUBAGENTS", stored)  # the applied settings plane the pool reads
+    monkeypatch.setattr(rsc, "reviewer_slot_last_executions", lambda: {})
+    monkeypatch.setattr(server_maintenance, "review_pool_migration_records", lambda: {})
+    monkeypatch.setattr(settings_mod, "_review_pool_costs", lambda items, env: {})
+    body = json.loads(asyncio.run(settings_mod.api_review_pool(None)).body)
+    assert [(row["subagent_id"], row["delivery"]) for row in body["pool"]] == [
+        ("bare", "native"), ("packed", "packet"), ("session", "session")]
+    # The same fact on the rows every review surface runs.
+    assert [(slot.slot_id, slot.retrieves) for slot in rsc.review_pool_slots()] == [
+        ("bare", True), ("packed", False), ("session", True)]
 
 
 # --- #1116: an OpenAI-compatible-only install ------------------------------------------
