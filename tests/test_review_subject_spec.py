@@ -113,6 +113,7 @@ def test_system_index_subject_is_the_gate_binding(tmp_path):
     assert frozen.record_subject() == {
         "root_kind": "system_repo", "root": str(repo), "kind": "index", "base": frozen.parent_sha, "head": "",
         "tree_sha": frozen.tree_sha, "diff_sha": frozen.diff_sha, "checkout": "",
+        "governance_root": str(pathlib.Path(repo).resolve()),  # the body whose rules judged it
     }
     # The -U0 fit rung re-renders the same subject, never a different capture.
     assert frozen.render_prompt_diff(unified=0) == capture_staged_diff(pathlib.Path(repo), unified=0)

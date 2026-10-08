@@ -744,10 +744,11 @@ class FrozenSubject:
         return _tree_delta_diff(self.spec.root, self.parent_sha, self.tree_sha, unified)
 
     def record_subject(self) -> Dict[str, Any]:
-        """The review ledger record's ``subject`` block."""
+        """The review ledger record's ``subject`` block: the subject's identities and the
+        root whose rules judged it (``governance_root``, the serving body)."""
         return {"root_kind": self.spec.root_kind, "root": self.spec.root, "kind": self.spec.kind,
                 "base": self.parent_sha, "head": self.spec.head, "tree_sha": self.tree_sha,
-                "diff_sha": self.diff_sha, "checkout": self.checkout}
+                "diff_sha": self.diff_sha, "checkout": self.checkout, "governance_root": self.spec.governance_root}
 
 
 def _rev_parse(root, rev: str) -> str:
