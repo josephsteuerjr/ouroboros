@@ -399,6 +399,25 @@ def test_a_persisted_reviewer_choice_changes_that_catalog_rows_route_and_nothing
     assert replayed == saved, "replaying a saved choice changes nothing"
 
 
+def test_the_review_commands_main_seat_persists_its_wait_card_as_mains_own_role():
+    """``/review`` runs on the direct Main row when no reviewer is named (decision 3A,
+    ``deep_self_review.main_review_row`` → ``slot_id == "main"``); its wait card
+    carries ``reviewer:main``, which is Main's role — no catalog row is invented and
+    the pool is untouched."""
+    from ouroboros.model_slots import apply_model_role_override
+
+    before = {SUBAGENTS_SETTING: _MIXED, "OUROBOROS_MODEL": "openai/gpt-5.6-sol", "USE_LOCAL_MAIN": False}
+    saved = apply_model_role_override(before, role="reviewer:main", model="owner/local-main",
+                                      credential_profile_id="", use_local=True)
+    assert (saved["OUROBOROS_MODEL"], saved["USE_LOCAL_MAIN"]) == ("owner/local-main", True)
+    assert saved[SUBAGENTS_SETTING] == _MIXED and "OUROBOROS_REVIEWER_SLOTS" not in saved
+    assert json.loads(saved["OUROBOROS_MODEL_ACCOUNTS"])["main"] == ""
+    pinned = apply_model_role_override(saved, role="reviewer:main", model="claudexor::codex=gpt-5.6-luna",
+                                       credential_profile_id="pin-7", use_local=False)
+    assert (pinned["OUROBOROS_MODEL"], pinned["USE_LOCAL_MAIN"]) == ("claudexor::codex=gpt-5.6-luna", False)
+    assert json.loads(pinned["OUROBOROS_MODEL_ACCOUNTS"])["main"] == "pin-7"
+
+
 def test_a_persisted_reviewer_choice_for_a_row_that_is_gone_is_a_typed_refusal_naming_the_pool():
     from ouroboros.model_slots import apply_model_role_override
 

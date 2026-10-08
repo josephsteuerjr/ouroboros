@@ -210,6 +210,11 @@ def apply_model_role_override(settings: dict, *, role: str, model: str,
         raise ValueError("An account pin requires a managed model source")
     result = copy.deepcopy(settings)
     family, _, identity = role.partition(":")
+    if family == "reviewer" and identity == "main":
+        # ``/review`` runs on the direct Main row when the call names no reviewer
+        # (deep_self_review.main_review_row, decision 3A): there is no catalog row
+        # behind that seat, so its wait card persists as Main's own role.
+        family, identity = "main", ""
     if family in MODEL_ROLE_SETTINGS:
         key = MODEL_ROLE_SETTINGS[family]
         accounts, _ = normalize_model_role_options(MODEL_ACCOUNTS_KEY, result.get(MODEL_ACCOUNTS_KEY))
