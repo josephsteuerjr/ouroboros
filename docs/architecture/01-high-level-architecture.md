@@ -144,7 +144,7 @@ server.py (Starlette+uvicorn) ← HTTP + WebSocket on configurable host:port (de
       ├── deadline_utils.py    ← Shared deadline parsing/remaining-time helpers + the transport-vs-logical wait seam for loop milestones and process-tool/review timeouts
       ├── observability.py, source_retention.py ← Private call/source history: redaction, gzip CAS, manifests, exact iterative retention (§10)
       ├── finalization_timing.py ← Live final-event phase fields and task_finalization_timing (§6)
-      ├── process_logging.py   ← Per-process logging bootstrap (server `main()`, each worker after its fork preamble): redacted local handlers, the server as sole `server.log` writer, uncaught exceptions into `logging`
+      ├── process_logging.py   ← Per-process logging bootstrap (server `main()`, each worker after its fork preamble): redacted local handlers, the server as sole `server.log` writer, uncaught exceptions into `logging`; the launcher's byte-capped, storage-error-resilient copy of the server pipe into `agent_stdout.log` (stdlib-only import)
       ├── model_send_seal.py ← The runtime invariant `model-visible ⟺ logged` for `model_send`: a reconstruction mismatch is a typed durable fact, and the call is NOT blocked — dispatch authority stays with the pre-existing in-memory identity re-check
       ├── cancel_intents.py    ← Durable cancel-intent projection: locked `state/cancel_intents.json` of ACTIVE intents (claim owner/pid + claim GENERATION fencing every mutation, `scope` single-vs-cascade) + forensic `cancel_intent` ledger rows; the ONE ingress `request_cancel`; strict fail-closed reads (`CancelIntentProjectionCorrupt`; a malformed row is disclosed once per row content, so the ~20 s watchdog cannot repeat it forever); owns `claim_is_abandoned` and `allow_settled_target` (§5; §10 invariants 14–15)
       ├── owner_hurry.py       ← Owner "hurry": a typed TASK-LOCAL acceleration latch, never a chat message; its durable `owner_hurry` projection is written by `update_json_locked` on its own keys only — never `write_task_result`, whose status-regression guard could drop concurrent terminal fields; effects `acceptance_skip_applied`, zero improvement passes via `effective_budget_profile`, advisory force-plan; dies with the attempt (`retry_reset`; `not_applied_before_terminal`) (§5)
@@ -169,7 +169,7 @@ server.py (Starlette+uvicorn) ← HTTP + WebSocket on configurable host:port (de
       ├── pricing.py           ← Exact-route best-effort provider-catalog lookup with nullable estimates; no static model tariffs (they go stale) and not the monetary ledger (§6 Budget tracking)
       ├── usage_accounting.py  ← Physical attempts: reserved→dispatched→settled|unresolved, reserved→released; global/root/group admission, candidate/manifest, raw `local_answer_owner_pid` (§6)
       ├── _usage_response.py   ← Accounting usage normalizer; adapters also read raw usage (§6)
-      ├── usage_admission.py   ← Whole-work group binding/admission and review-wave fit (§6)
+      ├── usage_admission.py   ← Whole-work group binding/admission and review-wave admission (§6)
       ├── _usage_rows.py       ← The one reducer (per-row summary deltas), limits/integrity, call counts, breakdowns and Skill Review projections
       ├── _usage_money.py      ← Precision-60 Decimal cash; six-place half-even admission; raw literals retained
       ├── _usage_wait.py       ← Owned pre-send lock slices and joined async bridge; existing controls/custody
