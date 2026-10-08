@@ -6,7 +6,8 @@ that rewrites the Drive document, the UI's owner save before the supervisor gene
 starts. Whichever of them SAVES the migrated document first replaces the pre-image on disk,
 so the receipts are written by that saving process, before its write — never only by the
 supervisor boot out of its own process memory, which a Colab kernel or a pre-supervisor
-save never shares.
+save never shares. Writer and boot choose by one rule: a migration gets receipts only when it
+decides a document — the one a write replaces or saves, the one on disk when the boot runs.
 
 Two receipts per migrated document (keyed by ``input_sha256``, the digest of the facts the
 migration read):
@@ -168,8 +169,8 @@ def _relpath(path: pathlib.Path, data_dir: Any) -> str:
 
 
 def persist_receipts(data_dir: Any, *, outcomes: Optional[Tuple[Any, ...]] = None) -> Dict[str, Dict[str, Any]]:
-    """Give the non-noop ``outcomes`` (default: every migration this process computed — the
-    boot's set) their durable receipts under ``data_dir``: the snapshot file when no
+    """Give the non-noop ``outcomes`` (default: every migration this process computed) their
+    durable receipts under ``data_dir``: the snapshot file when no
     file carries the document digest yet, and the state record when this process's supervisor
     state is bound to ``data_dir`` and the digest has no record. Returns the records it knows
     (written or found). Never raises — a receipt failure is logged and the next writer or the
@@ -181,6 +182,27 @@ def persist_receipts(data_dir: Any, *, outcomes: Optional[Tuple[Any, ...]] = Non
         return {}
 
 
+def _document_on_disk(settings_path: Any) -> Optional[Dict[str, Any]]:
+    """The settings document at ``settings_path`` as the read seam types it (``config.coerce_settings_raw``),
+    so its digest is the one the seam computed for it; ``None`` when no readable document is there."""
+    from ouroboros.config import coerce_settings_raw
+
+    try:
+        raw = json.loads(pathlib.Path(settings_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return coerce_settings_raw(raw) if isinstance(raw, dict) else None
+
+
+def _deciding_outcomes(on_disk: Optional[Mapping[str, Any]], document: Mapping[str, Any]) -> Tuple[Any, ...]:
+    """The migrations this process computed whose input is ``on_disk`` (by its exact digest) or whose
+    result is ``document`` (:func:`outcome_decides_document`)."""
+    from ouroboros.review_pool_migration import input_sha256, migrations_seen
+
+    replaced = None if on_disk is None else input_sha256(on_disk)
+    return tuple(o for o in migrations_seen() if o.input_sha256 == replaced or outcome_decides_document(o, document))
+
+
 def persist_write_receipts(data_dir: Any, written: Mapping[str, Any], settings_path: Any) -> Dict[str, Dict[str, Any]]:
     """The receipts a settings write owes BEFORE it lands (the persistence prologue, the Colab
     writer): the migration of the document it replaces — ``settings_path`` as the read seam types
@@ -189,18 +211,27 @@ def persist_write_receipts(data_dir: Any, written: Mapping[str, Any], settings_p
     data root's document or a draft the wizard read is no document this write replaces or saves, its
     receipt would describe rows that never ran, and each extra snapshot costs a UTC second
     (:func:`_new_snapshot_path`) the writer waits out under the settings lock. Never raises."""
-    from ouroboros.config import coerce_settings_raw
-    from ouroboros.review_pool_migration import input_sha256, migrations_seen
-
     try:
-        raw = json.loads(pathlib.Path(settings_path).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        raw = None  # no readable pre-image: this write replaces no document of its own
-    try:
-        replaced = input_sha256(coerce_settings_raw(raw)) if isinstance(raw, dict) else None
-        owed = tuple(o for o in migrations_seen() if o.input_sha256 == replaced or outcome_decides_document(o, written))
+        owed = _deciding_outcomes(_document_on_disk(settings_path), written)  # no pre-image: none of its own replaced
     except Exception:
         log.warning("review pool migration receipts for a write under %s could not be chosen", data_dir, exc_info=True)
+        return {}
+    return persist_receipts(data_dir, outcomes=owed)
+
+
+def persist_boot_receipts(data_dir: Any, settings_path: Any, running: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """The receipts the supervisor boot owes: the migrations that decide the document ON DISK now,
+    chosen as for a write of that document — its input is the file (the server read the N-1 document
+    no save has replaced) or its result is (a save landed the migrated catalog) — and, with no
+    readable file, those whose result is ``running``: the defaults the install runs. Not every
+    migration this process computed: the factory rows minted for the defaults the server read before
+    the wizard saved a catalog of its own, or a draft it normalized, decide no document on disk, and
+    their receipts would tell the owner that rows run which never ran. Never raises."""
+    try:
+        on_disk = _document_on_disk(settings_path)
+        owed = _deciding_outcomes(on_disk, running if on_disk is None else on_disk)
+    except Exception:
+        log.warning("review pool migration receipts for the boot under %s could not be chosen", data_dir, exc_info=True)
         return {}
     return persist_receipts(data_dir, outcomes=owed)
 
@@ -340,6 +371,7 @@ __all__ = [
     "migration_records",
     "outcome_decides_document",
     "outcome_from_snapshot",
+    "persist_boot_receipts",
     "persist_receipts",
     "persist_write_receipts",
     "read_snapshots",

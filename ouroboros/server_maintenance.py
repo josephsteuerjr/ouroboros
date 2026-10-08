@@ -505,8 +505,10 @@ def _startup_review_pool_notice(settings: dict) -> None:
     the process that SAVES the migrated document writes its receipts before that write
     (``review_pool_receipts.persist_write_receipts`` from the persistence prologue and the Colab
     writer): the snapshot ``state/review_migrations/<ts>-slots-to-pool.json`` and the
-    ``state.json`` record. This boot step first gives its own outcomes their receipts (the
-    normal order: the boot read the document before anything saved it), then reconciles a
+    ``state.json`` record. This boot step first gives receipts, by the writer's rule, only to
+    the migrations deciding the document on disk now (``persist_boot_receipts``: the N-1 document
+    the boot read before any save; with no file, the defaults ``settings`` carries; never the
+    factory rows of defaults read before the wizard saved its own catalog), then reconciles a
     record for every snapshot another process left without one (a Colab kernel, the launcher
     menu, the UI before this supervisor generation), and sends ONE English owner-chat message
     (``review_pool_migration.owner_message``) per record whose ``reported`` is still unset,
@@ -522,12 +524,12 @@ def _startup_review_pool_notice(settings: dict) -> None:
     those keys as no longer read (``environment_retired_review_keys``).
     """
     try:
-        from ouroboros import review_pool_receipts as receipts
+        from ouroboros import config, review_pool_receipts as receipts
         from ouroboros.review_pool_migration import owner_message
         from supervisor.message_bus import send_with_budget
         from supervisor.state import load_state, update_state
 
-        receipts.persist_receipts(DATA_DIR)
+        receipts.persist_boot_receipts(DATA_DIR, config.SETTINGS_PATH, settings)
         state = load_state()
         owner_chat = int(state.get("owner_chat_id") or 0)
         records = receipts.reconcile_records(DATA_DIR, state, update_state)

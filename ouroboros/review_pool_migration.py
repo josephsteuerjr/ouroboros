@@ -1303,7 +1303,7 @@ def apply_outcome(loaded: Dict[str, Any], outcome: MigrationOutcome) -> None:
 # Migrations this process's settings reads have computed, keyed by the digest of the
 # document facts the migration reads (insertion order kept). The read seam runs on every
 # settings read, so one document is migrated once and the recorded outcome is re-applied;
-# the supervisor boot writes the snapshot and tells the owner from ``migrations_seen()``.
+# receipts (``review_pool_receipts``) go only to the outcomes that decide a document.
 _MIGRATIONS_SEEN: Dict[str, MigrationOutcome] = {}
 
 

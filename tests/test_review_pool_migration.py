@@ -1289,14 +1289,22 @@ def _snapshots(root):
         if (root / "state" / "review_migrations").exists() else []
 
 
-def test_the_snapshot_is_written_once_and_the_owner_hears_once(boot):
+def _served_from_disk(root, monkeypatch, document):
+    """The server's read of ``document`` as the settings file at ``root``: the boot receipts what decides that file."""
+    monkeypatch.setattr(cfg, "SETTINGS_PATH", root / "settings.json")
+    cfg.SETTINGS_PATH.write_text(json.dumps(document), encoding="utf-8")
+    monkeypatch.delenv(SUBAGENTS, raising=False)
+    return cfg.load_settings_lock_held(_settings_lock_held=False)
+
+
+def test_the_snapshot_is_written_once_and_the_owner_hears_once(boot, monkeypatch):
     root, sent = boot
-    loaded = cfg.normalize_settings_raw(anton_document())
+    loaded = _served_from_disk(root, monkeypatch, anton_document())
     state.update_state(lambda st: st.__setitem__("owner_chat_id", 7))
 
     server_maintenance._startup_review_pool_notice(loaded)
     server_maintenance._startup_review_pool_notice(loaded)
-    cfg.normalize_settings_raw(anton_document())  # the same document read again
+    cfg.load_settings_lock_held(_settings_lock_held=False)  # the same document read again
     server_maintenance._startup_review_pool_notice(loaded)
 
     files = _snapshots(root)
@@ -1326,14 +1334,13 @@ def test_the_snapshot_is_written_once_and_the_owner_hears_once(boot):
 
     # A fresh process (empty in-process seam) reading the same document is quiet.
     m._MIGRATIONS_SEEN.clear()
-    cfg.normalize_settings_raw(anton_document())
-    server_maintenance._startup_review_pool_notice(loaded)
+    server_maintenance._startup_review_pool_notice(cfg.load_settings_lock_held(_settings_lock_held=False))
     assert len(_snapshots(root)) == 1 and len(sent) == 1
 
 
-def test_without_an_owner_chat_the_snapshot_is_written_but_the_message_waits(boot):
+def test_without_an_owner_chat_the_snapshot_is_written_but_the_message_waits(boot, monkeypatch):
     root, sent = boot
-    loaded = cfg.normalize_settings_raw(dict(N1_DOC))
+    loaded = _served_from_disk(root, monkeypatch, dict(N1_DOC))
     server_maintenance._startup_review_pool_notice(loaded)
     assert len(_snapshots(root)) == 1 and sent == []
     (record,) = server_maintenance.review_pool_migration_records().values()
@@ -1394,11 +1401,11 @@ def test_n1_the_boot_notice_names_the_environment_pool_in_force_not_the_minted_r
     assert ("Review pool initialized" in text) == (m.migration_trigger(document) == m.TRIGGER_NEVER_CONFIGURED)
 
 
-def test_a_refused_migration_is_recorded_and_reported_with_its_error(boot):
+def test_a_refused_migration_is_recorded_and_reported_with_its_error(boot, monkeypatch):
     root, sent = boot
     state.update_state(lambda st: st.__setitem__("owner_chat_id", 7))
     doc = {SUBAGENTS: catalog(), SLOTS: lanes(triad=[ref("t", "ghost")], scope=[])}
-    loaded = cfg.normalize_settings_raw(dict(doc))
+    loaded = _served_from_disk(root, monkeypatch, dict(doc))
     server_maintenance._startup_review_pool_notice(loaded)
     (path,) = _snapshots(root)
     snapshot = json.loads(path.read_text(encoding="utf-8"))
@@ -1409,11 +1416,11 @@ def test_a_refused_migration_is_recorded_and_reported_with_its_error(boot):
     assert record["error"] == snapshot["error"]
 
 
-def test_a_noop_outcome_leaves_no_receipt(boot):
+def test_a_noop_outcome_leaves_no_receipt(boot, monkeypatch):
     root, sent = boot
     state.update_state(lambda st: st.__setitem__("owner_chat_id", 7))
     pool = catalog(api_row("r", "x/y", "high", review_eligible=True, minted_from="factory_default"))
-    loaded = cfg.normalize_settings_raw({SUBAGENTS: pool, SLOTS: ""})
+    loaded = _served_from_disk(root, monkeypatch, {SUBAGENTS: pool, SLOTS: ""})
     assert cfg.review_pool_migrations_seen()[0].noop
     server_maintenance._startup_review_pool_notice(loaded)
     assert _snapshots(root) == [] and sent == []
@@ -1457,7 +1464,8 @@ def test_a_document_migrated_and_saved_by_another_process_still_gets_its_receipt
     state.init(drive)
     state.save_state({"owner_chat_id": 7})
     monkeypatch.setattr(server_maintenance, "DATA_DIR", drive)
-    served = cfg.normalize_settings_raw(json.loads((drive / "settings.json").read_text(encoding="utf-8")))
+    monkeypatch.setattr(cfg, "SETTINGS_PATH", drive / "settings.json")
+    served = cfg.load_settings_lock_held(_settings_lock_held=False)
     assert cfg.review_pool_migrations_seen() == ()
     server_maintenance._startup_review_pool_notice(served)
     server_maintenance._startup_review_pool_notice(served)
