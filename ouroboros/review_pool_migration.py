@@ -860,6 +860,23 @@ def migration_trigger(document: Mapping[str, Any]) -> str:
     return TRIGGER_NEVER_CONFIGURED
 
 
+def environment_overridable_keys(document: Any) -> frozenset:
+    """The keys whose read-seam value for ``document`` stands in for an ABSENT key, so a
+    reader that merges the environment over the document lets an environment value win.
+
+    One key in one cell: the factory reviewer rows ``apply_at_read_seam`` mints into
+    ``OUROBOROS_SUBAGENTS`` for a never-configured document (contract §1.5, the both-absent
+    cell) are a default, not the owner's disk value — a catalog the environment carries (a
+    container's roster, a benchmark's) wins over them exactly as it won over the absence
+    before the mint existed. Rows minted from the owner's lanes or retired comma keys, and a
+    catalog the owner saved, are the document's own decision and shadow the environment
+    like every disk-authored key. A missing or unreadable document has no keys at all.
+    """
+    if not isinstance(document, Mapping) or migration_trigger(document) != TRIGGER_NEVER_CONFIGURED:
+        return frozenset()
+    return frozenset({SUBAGENTS_KEY})
+
+
 def migration_applies(document: Mapping[str, Any]) -> bool:
     """Whether the read seam has anything to do with this document (:func:`migration_trigger`)."""
     return bool(migration_trigger(document))
@@ -1452,6 +1469,7 @@ __all__ = [
     "apply_at_read_seam",
     "apply_outcome",
     "effective_executions",
+    "environment_overridable_keys",
     "factory_lanes",
     "factory_review_rows",
     "input_sha256",

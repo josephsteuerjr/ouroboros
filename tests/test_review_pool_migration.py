@@ -798,6 +798,55 @@ def test_m1_the_no_settings_file_path_reaches_the_factory_pool(tmp_path, monkeyp
     assert len(cfg.review_pool_migrations_seen()) == 1
 
 
+@pytest.mark.parametrize("document", [
+    {"OUROBOROS_MODEL": "x/y", "OPENROUTER_API_KEY": "present"},
+    {"OUROBOROS_MODEL": "x/y", "OPENROUTER_API_KEY": "present", SUBAGENTS: ""},
+    {"TOTAL_BUDGET": 1.0},
+], ids=["provider-key-only", "blank-catalog-string", "no-provider"])
+def test_m1_an_environment_catalog_wins_over_the_factory_rows_of_a_never_configured_file(
+        tmp_path, monkeypatch, document):
+    """The factory rows the seam mints for a never-configured document stand in for an
+    ABSENT catalog; they are not the owner's disk value. A catalog the environment carries
+    (``docker run -e OUROBOROS_SUBAGENTS=…`` over a mounted volume the wizard never saw)
+    therefore wins over them, exactly as it won over the absence before M1 — without the
+    environment catalog the same file still reads the factory pool (M1 stays)."""
+    from ouroboros import reviewer_slot_config as rs
+
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps(document), encoding="utf-8")
+    monkeypatch.setattr(cfg, "SETTINGS_PATH", path)
+    env_pool = catalog(api_row("mine", "env/model", "high", review_eligible=True))
+
+    monkeypatch.setenv(SUBAGENTS, env_pool)
+    settings = cfg.load_settings_lock_held(_settings_lock_held=False)
+    assert settings[SUBAGENTS] == env_pool
+    assert [row.slot_id for row in rs.review_pool_rows(settings)] == ["mine"]
+
+    monkeypatch.delenv(SUBAGENTS)
+    factory = cfg.load_settings_lock_held(_settings_lock_held=False)
+    assert _marked(json.loads(factory[SUBAGENTS])["items"]) == ["review-1", "review-2", "review-3"]
+    assert all(row["minted_from"] == "factory_default" for row in json.loads(factory[SUBAGENTS])["items"])
+
+
+@pytest.mark.parametrize("document", [
+    {SLOTS: lanes(triad=[direct("t1", "lane/model", "high")], scope=[direct("s1", "lane/model", "high")]),
+     "OPENROUTER_API_KEY": "present"},
+    {"OUROBOROS_REVIEW_MODELS": "a/one, b/two", "OPENROUTER_API_KEY": "present"},
+    {SUBAGENTS: catalog(api_row("saved", "disk/model", "high", review_eligible=True))},
+], ids=["authored-lane", "retired-comma-keys", "saved-catalog"])
+def test_rows_the_owner_authored_on_disk_still_shadow_an_environment_catalog(tmp_path, monkeypatch, document):
+    """The other side of the same rule: a catalog the owner saved, or rows minted from the
+    owner's own lanes or retired comma keys, ARE the document's decision and keep shadowing
+    the environment the way every disk-authored key does."""
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps(document), encoding="utf-8")
+    monkeypatch.setattr(cfg, "SETTINGS_PATH", path)
+    monkeypatch.setenv(SUBAGENTS, catalog(api_row("mine", "env/model", "high", review_eligible=True)))
+    settings = cfg.load_settings_lock_held(_settings_lock_held=False)
+    assert "mine" not in settings[SUBAGENTS]
+    assert settings[SUBAGENTS] == cfg.normalize_settings_raw(dict(document))[SUBAGENTS]
+
+
 def test_m1_a_retired_comma_keys_document_is_distinguished_from_a_fresh_install():
     outcome, _after = _migrated({"OUROBOROS_REVIEW_MODELS": "a/one, b/two", "OPENROUTER_API_KEY": "present"})
     assert outcome.trigger == m.TRIGGER_RETIRED_KEYS and outcome.slots_state == "absent"

@@ -824,6 +824,7 @@ def load_settings_lock_held(*, _settings_lock_held: bool = True) -> dict:
     callers are lock-owning write preconditions, so the default remains true. A raw context
     compatibility migration is persisted only while that lock is held; the write contains
     the raw mapping plus the normalized pair, never a defaults-merged settings document."""
+    from ouroboros.review_pool_migration import apply_at_read_seam, environment_overridable_keys
     loaded: dict = {}
     try:
         raw = _settings_integrity.read_settings_json_verified(SETTINGS_PATH)
@@ -842,6 +843,7 @@ def load_settings_lock_held(*, _settings_lock_held: bool = True) -> dict:
     # An existing (even unreadable) document keeps the optional bounds it ran under.
     settings = defaults_for_settings_document(raw is not None or SETTINGS_PATH.exists())
     settings.update(loaded)
+    env_wins = environment_overridable_keys(raw)  # a seam default for an ABSENT key is not the owner's value
     for key in SETTINGS_DEFAULTS:
         raw_env = os.environ.get(key)
         if raw_env is None or key in _DISK_AUTHORED_SETTINGS or key in ENDPOINT_AUTHORED_SETTINGS:  # DISK-authored
@@ -851,13 +853,11 @@ def load_settings_lock_held(*, _settings_lock_held: bool = True) -> dict:
             continue
         if raw_env == "" and key not in OPTIONAL_BOUND_LEGACY:
             continue
-        if key in loaded and settings.get(key) not in {None, ""}:
+        if key in loaded and key not in env_wins and settings.get(key) not in {None, ""}:
             continue
         settings[key] = _coerce_setting_value(key, raw_env)
     if not isinstance(raw, dict):
-        # No document went through the read seam: the never-configured install (contract §1.5,
-        # both-absent cell) reaches the same factory review rows over the env-merged defaults.
-        from ouroboros.review_pool_migration import apply_at_read_seam
+        # No document went through the read seam: the never-configured install (§1.5) takes its factory rows here.
         apply_at_read_seam(settings)
     return settings
 
