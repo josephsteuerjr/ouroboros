@@ -227,6 +227,24 @@ def test_unobserved_seat_is_unknown_never_a_distinct_model():
     assert rl.distinct_model_facts([]) == {"distinct_models": 0, "observed_unknown_seats": 0, "single_model_panel": "unknown"}
 
 
+def test_claudexor_rows_running_different_models_are_different_models():
+    """The transport is not the model: ``claudexor::codex=gpt-6-astra`` and
+    ``claudexor::codex=gpt-5.6-sol`` are two models, while one model through a
+    direct provider, OpenRouter or Claudexor is one name."""
+    assert rl.normalize_model_name("claudexor::codex=gpt-6-astra") == "gpt-6-astra"
+    assert rl.normalize_model_name("claudexor::codex=gpt-5.6-sol") == "gpt-5.6-sol"
+    assert rl.normalize_model_name("openai::gpt-5") == rl.normalize_model_name("openai/gpt-5") == "gpt-5"
+    assert rl.normalize_model_name("Anthropic::Claude-Opus-5") == rl.normalize_model_name("claudexor::claude=claude-opus-5")
+    facts = rl.distinct_model_facts(["claudexor::codex=gpt-6-astra", "claudexor::codex=gpt-5.6-sol",
+                                     "claudexor::claude=claude-opus-5"])
+    assert facts == {"distinct_models": 3, "observed_unknown_seats": 0, "single_model_panel": False}
+    models = ("claudexor::codex=gpt-6-astra", "claudexor::codex=gpt-5.6-sol", "claudexor::codex=gpt-6-astra")
+    panel = rl.build_commit_gate_record(_facts(_three(models))).to_dict()["panel"]
+    assert panel["distinct_models"] == 2 and panel["single_model_panel"] is False
+    same = rl.build_commit_gate_record(_facts(_three(("claudexor::codex=gpt-6-astra",) * 3))).to_dict()["panel"]
+    assert same["distinct_models"] == 1 and same["single_model_panel"] is True
+
+
 def test_session_seat_observed_model_comes_from_its_execution_record():
     plans = [_plan("s1", "claude", route="agent_session", session_target="claude=opus")]
     executions = {"s1": {"ts": "2026-10-07T00:00:01+00:00", "effective": {"route": "agent_session:claude", "model": "claude-opus-5",

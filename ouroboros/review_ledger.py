@@ -447,11 +447,18 @@ def recent_records(drive_root: Any, task_id: str = "", limit: int = 20, *, hot_o
 
 
 def normalize_model_name(text: Any) -> str:
-    """One name for one model across route spellings: case, namespace prefix
-    (``openai/``), version tag (``:free``) and blanks do not make two models."""
+    """One name for one model across route spellings: case, a direct-provider
+    prefix (``openai::``), the Claudexor transport and source (``claudexor::codex=``),
+    a namespace (``openai/``), a version tag (``:free``) and blanks do not make two
+    models — and two Claudexor rows running different models never collapse into
+    the one name of their transport."""
     value = str(text or "").strip().lower()
     if not value or value == UNKNOWN:
         return UNKNOWN
+    if "::" in value:
+        provider, _, value = value.partition("::")
+        if provider == "claudexor":
+            value = value.partition("=")[2] or value
     return value.rsplit("/", 1)[-1].split(":", 1)[0] or UNKNOWN
 
 
