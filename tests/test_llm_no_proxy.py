@@ -323,9 +323,6 @@ def test_chat_remote_no_proxy_retries_openrouter_parameter_rejection(monkeypatch
     """OpenRouter no_proxy path retries once without optional sampling params."""
     from ouroboros.llm import LLMClient
 
-    # The autouse fixture supplies the cold metadata premise and isolates the
-    # learned wire policy: temperature must reach the first send so only the
-    # fake provider's rejection removes it.
     client = LLMClient(api_key="test-or-key")
     target = client._resolve_remote_target("anthropic/claude-opus-4.8")
     messages = [{"role": "user", "content": "hello"}]
