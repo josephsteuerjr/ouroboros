@@ -155,6 +155,8 @@ def test_an_unrelated_save_re_posts_the_shown_catalog_and_writes_no_lanes(subscr
 def test_a_marked_row_round_trips_through_the_real_gateway(subscription_ui, settings_gateway):
     """The Reviewer box, the real save rules and the real pool read agree: the marked row is
     stored, the pool lists it, and its card states the review cost it can know."""
+    from playwright.sync_api import expect
+
     ui, gateway, writes = subscription_ui, settings_gateway, []
     _install(gateway, {"enabled": True, "items": [_OWNER_ROW]})
     _serve_through(ui, gateway, writes)
@@ -173,10 +175,7 @@ def test_a_marked_row_round_trips_through_the_real_gateway(subscription_ui, sett
     with page.expect_response("**/api/review-pool"):
         page.locator("#btn-reload-settings").click()
     facts = page.locator("[data-subagent-review-facts]").first
-    # The mark is shown before the reload; the cost only once the pool read is painted.
-    page.wait_for_function("""() => {
-        const text = document.querySelector('[data-subagent-review-facts]')?.textContent || '';
-        return text.includes('In the review pool') && !text.includes('price appears after saving');
-    }""")
-    assert "cost unknown" in facts.inner_text(), "a custom endpoint has no known tariff; unknown is never zero"
+    # Save's own re-read and Reload each repaint the card before their pool read lands.
+    expect(facts, "a custom endpoint has no known tariff; unknown is never zero").to_contain_text("cost unknown")
+    expect(facts).to_contain_text("In the review pool")
     roles.capture(page, "reviewer-real-gateway-marked")
