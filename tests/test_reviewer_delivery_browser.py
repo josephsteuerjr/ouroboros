@@ -173,7 +173,10 @@ def test_a_marked_row_round_trips_through_the_real_gateway(subscription_ui, sett
     with page.expect_response("**/api/review-pool"):
         page.locator("#btn-reload-settings").click()
     facts = page.locator("[data-subagent-review-facts]").first
-    page.wait_for_function("""() => document.querySelector('[data-subagent-review-facts]')
-        ?.textContent.includes('In the review pool')""")
+    # The mark is shown before the reload; the cost only once the pool read is painted.
+    page.wait_for_function("""() => {
+        const text = document.querySelector('[data-subagent-review-facts]')?.textContent || '';
+        return text.includes('In the review pool') && !text.includes('price appears after saving');
+    }""")
     assert "cost unknown" in facts.inner_text(), "a custom endpoint has no known tariff; unknown is never zero"
     roles.capture(page, "reviewer-real-gateway-marked")
