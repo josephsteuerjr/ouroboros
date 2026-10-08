@@ -1,8 +1,9 @@
 """The stand's review panel (owner decision 2026-09-06): three model families at effort low on every reviewer,
 task and evolution at medium, written into every paid lane's settings; ``--production-panel`` leaves the tree's
-own defaults in place and the stub lane keeps its loopback rows. The stand still writes the panel under the
-lane-era key, so the product's read seam (``normalize_settings_raw`` -> ``review_pool_migration``) must turn it
-into the review pool every surface runs, or the review organ would fall back silently."""
+own defaults in place and the stub lane keeps its loopback rows. The panel IS the review pool: catalog rows
+marked Reviewer. The isolated settings builder drops the retired lane-era keys, so a panel written under them
+vanished and the paid stand silently reviewed with the factory rows; what a lane runs is read back through the
+product's read seam (``normalize_settings_raw`` -> ``review_pool_rows``)."""
 from __future__ import annotations
 
 import json
@@ -16,11 +17,14 @@ from ouroboros.settings_defaults import OPENROUTER_REVIEW_DEFAULTS
 FAKE_KEY = "sk-or-v1-e2e-live-test-key-value-never-printed-0123456789"
 
 
-def test_the_stand_panel_reads_as_a_pool_of_three_families_through_the_migration():
+def test_the_stand_panel_is_a_pool_of_three_families_in_marked_catalog_rows():
+    from ouroboros.review_pool_migration import migration_trigger
+
+    assert migration_trigger(dict(scenarios.STAND_PANEL_SETTINGS)) == ""  # already a pool: nothing to migrate
     document = normalize_settings_raw(dict(scenarios.STAND_PANEL_SETTINGS))
-    assert "OUROBOROS_REVIEWER_SLOTS" not in document and "OUROBOROS_EFFORT_REVIEW" not in document
+    assert document["OUROBOROS_SUBAGENTS"] == scenarios.STAND_PANEL_SETTINGS["OUROBOROS_SUBAGENTS"]
     pool = [(row.target_id, row.effort, row.retrieves) for row in review_pool_rows(document)]
-    # The three triad rows pack the brief at effort low; the scope row joins the pool reading natively.
+    # Three rows pack the brief at effort low; the fourth reads the work itself.
     assert pool == [("google/gemini-3.8-flash", "low", False), ("openai/gpt-5.6-luna", "low", False),
                     ("deepseek/deepseek-v4-pro", "low", False), ("deepseek/deepseek-v4-pro", "low", True)]
     assert {m.split("/")[0] for m, _, _ in pool} == {"google", "openai", "deepseek"}
@@ -35,11 +39,15 @@ def test_paid_lanes_carry_the_panel_unless_production_panel_or_stub(monkeypatch)
     # parse_args reads tempfile.gettempdir(), which caches the session's temp dir; a TMPDIR
     # env change never reaches it (test_e2e_live_runner.py's _short_tmp patches the same seam).
     monkeypatch.setattr(run_live_lanes.tempfile, "gettempdir", lambda: "/tmp")
+    retired = {"OUROBOROS_REVIEWER_SLOTS", "OUROBOROS_EFFORT_REVIEW", "OUROBOROS_EFFORT_SCOPE_REVIEW"}
     paid = run_live_lanes.effective_settings(run_live_lanes.parse_args(["--out", "/tmp/x"]), FAKE_KEY)
-    assert json.loads(paid["OUROBOROS_REVIEWER_SLOTS"]) == scenarios.STAND_REVIEW_PANEL
-    assert paid["OUROBOROS_EFFORT_REVIEW"] == "low" and paid["OUROBOROS_EFFORT_TASK"] == "medium"
+    assert paid["OUROBOROS_SUBAGENTS"] == scenarios.STAND_PANEL_SETTINGS["OUROBOROS_SUBAGENTS"]
+    assert not retired & set(paid) and paid["OUROBOROS_EFFORT_TASK"] == "medium"
+    # What the paid lane RUNS: the stand's cheap rows, never the factory panel.
+    assert [row.target_id for row in review_pool_rows(normalize_settings_raw(dict(paid)))] == [
+        "google/gemini-3.8-flash", "openai/gpt-5.6-luna", "deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-pro"]
     production = run_live_lanes.effective_settings(run_live_lanes.parse_args(["--out", "/tmp/x", "--production-panel"]), FAKE_KEY)
-    assert not production.get("OUROBOROS_REVIEWER_SLOTS") and "OUROBOROS_EFFORT_REVIEW" not in production
+    assert not retired & set(production)
     # The production document names neither lanes nor a catalog: through the read seam it is
     # a never-configured install and runs the factory OpenRouter triad (quorum 2 of 3), so
     # the lane reviews with the tree's own default panel instead of an empty pool.
@@ -47,8 +55,8 @@ def test_paid_lanes_carry_the_panel_unless_production_panel_or_stub(monkeypatch)
     pool = review_pool_rows(normalize_settings_raw(dict(production)))
     assert [row.target_id for row in pool] == list(OPENROUTER_REVIEW_DEFAULTS["triad"]) and adaptive_quorum(len(pool)) == 2
     stub = run_live_lanes.effective_settings(run_live_lanes.parse_args(["--stub", "--out", "/tmp/x"]), "")
-    assert stub.get("OUROBOROS_REVIEWER_SLOTS") != scenarios.STAND_PANEL_SETTINGS["OUROBOROS_REVIEWER_SLOTS"]
-    assert "OUROBOROS_EFFORT_REVIEW" not in stub
+    assert stub.get("OUROBOROS_SUBAGENTS") != scenarios.STAND_PANEL_SETTINGS["OUROBOROS_SUBAGENTS"]
+    assert not retired & set(stub)
 
 
 def _lane_document(template: dict, sid: str) -> dict:

@@ -56,13 +56,18 @@ the manifest comes from the applied settings file, not argv. Credit admission
 uses the minimum of key-limit remaining and account credits, refusing below
 `--min-credit-usd` (default the run cap).
 
-Paid runs use `scenarios.STAND_PANEL_SETTINGS`: Gemini 3.8 Flash / GPT-5.6
-Luna / DeepSeek v4 Pro triad, DeepSeek v4 Pro scope, Claude Sonnet 5 advisory;
-reviewers at low effort, task/evolution at medium. `--production-panel` selects
-the tree's defaults instead; neither choice changes installed product defaults.
+Paid runs use `scenarios.STAND_PANEL_SETTINGS`: the review pool as catalog rows
+marked Reviewer (`scenarios.STAND_REVIEW_PANEL`) — Gemini 3.8 Flash, GPT-5.6 Luna
+and DeepSeek v4 Pro packing the brief, DeepSeek v4 Pro reading the work itself —
+beside an unmarked Claude Sonnet 5 row an author may name for a preflight; every
+row at low effort, task/evolution at medium. The retired lane and review-effort
+keys are never written: the isolated settings builder drops them, so a panel
+under them would vanish and the lane would run the factory rows. `--production-panel`
+selects the tree's defaults instead (no catalog: the factory reviewer rows);
+neither choice changes installed product defaults.
 A scenario's overrides are applied over that template, and the lane reviews with
 the document they produce: SW1 composes its catalog as the scout beside the
-template's reviewers (the stand panel's lane rows, the factory rows under
+template's reviewers (the stand panel's marked rows, the factory rows under
 `--production-panel`, the stub lane's keyless rows), so every lane has a pool.
 The default `full` profile retains each scenario's enforcement; `wiring` sets
 advisory enforcement and must be reported as such.

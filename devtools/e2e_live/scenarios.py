@@ -143,19 +143,23 @@ SK1_ECHO_EXPECTED = f"echo: {SK1_ECHO_MESSAGE}"   # exactly what ``_echo`` in SK
 
 
 # The STAND's review panel (the owner's choice of 2026-09-06, questions 1-4 = A): cheap, three model families, every
-# reviewer at effort low, task and evolution at medium. The product's own defaults (gemini/terra/opus triad, terra
-# scope, sonnet advisory, high efforts) stay untouched for installs; ``--production-panel`` runs them on the stand.
+# reviewer at effort low, task and evolution at medium. The product's own defaults (the factory reviewer rows, high
+# efforts) stay untouched for installs; ``--production-panel`` runs them on the stand.
 # run3 on the defaults cost 141.63 USD, 75% of it review and opus alone 39%; this panel is estimated at ~40%.
-_ROW = lambda slot_id, model: {"slot_id": slot_id, "route": {"kind": "api_chat", "target_id": model}, "effort": "low"}  # noqa: E731
-STAND_REVIEW_PANEL = {
-    "triad": [_ROW("t_gemini", "google/gemini-3.8-flash"), _ROW("t_luna", "openai/gpt-5.6-luna"),
-              _ROW("t_deepseek", "deepseek/deepseek-v4-pro")],
-    "scope": [_ROW("s_deepseek", "deepseek/deepseek-v4-pro")],
-    "advisory": {"route": {"kind": "api_chat", "target_id": "anthropic/claude-sonnet-5"}, "effort": "low"},
-}
-STAND_PANEL_SETTINGS = {"OUROBOROS_REVIEWER_SLOTS": json.dumps(STAND_REVIEW_PANEL), "OUROBOROS_EFFORT_TASK": "medium",
-                        "OUROBOROS_EFFORT_EVOLUTION": "medium", "OUROBOROS_EFFORT_REVIEW": "low",
-                        "OUROBOROS_EFFORT_SCOPE_REVIEW": "low"}
+# The panel IS the review pool: catalog rows marked Reviewer, the effort on each row. ``build_isolated_settings`` drops
+# the retired lane-era keys it was once written under, which left the paid stand reviewing with the factory rows.
+_ROW = lambda subagent_id, model, **extra: {  # noqa: E731
+    "subagent_id": subagent_id, "recommended_use": "E2E stand reviewer (the cheap panel).",
+    "route": {"kind": "api_model", "target_id": model}, "effort": "low", **extra}
+STAND_REVIEW_PANEL = {"enabled": True, "items": [
+    _ROW("stand-gemini", "google/gemini-3.8-flash", review_eligible=True, delivery="packet"),
+    _ROW("stand-luna", "openai/gpt-5.6-luna", review_eligible=True, delivery="packet"),
+    _ROW("stand-deepseek", "deepseek/deepseek-v4-pro", review_eligible=True, delivery="packet"),
+    _ROW("stand-deepseek-reads", "deepseek/deepseek-v4-pro", review_eligible=True, delivery="native"),
+    _ROW("stand-advisory", "anthropic/claude-sonnet-5"),  # unmarked: an author may still name it for a preflight
+]}
+STAND_PANEL_SETTINGS = {"OUROBOROS_SUBAGENTS": json.dumps(STAND_REVIEW_PANEL), "OUROBOROS_EFFORT_TASK": "medium",
+                        "OUROBOROS_EFFORT_EVOLUTION": "medium"}
 
 
 def _git(args: list[str], cwd: pathlib.Path) -> str:
@@ -708,16 +712,14 @@ def sm1_stub_script(clone: pathlib.Path) -> dict:
 def sw1_roster(child_model: str, template: dict | None = None) -> str:
     """SW1's catalog: the scout row BESIDE the lane template's reviewers (T2b). The catalog is one
     document key, so a scout-only catalog made the lane's pool a loud EMPTY one (no reviewer runs,
-    nothing is minted — that rule stands). A template with a catalog (the stub lane's keyless
-    reviewers) keeps its rows; one with neither a catalog nor the lanes key (``--production-panel``)
-    gets exactly the factory rows the tree would mint for it (``factory_review_rows``); the stand
-    panel (lanes key) migrates its own rows beside the scout at the read seam, as before."""
+    nothing is minted — that rule stands). A template with a catalog (the stand panel's marked rows,
+    the stub lane's keyless reviewers) keeps its rows; one without (``--production-panel``) gets
+    exactly the factory rows the tree would mint for it (``factory_review_rows``)."""
     from ouroboros.subscription_install_presets import factory_review_rows
 
     template = dict(template or {})
     stored = str(template.get("OUROBOROS_SUBAGENTS") or "").strip()
-    reviewers = ([dict(row) for row in json.loads(stored).get("items") or []] if stored
-                 else [] if "OUROBOROS_REVIEWER_SLOTS" in template else factory_review_rows(template))
+    reviewers = [dict(row) for row in json.loads(stored).get("items") or []] if stored else factory_review_rows(template)
     scout = {"subagent_id": SW1_ROSTER_ID, "recommended_use": "Read-only scout for parallel repository surveys.",
              "route": {"kind": "api_model", "target_id": child_model}, "effort": "low"}
     return json.dumps({"enabled": True, "items": [scout, *reviewers]})
