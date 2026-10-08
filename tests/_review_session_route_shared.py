@@ -3,13 +3,15 @@
 Split out of ``tests/test_review_agent_session_route.py`` when that module was
 divided by theme; the fixtures are verbatim (owner test rule: cheap, weak, no
 live harness). A FakeGateway stands in for the Claudexor /v2 control plane with
-the same semantics the real engine documents and a FakeLLM answers the one
-sanctioned light-model extraction call. The autouse transport fixture rides
-along so every sibling suite keeps patching the owned gateway it was written
-against instead of silently reaching a real one.
+the same semantics the real engine documents, a FakeLLM answers the one
+sanctioned light-model extraction call and a FakeSlotClock is the clock a slot
+window reads. The autouse transport fixture rides along so every sibling suite
+keeps patching the owned gateway it was written against instead of silently
+reaching a real one.
 """
 
 import json
+import time
 
 import pytest
 
@@ -191,6 +193,31 @@ class FakeLLM:
     def chat(self, **kwargs):
         self.calls.append(kwargs)
         return {"content": self.reply}, {"prompt_tokens": 5, "completion_tokens": 2, "cost": 0.0001}
+
+class FakeSlotClock:
+    """The ``time`` a slot window reads (``review_execution.time``). The waits are
+    real, but its ``monotonic`` moves only by the window's own sleeps and run starts,
+    so where the window's reads land never depends on how finely the host clock
+    ticks. ``tick`` imitates the worst case of CPython 3.10's Windows ``monotonic``
+    (15.625 ms ticks): a run's start spans a tick and a sleep wakes a tick early."""
+
+    def __init__(self, tick=0.0):
+        self.tick, self.now = tick, 1000.0
+
+    def __getattr__(self, name):  # anything the window does not drive stays real
+        return getattr(time, name)
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, seconds):
+        time.sleep(seconds)
+        self.now += max(self.tick, seconds - self.tick)
+
+    def run_started(self):
+        """The moment a run's start returns: the slot budget starts here."""
+        self.now += self.tick
+        return self.now
 
 @pytest.fixture()
 def fake_route(monkeypatch, tmp_path):

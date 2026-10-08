@@ -31,6 +31,7 @@ fake_route = __fake_route
 from tests._review_session_route_shared import (
     FakeGateway,
     FakeLLM,
+    FakeSlotClock,
     _agent_request,
     _agent_slot,
     _run_session_directly,
@@ -828,24 +829,31 @@ class _DeadlineWitnessLLM(FakeLLM):
         return super().chat(**kwargs)
 
 
-def _late_success_executor(tmp_path, fake_route, monkeypatch, *, llm, seen_by, window=1.0):
+def _late_success_executor(tmp_path, fake_route, monkeypatch, *, llm, seen_by, window=1.0, tick=0.0):
     """A run still `running` through the whole slot budget whose natural
     `succeeded` is first seen either by the spent window's last read or by the
-    verify read of the slot-deadline cancel (completion wins)."""
-    import time
-
+    verify read of the slot-deadline cancel (completion wins). The budget is the
+    window's own: it starts with the run, on the clock the window reads."""
+    from ouroboros import review_execution
     from ouroboros.review_execution import AgentSessionReviewExecutor, ReviewAssignment
 
     fake_route.nonterminal = True
     fake_route.manifest_capabilities = {}
     fake_route.detail = _terminal_detail("narrative first\n[]\nNO_FINDINGS")
-    flip_at, original = time.monotonic() + window, FakeGateway.get_run
+    clock, spent_at = FakeSlotClock(tick), []
+    original_start, original_get = FakeGateway.start_run, FakeGateway.get_run
+
+    def start_run(self, request, **kw):
+        spent_at.append(clock.run_started() + window)
+        return original_start(self, request, **kw)
 
     def get_run(self, run_id, **kw):
-        if (time.monotonic() >= flip_at) if seen_by == "spent_read" else bool(self.cancels):
+        if (spent_at and clock.monotonic() >= spent_at[0]) if seen_by == "spent_read" else bool(self.cancels):
             FakeGateway.nonterminal = False
-        return original(self, run_id, **kw)
+        return original_get(self, run_id, **kw)
 
+    monkeypatch.setattr(review_execution, "time", clock)
+    monkeypatch.setattr(FakeGateway, "start_run", start_run)
     monkeypatch.setattr(FakeGateway, "get_run", get_run)
     if seen_by == "spent_read":
         # The subject is what the deadline read DOES with a `succeeded` it sees, not whether a
@@ -861,20 +869,22 @@ def _late_success_executor(tmp_path, fake_route, monkeypatch, *, llm, seen_by, w
         llm=llm)
 
 
+@pytest.mark.parametrize("tick", [0.0, 0.015625], ids=["exact_clock", "windows_clock"])
 @pytest.mark.parametrize("seen_by, cancels", [("spent_read", []), ("verify_read", ["review_slot_timeout"])])
 def test_a_success_first_seen_at_the_slot_deadline_is_accepted_and_extracted_past_the_slot_deadline(
-        tmp_path, fake_route, monkeypatch, seen_by, cancels):
+        tmp_path, fake_route, monkeypatch, seen_by, cancels, tick):
     """The deadline discovers `succeeded`: the verdict is accepted
     (``late_success_accepted``) and its light-model extraction runs on the
     operation's own wait — the slot's expired execution deadline no longer says
     ``deadline`` to the send. When the cancel's verify read is what found it,
-    the cancel was still written under ``review_slot_timeout``."""
+    the cancel was still written under ``review_slot_timeout``. Both hold on a
+    clock as coarse as Windows' too (``FakeSlotClock``)."""
     import time
 
     from ouroboros.model_wait import execution_deadline_scope
 
     llm = _DeadlineWitnessLLM()
-    executor = _late_success_executor(tmp_path, fake_route, monkeypatch, llm=llm, seen_by=seen_by)
+    executor = _late_success_executor(tmp_path, fake_route, monkeypatch, llm=llm, seen_by=seen_by, tick=tick)
     with execution_deadline_scope(time.monotonic() + 1.0, review_slot_id="scope_slot_1"):
         result = executor.execute()
     assert llm.calls, "the late verdict was extracted, not dropped"
