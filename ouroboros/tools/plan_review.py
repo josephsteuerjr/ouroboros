@@ -587,6 +587,9 @@ def _prepare_plan_inputs(ctx: ToolContext, request: "_PlanRequest", state_root: 
         "list those files so reviewers receive the constitutional pack (BIBLE)."
         if active_root == system_root and not affected_paths else ""
     )
+    if constitutional:  # author-facing only: the reminder is outside the plan fingerprint
+        from ouroboros.reference_books import book_plan_fact
+        reminder = book_plan_fact(system_root, plan_spec.system_repo_paths(active_root, system_root, affected_paths))
     declared_evidence = list(spec["evidence"])  # W3: earlier-cycle need_evidence is HOST-attached
     try:
         reviewer_requested, request_dropped = _reviewer_requested_locators(ctx, state_root)
