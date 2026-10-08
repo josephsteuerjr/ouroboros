@@ -319,7 +319,7 @@ def test_chat_remote_passes_no_proxy_to_anthropic():
     assert captured_timeout[0] == 88.0
 
 
-def test_chat_remote_no_proxy_retries_openrouter_parameter_rejection():
+def test_chat_remote_no_proxy_retries_openrouter_parameter_rejection(monkeypatch):
     """OpenRouter no_proxy path retries once without optional sampling params."""
     from ouroboros.llm import LLMClient
 
