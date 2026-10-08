@@ -17,6 +17,12 @@ from tests._governance_docs_shared import architecture_text
 REPO = Path(__file__).resolve().parents[1]
 PROFILE = REPO / "devtools" / "benchmarks" / "cybergym" / "settings_base.json"
 MODEL = "deepseek/deepseek-v4-flash-0731"
+RETIRED_REVIEW_KEYS = {
+    "OUROBOROS_REVIEWER_SLOTS", "OUROBOROS_REVIEW_MODELS",
+    "OUROBOROS_SCOPE_REVIEW_MODELS", "OUROBOROS_SCOPE_REVIEW_MODEL",
+    "OUROBOROS_MODEL_DEEP_SELF_REVIEW", "OUROBOROS_EFFORT_REVIEW",
+    "OUROBOROS_EFFORT_SCOPE_REVIEW", "OUROBOROS_EFFORT_DEEP_SELF_REVIEW",
+}
 
 
 def _settings() -> dict[str, object]:
@@ -26,6 +32,7 @@ def _settings() -> dict[str, object]:
 def test_profile_pins_one_canonical_model_and_review_panel():
     settings = _settings()
     assert settings["OUROBOROS_MODEL"] == MODEL
+    assert not RETIRED_REVIEW_KEYS.intersection(settings)
     configured = parse_configured_subagents(settings["OUROBOROS_SUBAGENTS"])
     # The template keeps the canonical actor available for review/copying; the
     # launcher turns it off in the applied cohort snapshot.
@@ -46,7 +53,6 @@ def test_profile_pins_one_canonical_model_and_review_panel():
         "OUROBOROS_MODEL_VISION",
         "OUROBOROS_MODEL_CONSCIOUSNESS",
         "OUROBOROS_MODEL_FALLBACKS",
-        "OUROBOROS_MODEL_DEEP_SELF_REVIEW",
         "OUROBOROS_WEBSEARCH_MODEL",
     )
     for key in active_slots:
@@ -83,12 +89,6 @@ def test_profile_records_safe_runtime_and_budget_defaults():
         "OUROBOROS_EFFORT_EVOLUTION",
     ):
         assert settings[key] == "high", key
-    for key in (
-        "OUROBOROS_EFFORT_REVIEW",
-        "OUROBOROS_EFFORT_SCOPE_REVIEW",
-        "OUROBOROS_EFFORT_DEEP_SELF_REVIEW",
-    ):
-        assert settings[key] == "max", key
     for key in (
         "OUROBOROS_EFFORT_CONSCIOUSNESS",
     ):

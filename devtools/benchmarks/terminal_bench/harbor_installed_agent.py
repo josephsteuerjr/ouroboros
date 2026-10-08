@@ -385,11 +385,7 @@ class OuroborosTerminalBenchAgent(BaseInstalledAgent):
             # benchmark metric must stay single-model (a host-configured
             # fallback would silently contaminate the measurement).
             "OUROBOROS_WEBSEARCH_MODEL",
-            "OUROBOROS_MODEL_DEEP_SELF_REVIEW",
             "OUROBOROS_EFFORT_TASK",
-            "OUROBOROS_EFFORT_REVIEW",
-            "OUROBOROS_EFFORT_SCOPE_REVIEW",
-            "OUROBOROS_EFFORT_DEEP_SELF_REVIEW",
             "OUROBOROS_RETURN_REASONING",
             # Working-context mode (low | max) for context-ablation runs: the
             # container has no settings.json, so without this forward the

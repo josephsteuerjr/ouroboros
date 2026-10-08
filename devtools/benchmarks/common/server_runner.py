@@ -32,7 +32,7 @@ import uuid
 if __package__ in {None, ""}:
     sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
 
-from devtools.benchmarks.common.manifests import runtime_attestation
+from devtools.benchmarks.common.manifests import ACTIVE_MODEL_SLOT_KEYS, MODEL_SLOT_KEYS, runtime_attestation
 from devtools.benchmarks.common.secrets import isolated_credential_grants  # noqa: F401 (re-export)
 from ouroboros.context_mode_compat import normalize_context_mode_compat
 from ouroboros.platform_layer import (
@@ -223,6 +223,9 @@ def build_isolated_settings(
         if ks in _ISO_SETTINGS_ALLOW_EXACT or ks.startswith(_ISO_SETTINGS_ALLOW_PREFIX):
             out[ks] = value
     out.update(overrides)
+    # Historical manifest keys are never execution settings for a new run.
+    for key in set(MODEL_SLOT_KEYS) - set(ACTIVE_MODEL_SLOT_KEYS):
+        out.pop(key, None)
     if "OUROBOROS_CONTEXT_MODE" in overrides and "OUROBOROS_CONTEXT_MODE_AUTO_LOW" not in overrides:
         # A benchmark override is an explicit operator choice, not ambiguous legacy disk state.
         out["OUROBOROS_CONTEXT_MODE_AUTO_LOW"] = "false"

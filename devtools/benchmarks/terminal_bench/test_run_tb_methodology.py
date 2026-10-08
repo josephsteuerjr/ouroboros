@@ -168,7 +168,7 @@ def test_apply_all_model_sets_forwarded_slots(monkeypatch):
         assert os.environ[key] == "google/gemini-3.5-flash"
     # Single-model run defaults to ONE packet review seat at low effort (3 identical =
     # monoculture, no diversity). The seat is a catalog row; the lane-era carriers are gone.
-    assert os.environ["OUROBOROS_EFFORT_REVIEW"] == "low"
+    assert "OUROBOROS_EFFORT_REVIEW" not in os.environ
     for key in ("OUROBOROS_REVIEWER_SLOTS", "OUROBOROS_REVIEW_MODELS",
                 "OUROBOROS_SCOPE_REVIEW_MODELS", "OUROBOROS_SCOPE_REVIEW_MODEL",
                 "OUROBOROS_EFFORT_SCOPE_REVIEW"):
@@ -189,7 +189,7 @@ def test_apply_all_model_sets_forwarded_slots(monkeypatch):
     # Configurable: the 3-identical-reviewer / medium-effort path is still available —
     # as three identical catalog rows (the host never multiplies a seat).
     run_tb.apply_all_model("google/gemini-3.5-flash", review_slots=3, review_effort="medium")
-    assert os.environ["OUROBOROS_EFFORT_REVIEW"] == "medium"
+    assert "OUROBOROS_EFFORT_REVIEW" not in os.environ
     seats = _pool(os.environ["OUROBOROS_SUBAGENTS"])
     assert [row["subagent_id"] for row in seats] == ["benchmark-review-1", "benchmark-review-2", "benchmark-review-3"]
     assert {row["route"]["target_id"] for row in seats} == {"google/gemini-3.5-flash"}
@@ -258,7 +258,12 @@ def test_adapter_forwards_fixed_model_execution_contract(tmp_path, monkeypatch):
         monkeypatch.delenv(key, raising=False)
 
     run_tb.apply_all_model(model)
+    from tests.test_cybergym_benchmark import RETIRED_REVIEW_KEYS
+
+    for key in RETIRED_REVIEW_KEYS:
+        monkeypatch.setenv(key, "foreign/stale")
     env = tb_agent.OuroborosTerminalBenchAgent(logs_dir=tmp_path)._container_env()
+    assert not RETIRED_REVIEW_KEYS.intersection(env)
     # The fixed-model roster is forwarded verbatim: the actor and the packet seat on the model.
     assert env["OUROBOROS_SUBAGENTS"] == os.environ["OUROBOROS_SUBAGENTS"]
     assert {(row["route"]["target_id"], row["delivery"]) for row in _pool(env["OUROBOROS_SUBAGENTS"])} == {(model, "packet")}

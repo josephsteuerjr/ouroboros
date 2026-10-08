@@ -34,6 +34,7 @@ from ouroboros.configured_subagents import (
 )
 from ouroboros.provider_models import provider_for_model, review_model_uses_local
 from ouroboros.reviewer_slot_config import review_pool_rows
+from tests.test_cybergym_benchmark import RETIRED_REVIEW_KEYS
 
 REVIEWER_SLOTS_ENV = "OUROBOROS_REVIEWER_SLOTS"  # the lane-era panel key: inert bytes now
 
@@ -341,7 +342,7 @@ def test_single_model_slot_snapshot_is_cli_derived_and_has_no_heavy():
     assert slots["OUROBOROS_MODEL"] == "openai/gpt-5.6-sol"
     # The seats live on the roster, not on a comma key (retired) or the lane panel.
     assert "OUROBOROS_REVIEW_MODELS" not in slots and REVIEWER_SLOTS_ENV not in slots
-    assert slots["OUROBOROS_EFFORT_REVIEW"] == "low"
+    assert not RETIRED_REVIEW_KEYS.intersection(slots)
     assert "OUROBOROS_EFFORT_SCOPE_REVIEW" not in slots
     assert "OUROBOROS_MODEL_HEAVY" not in slots
 
@@ -358,23 +359,24 @@ def test_committed_single_model_profiles_use_one_canonical_actor(relative: str, 
     assert serialize_configured_subagents(parse_configured_subagents(raw)) == raw
     assert "OUROBOROS_MODEL_HEAVY" not in payload
     assert "USE_LOCAL_HEAVY" not in payload
+    assert not RETIRED_REVIEW_KEYS.intersection(payload)
 
 
 @pytest.mark.parametrize(
-    "relative,expected,seat_count",
+    "relative,expected,seat_count,effort",
     (
-        ("devtools/benchmarks/programbench/settings_base.json", "openai/gpt-5.5", 3),
-        ("devtools/benchmarks/osworld/settings_base.json", "anthropic/claude-sonnet-4.6", 3),
+        ("devtools/benchmarks/programbench/settings_base.json", "openai/gpt-5.5", 3, "medium"),
+        ("devtools/benchmarks/osworld/settings_base.json", "anthropic/claude-sonnet-4.6", 3, "high"),
     ),
 )
-def test_target_attached_profiles_override_foreign_runtime_defaults(relative, expected, seat_count):
+def test_target_attached_profiles_override_foreign_runtime_defaults(relative, expected, seat_count, effort):
     payload = json.loads((REPO / relative).read_text(encoding="utf-8"))
     # The roster is the template's ONE review configuration surface: its marked
     # rows are the pool (N identical packet seats on the measured model). The
     # seat count is the committed template shape (3), pinned as a literal:
     # derived from the payload it would certify whatever count the file carries.
     assert payload["OUROBOROS_SUBAGENTS"] == single_model_subagents_setting(
-        expected, review_slots=seat_count, review_effort=payload["OUROBOROS_EFFORT_REVIEW"],
+        expected, review_slots=seat_count, review_effort=effort,
     )
     assert len(_pool(payload["OUROBOROS_SUBAGENTS"])) == seat_count
     assert "CLAUDE_CODE_MODEL" not in payload  # retired setting: dropped from templates
@@ -932,3 +934,33 @@ def test_editbench_seed_disables_but_records_effective_main_actor(tmp_path, monk
     assert _pool(payload["OUROBOROS_SUBAGENTS"]) == [(payload["OUROBOROS_MODEL"], "packet", "")]
     assert payload["OUROBOROS_MODEL"] == "anthropic/claude-fable-5"
     assert "OUROBOROS_MODEL_HEAVY" not in payload
+
+
+@pytest.mark.parametrize("effort", ["", "low", "max"])
+def test_new_benchmark_settings_drop_retired_review_keys_and_keep_pool(effort):
+    model = "vendor/measured"
+    stale = {key: "foreign/stale" for key in RETIRED_REVIEW_KEYS}
+    pinned = pin_single_model(model, review_slots=2, review_effort=effort, target=dict(stale))
+    assert not RETIRED_REVIEW_KEYS.intersection(pinned)
+    assert _pool(pinned["OUROBOROS_SUBAGENTS"]) == [(model, "packet", effort)] * 2
+    # Seeding an isolated runtime cannot copy an old template's inert fields.
+    isolated = build_isolated_settings({**stale, **pinned}, **stale)
+    assert not RETIRED_REVIEW_KEYS.intersection(isolated)
+    assert isolated["OUROBOROS_SUBAGENTS"] == pinned["OUROBOROS_SUBAGENTS"]
+
+
+@pytest.mark.parametrize("env_overrides", [False, True])
+def test_manifest_keeps_retired_review_keys_historical_only(tmp_path, monkeypatch, env_overrides):
+    from devtools.benchmarks.common.manifests import ACTIVE_MODEL_SLOT_KEYS
+
+    assert RETIRED_REVIEW_KEYS.issubset(MODEL_SLOT_KEYS)
+    assert not RETIRED_REVIEW_KEYS.intersection(ACTIVE_MODEL_SLOT_KEYS)
+    settings = {key: "foreign/stale" for key in RETIRED_REVIEW_KEYS}
+    settings["OUROBOROS_MODEL"] = "vendor/measured"
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps(settings), encoding="utf-8")
+    for key, value in settings.items():
+        monkeypatch.setenv(key, value)
+    snapshot = model_slot_snapshot(path, env_overrides=env_overrides)
+    assert snapshot["OUROBOROS_MODEL"] == "vendor/measured"
+    assert not RETIRED_REVIEW_KEYS.intersection(snapshot)

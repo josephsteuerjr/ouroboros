@@ -40,7 +40,6 @@ _GAIA_PINNED_MODEL_KEYS = {
     "OUROBOROS_MODEL_VISION",
     "OUROBOROS_MODEL_CONSCIOUSNESS",
     "OUROBOROS_MODEL_FALLBACKS",
-    "OUROBOROS_MODEL_DEEP_SELF_REVIEW",
 }
 # The task-review panel rides the roster (OUROBOROS_SUBAGENTS): three packet seats
 # on the solve model by default, or the explicit ``--review-models`` panel.

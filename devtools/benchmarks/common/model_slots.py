@@ -49,7 +49,7 @@ from ouroboros.route_spec import (
     route_spec_dict,
 )
 
-from devtools.benchmarks.common.manifests import ACTIVE_MODEL_SLOT_KEYS, MODEL_ROUTE_OPTION_KEYS
+from devtools.benchmarks.common.manifests import ACTIVE_MODEL_SLOT_KEYS, MODEL_ROUTE_OPTION_KEYS, MODEL_SLOT_KEYS
 
 # Every model slot a single-model run pins. Superset that is correct for both the
 # settings.json-profile path (SWE-bench Pro) and the forwarded-env path
@@ -58,7 +58,6 @@ SINGLE_MODEL_SLOT_KEYS = (
     "OUROBOROS_MODEL",
     "OUROBOROS_MODEL_LIGHT",
     "OUROBOROS_MODEL_FALLBACKS",
-    "OUROBOROS_MODEL_DEEP_SELF_REVIEW",
     "OUROBOROS_MODEL_CONSCIOUSNESS",
     "OUROBOROS_MODEL_VISION",
     "OUROBOROS_WEBSEARCH_MODEL",
@@ -248,10 +247,7 @@ def single_model_slot_snapshot(
         review_effort=review_effort,
         target=pinned,
     )
-    keys = SINGLE_MODEL_SLOT_KEYS
-    if review_effort:
-        keys += ("OUROBOROS_EFFORT_REVIEW",)
-    return {key: pinned[key] for key in keys if pinned.get(key)}
+    return {key: pinned[key] for key in SINGLE_MODEL_SLOT_KEYS if pinned.get(key)}
 
 
 def runtime_actor_snapshot(
@@ -407,7 +403,7 @@ def pin_single_model(
     ``target=None`` mutates ``os.environ`` (host-subprocess path, e.g. Terminal-Bench);
     pass a settings dict to update it instead (e.g. SWE-bench Pro ``derive_run_settings``).
     ``review_slots`` identical packet review seats ride the roster; ``review_effort``
-    (when non-empty) is written on each seat and pinned as the review effort. Returns
+    (when non-empty) is written only on each seat. Returns
     the mutated mapping. A single configured reviewer is intentionally loud
     (``single_reviewer_no_diversity``); this helper does not suppress that.
     """
@@ -429,11 +425,9 @@ def pin_single_model(
     )
     # Lane-era carriers a previous pin may have left behind are not execution
     # authorities any more; drop them so the forwarded contract is the roster alone.
-    for key in ("OUROBOROS_REVIEWER_SLOTS", "OUROBOROS_REVIEW_MODELS",
-                "OUROBOROS_SCOPE_REVIEW_MODELS", "OUROBOROS_SCOPE_REVIEW_MODEL"):
-        sink.pop(key, None)
-    if review_effort:
-        sink["OUROBOROS_EFFORT_REVIEW"] = review_effort
+    for key in set(MODEL_SLOT_KEYS) - set(ACTIVE_MODEL_SLOT_KEYS):
+        if key.startswith("OUROBOROS_"):
+            sink.pop(key, None)
     return sink
 
 

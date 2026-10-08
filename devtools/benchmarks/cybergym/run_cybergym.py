@@ -917,14 +917,7 @@ def _prepare_applied_settings(
         "OUROBOROS_MODEL_VISION": model,
         "OUROBOROS_MODEL_CONSCIOUSNESS": model,
         "OUROBOROS_MODEL_FALLBACKS": model,
-        "OUROBOROS_MODEL_DEEP_SELF_REVIEW": model,
         "OUROBOROS_WEBSEARCH_MODEL": model,
-        "OUROBOROS_SCOPE_REVIEW_MODELS": model,
-        "OUROBOROS_SCOPE_REVIEW_MODEL": model,
-        # One routed reviewer is the explicit single-model campaign contract.
-        # Keeping the legacy projection in sync prevents a stale three-row
-        # value from shadowing the structured panel in older consumers.
-        "OUROBOROS_REVIEW_MODELS": model,
         "OUROBOROS_MAX_SUBAGENT_DEPTH": 0,
         "OUROBOROS_ALLOW_MUTATIVE_SUBAGENTS": "false",
         "OUROBOROS_RUNTIME_MODE": str(getattr(args, "runtime_mode", "pro")),
@@ -960,11 +953,6 @@ def _prepare_applied_settings(
         "MCP_SERVERS": [],
         "OUROBOROS_EFFORT_TASK": "high",
         "OUROBOROS_EFFORT_EVOLUTION": "high",
-        # The benchmark task wire is validated as literal ``high``; the
-        # broader review surfaces support the stronger ``max`` tier.
-        "OUROBOROS_EFFORT_REVIEW": "max",
-        "OUROBOROS_EFFORT_SCOPE_REVIEW": "max",
-        "OUROBOROS_EFFORT_DEEP_SELF_REVIEW": "max",
         "OUROBOROS_EFFORT_CONSCIOUSNESS": "high",
     }
     # Structured no-swarm/reviewer declarations are explicit overrides rather

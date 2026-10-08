@@ -413,7 +413,7 @@ def test_model_id_classifiers_preserve_the_prior_ordered_vocabulary():
     prior = (
         "OUROBOROS_MODEL", "OUROBOROS_MODEL_LIGHT", "OUROBOROS_MODEL_VISION",
         "OUROBOROS_MODEL_CONSCIOUSNESS", "OUROBOROS_MODEL_FALLBACKS",
-        "OUROBOROS_MODEL_DEEP_SELF_REVIEW", "OUROBOROS_WEBSEARCH_MODEL",
+        "OUROBOROS_WEBSEARCH_MODEL",
     )
     assert _ACTIVE_FIXED_MODEL_KEYS == prior
     assert _MODEL_ID_SLOT_KEYS == prior
