@@ -405,8 +405,8 @@ def _managed_candidate_needs_proof(ctx: ToolContext) -> bool:
     CURRENT candidate workload carries no recorded green-suite proof (advisory ran
     with skip_tests, or the tree changed since) — the compensating preflight
     must then run PRE-commit, before paid review and before any commit exists,
-    regardless of skip_tests/doc-only, so a red candidate is fixed in place
-    instead of committed and rolled back.
+    regardless of skip_tests (the only exemption the ordinary rule knows), so a
+    red candidate is fixed in place instead of committed and rolled back.
 
     AUTHORITY (synthesis F2): the proof consulted here is the PROCESS-HELD ctx
     record pinned by the hermetic runner when the host itself ran

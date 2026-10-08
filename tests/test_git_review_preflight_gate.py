@@ -528,7 +528,8 @@ class TestReleaseMetadataPreflight:
         assert 'web/package-lock.json (expected both root "version" entries = "5.99.0-rc.1")' in result
 
     def test_doc_only_carve_is_the_commit_gate_classifier(self, tmp_path):
-        """One detector: the carve is the SAME ``_diff_is_doc_only`` the tests rule applies.
+        """One detector: the release-metadata carve is the one remaining reader of
+        ``_diff_is_doc_only`` (the tests rule runs the suite on a documentation diff too).
         A code file, a mixed diff and a doc under ``tests/`` keep the block; the carve never
         touches the carrier-coherence checks once VERSION is in scope."""
         from ouroboros.tools.git_review_cycle import _diff_is_doc_only
@@ -702,6 +703,38 @@ def test_a_doc_only_diff_pays_the_suite_like_any_other_diff(candidate, monkeypat
     calls.clear()
     assert _gate(candidate, paths=("docs/notes.md",), skip_tests=True) is None
     assert calls.count("tests") == 0
+
+
+def test_every_site_states_the_one_tests_rule_for_a_documentation_diff():
+    """Owner answer A (2026-10-08): the suite runs before any commit to the body, a
+    documentation-only diff included; ``skip_tests`` is the one exemption. The gate's
+    condition, its comments, the checklist line and the test modules that once pinned the
+    retired carve say the same thing, so no site describes a doc-only diff as exempt."""
+    import inspect
+    import pathlib
+
+    import tests.test_git_review_tests_gate as tests_gate
+    import tests.test_skip_tests_doc_only as classifier_tests
+
+    repo = pathlib.Path(git.__file__).resolve().parents[2]
+    checklist = (repo / "docs" / "CHECKLISTS.md").read_text(encoding="utf-8")
+    sites = {
+        "git._preflight_and_tests_gate": inspect.getsource(git._preflight_and_tests_gate),
+        "git._managed_candidate_needs_proof": inspect.getsource(git._managed_candidate_needs_proof),
+        "docs/CHECKLISTS.md": checklist,
+        "tests/test_git_review_tests_gate.py": tests_gate.__doc__ or "",
+        "tests/test_skip_tests_doc_only.py": classifier_tests.__doc__ or "",
+        "this module": TestReleaseMetadataPreflight.test_doc_only_carve_is_the_commit_gate_classifier.__doc__ or "",
+    }
+    retired = ("exempt from the suite", "preflight bypass", "skip_tests/doc-only",
+               "the tests rule applies", "diff-aware")
+    for name, text in sites.items():
+        for phrase in retired:
+            assert phrase not in text, (name, phrase)
+    assert "if not message and (not skip_tests or _managed_needs_proof):" in sites["git._preflight_and_tests_gate"]
+    assert "documentation has tests too" in sites["git._preflight_and_tests_gate"]
+    assert "a documentation-only diff included" in checklist
+    assert "a documentation-only diff included" in sites["tests/test_git_review_tests_gate.py"]
 
 
 def test_a_syntax_error_blocks_before_the_tests_and_the_look(candidate, monkeypatch):

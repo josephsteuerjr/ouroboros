@@ -1,9 +1,10 @@
 """Reviewed commits apply the test policy before the pool panel in the system repository.
 
 The advisory bypass this module used to pin is gone with the advisory (decision 3A): the
-deterministic checks and required tests run ahead of the review pool panel. A doc-only diff
-without a named preflight row is exempt from the suite under the diff-aware test policy;
-naming a row requires the suite. Skipping the look does not waive applicable tests.
+deterministic checks and the tests run ahead of the review pool panel. The suite runs
+before any commit to the body, a documentation-only diff included (owner answer A,
+2026-10-08); ``skip_tests`` is the one exemption, and a managed resolution pays the suite
+even then. Skipping the look does not waive the tests.
 """
 import subprocess
 
