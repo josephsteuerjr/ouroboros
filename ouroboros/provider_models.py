@@ -514,13 +514,10 @@ ZAI_DIRECT_DEFAULTS = {
     "main": "zai::glm-5.3",
     "heavy": "",
     "light": "zai::glm-5.3-flash",
-    # The -flash variant accepts image input; plain glm-5.3 rejects image blocks
-    # with HTTP 400 code 1210 ("allowed values: ['text']"). Probed live 2026-10-06
-    # on the Coding Plan endpoint (api.z.ai/api/coding/paas/v4): glm-5.3-flash
-    # answered a solid-color PNG ("Dark red", finish=stop) while glm-5.3 returned
-    # that 400. The explicit vision slot is honored even when route metadata says
-    # no, so this default keeps captions and the VLM tools working on a zai-only
-    # install instead of losing the image entirely.
+    # Image input per docs.z.ai/guides/vlm/glm-5.3-flash.md (read 2026-10-08; glm-5.3
+    # is text-only). A contributor probe (2026-10-06) covered the Coding Plan endpoint
+    # only; pay-as-you-go rests on the docs. A new install's wizard proposes it; a
+    # saved Vision choice, empty included, stays as saved.
     "vision": "zai::glm-5.3-flash",
     "fallback": "zai::glm-5.3-flash",
     # No deep_review default: the route publishes no window metadata and no live
