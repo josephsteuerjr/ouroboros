@@ -971,6 +971,7 @@ def rows_from_plan(plan: dict, routes: list, triad_raw: list) -> list:
             "session_target": str(_vec("session_targets")[i] or ""),
             "retrieves": bool(_vec("retrieves", False)[i]), "subagent_id": str(_vec("subagent_ids")[i] or ""),
             "parts": list(_vec("parts", ())[i] or (PART_CHANGE,)), "brief_sha": str(_vec("brief_shas")[i] or ""),
+            "additional": bool(_vec("additional", False)[i]),
         })
     return build_rows({"structured": {"rows": rows}, "triad_raw": list(triad_raw)})
 

@@ -356,6 +356,29 @@ def test_a_composed_wave_replaces_the_pool_for_its_readers_only(clean_env):
     assert [s.slot_id for s in rsc.review_pool_slots()] == ["api-critic", "packet-critic", "session-critic"]
 
 
+def test_w1_the_gate_vectors_carry_a_composed_seats_own_parts_and_the_added_bit(clean_env):
+    """A ``coupling_only`` seat the author added is asked Part 2 alone and is heard, not
+    counted: ``commit_triad_delivery`` projects the composed seats' ``parts`` and
+    ``additional`` on the same index as every other vector, so ``seat_vectors`` keeps them
+    instead of re-deriving both parts from the seat's delivery."""
+    from ouroboros.tools.review_admission import seat_vectors
+
+    clean_env.setenv(SUBAGENTS_SETTING, _MIXED)
+    configured = rsc.review_pool_slots()
+    seats = (rsc.PoolSeat(configured[1], ("change",)), rsc.PoolSeat(configured[2], ("change", "coupling")),
+             rsc.PoolSeat(configured[0], ("coupling",), additional=True))
+    with rsc.composed_review_pool(seats):
+        plan = seat_vectors(rsc.commit_triad_delivery())
+    assert plan["slot_ids"] == ["packet-critic", "session-critic", "api-critic"]
+    assert plan["retrieves"] == [False, True, True], "the retrieving critic would be asked both parts by delivery"
+    assert plan["parts"] == [("change",), ("change", "coupling"), ("coupling",)]
+    assert plan["additional"] == [False, False, True]
+    # Outside a composed wave the vectors are the configured pool's: parts by delivery, no added seat.
+    pool_plan = seat_vectors(rsc.commit_triad_delivery())
+    assert pool_plan["parts"] == [("change", "coupling"), ("change",), ("change", "coupling")]
+    assert pool_plan["additional"] == [False, False, False]
+
+
 # --- ceilings pinned to their owners ------------------------------------------------------------
 
 

@@ -464,12 +464,16 @@ def commit_triad_delivery() -> Dict[str, Any]:
     and keeps ONE reader of the triad rows. Raises ValueError on a malformed
     configuration — the caller turns that into its typed infra block.
     """
-    from ouroboros.review_records import apply_review_model_override
     from ouroboros.model_wait import current_model_wait
+    from ouroboros.review_ledger import seat_parts
+    from ouroboros.review_records import apply_review_model_override
 
     slots = triad_delivery_slots(role_hint="multi-model review")
     waiter = current_model_wait()
     slots = [apply_review_model_override(slot, waiter.overrides) for slot in slots] if waiter else slots
+    # Inside a composed wave the rows ARE its seats, in order (``review_pool_slots``);
+    # their parts and the added-seat bit ride the same index.
+    composed = composed_pool_seats() or ()
     return {
         "models": [slot.model for slot in slots],
         "routes": [slot.route for slot in slots],
@@ -482,8 +486,12 @@ def commit_triad_delivery() -> Dict[str, Any]:
         # consumer may infer it from the catalog id every pool row carries.
         "retrieves": [bool(slot.retrieves) for slot in slots],
         "use_local": [slot.use_local for slot in slots],
-        # Package B adds the aligned ``parts`` vector here (one row): a composed
-        # seat's parts from ``composed_pool_seats()``, else ``seat_parts(slot)``.
+        # What each seat is ASKED: a composed seat's own parts (a ``coupling_only``
+        # seat answers Part 2 alone), else derived from its delivery (``seat_parts``).
+        "parts": [tuple(composed[i].parts) if i < len(composed) else tuple(seat_parts(slot))
+                  for i, slot in enumerate(slots)],
+        # A seat the author added beside the configured pool is heard, not counted.
+        "additional": [bool(composed[i].additional) if i < len(composed) else False for i in range(len(slots))],
         # The pool is always a configured panel (the migration mints the factory
         # rows into the catalog), so the pre-structured all-packet identity of
         # the skill-review fingerprint never applies to it.

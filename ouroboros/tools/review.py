@@ -1398,7 +1398,9 @@ def _dispatch_unified_review(ctx: ToolContext, commit_message: str, prepared: di
         r.get("late_result_pending") or str(r.get("operation_state") or "")
         in {"in_flight", "custody_lost"})]
     rows = rows_from_plan(prepared.get("row_plan") or {}, prepared.get("routes") or [], triad_raw)
-    verdict = reduce_verdict(rows, pending=bool(pending_models))
+    # The decision is over the ASSIGNED seats; a seat the author added beside the
+    # pool is heard (its Part-2 findings below) but never counted in the quorum.
+    verdict = reduce_verdict([seat for seat in rows if not seat.get("additional")], pending=bool(pending_models))
     ctx._last_review_verdict = verdict
     ctx._last_coupling_result = coupling_outcome(verdict, rows)
     # ``blocked`` is the gate's fact, not the verdict's: under the owner's

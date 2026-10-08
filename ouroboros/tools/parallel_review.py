@@ -214,13 +214,14 @@ def _describe_review_wave(prepared, *, started_ts, retry_key, wave_refusal, exit
             "slot_id": _at("slot_ids", i), "model": _at("models", i), "route": _at("routes", i),
             "effort": _at("efforts", i), "session_target": _at("session_targets", i),
             "session_profile": _at("session_profiles", i), "subagent_id": _at("subagent_ids", i),
-            "retrieves": retrieves, "parts": parts,
+            "retrieves": retrieves, "parts": parts, "additional": bool(_at("additional", i, False)),
             "brief_sha": str(_at("brief_shas", i) or "") if retrieves else prompt_sha,
         })
     coupling_shas = sorted({r["brief_sha"] for r in rows if "coupling" in r["parts"] and r["brief_sha"]})
+    assigned = [r for r in rows if not r["additional"]]
     return {
         "started_ts": started_ts, "retry_key": retry_key, "wave_refusal": str(wave_refusal or ""),
-        "rows": rows, "quorum": adaptive_quorum(len(rows)) if rows else 0,
+        "rows": rows, "quorum": adaptive_quorum(len(assigned)) if assigned else 0,
         "brief": {"change_prompt_sha": prompt_sha, "coupling_brief_sha": coupling_shas[0] if len(coupling_shas) == 1 else "",
                   "coupling_brief_shas": coupling_shas},
         "brief_texts": brief_texts,

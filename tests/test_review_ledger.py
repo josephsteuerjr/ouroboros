@@ -305,6 +305,35 @@ def test_a_coupling_only_seat_answers_the_coupling_alone():
     assert verdict["quorum"]["parts"]["change"]["assigned"] == 3
 
 
+def test_w1_the_gate_plan_vectors_keep_an_added_seat_out_of_the_decision():
+    """``rows_from_plan`` (the gate's rows) and the wave description the ledger record is
+    built from both carry the plan's ``additional`` bit, so a seat the author added beside
+    the pool is heard but never counted: the gate decides over the assigned seats exactly
+    as ``build_wave_record`` does, and the described quorum is the assigned seats'."""
+    from ouroboros.tools.parallel_review import _describe_review_wave
+
+    plan = {"slot_ids": ["s1", "s2", "critic"], "models": ["m/one", "m/two", "m/critic"],
+            "routes": ["api_chat"] * 3, "efforts": ["high"] * 3, "session_targets": [""] * 3,
+            "session_profiles": [""] * 3, "subagent_ids": ["s1", "s2", "critic"], "retrieves": [True, False, True],
+            "parts": [BOTH, CHANGE, ("coupling",)], "additional": [False, False, True], "brief_shas": ["sha-both", "", "sha-both"]}
+    raws = [_raw("s1", "m/one", parts=BOTH), _raw("s2", "m/two"),
+            _raw("critic", "m/critic", parts=("coupling",), answers={"coupling": _answer("coupling", "FAIL", [CRITICAL])})]
+    rows = rl.rows_from_plan(plan, plan["routes"], raws)
+    assert [row["additional"] for row in rows] == [False, False, True]
+    # The gate's decision (``tools/review._dispatch_unified_review``) is over the assigned seats;
+    # over every row the added critic's FAIL would decide the wave.
+    assert rl.reduce_verdict([row for row in rows if not row["additional"]])["aggregate"] == "PASS"
+    assert rl.reduce_verdict(rows)["aggregate"] == "FAIL"
+    described = _describe_review_wave({"row_plan": plan, "prompt": "packet"}, started_ts="t", retry_key="",
+                                      wave_refusal="", exited=False, early="")
+    assert [row["additional"] for row in described["rows"]] == [False, False, True]
+    assert [row["parts"] for row in described["rows"]] == [["change", "coupling"], ["change"], ["coupling"]]
+    assert described["quorum"] == 2, "two assigned seats: the added one is outside the quorum"
+    record = rl.build_commit_gate_record(_facts(raws, rows=described["rows"])).to_dict()
+    assert record["panel"]["assigned"] == ["s1", "s2"] and record["panel"]["additional"] == ["critic"]
+    assert record["verdict"]["aggregate"] == "PASS" and record["rows"][2]["additional"] is True
+
+
 def test_row_verdict_and_question_verdict_follow_the_answers():
     rows = rl.build_rows(_facts(_panel()))
     assert [rl.row_verdict(row) for row in rows] == ["PASS", "PASS", "PASS"]
