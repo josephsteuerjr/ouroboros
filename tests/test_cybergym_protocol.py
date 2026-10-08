@@ -42,6 +42,7 @@ from devtools.benchmarks.cybergym.cybergym_adapter import (
     verify_mask_map,
 )
 from ouroboros.configured_subagents import parse_configured_subagents
+from tests.test_cybergym_benchmark import RETIRED_REVIEW_KEYS
 
 
 def test_safe_ids_and_argv_are_path_safe(tmp_path):
@@ -1062,8 +1063,6 @@ def test_applied_settings_metadata_is_read_back_from_written_snapshot(tmp_path):
     assert applied["OUROBOROS_MAX_ROUNDS"] == 1000
     assert applied["OUROBOROS_PER_TASK_COST_USD"] == 20.0
     assert applied["OUROBOROS_MAX_WORKERS"] == 3
-    from tests.test_cybergym_benchmark import RETIRED_REVIEW_KEYS
-
     assert not RETIRED_REVIEW_KEYS.intersection(applied)
     assert not RETIRED_REVIEW_KEYS.intersection(metadata["model_slots"])
     assert applied["OUROBOROS_REVIEW_ENFORCEMENT"] == "advisory"
