@@ -37,11 +37,13 @@ Rules (contract §1.5, counter-examples §2 F4-F8):
 5. advisory and deep-review rows become helper rows WITHOUT the mark; a
    reference needs no row at all (preflight is chosen per commit);
 6. no lanes (the shipped default panel ran) -> the factory rows
-   (``factory_review_rows(document)``, ``minted_from: factory_default``); this
-   includes the never-configured install — neither the lanes key nor a catalog
+   (``factory_review_rows(document)``, ``minted_from: factory_default``); the
+   frozen panel's seats land on them (an existing row of the engine first). The
+   never-configured install — neither the lanes key nor a catalog
    (``OUROBOROS_SUBAGENTS`` missing or ``""``: Docker / Colab / a mounted
-   volume without the wizard, or no settings file at all) — but never a
-   structural catalog the owner saved empty: empty is not never-configured;
+   volume without the wizard, or no settings file at all) — takes EXACTLY the
+   factory rows and no frozen seat beside them (nothing of the owner's ran);
+   never a structural catalog the owner saved empty: empty is not never-configured;
 7. invalid lanes, unresolvable references or an invalid catalog -> NO partial
    migration: the catalog is untouched, ``MigrationOutcome.error`` carries the
    text, and every lane key stays in the document until the owner saves the
@@ -1239,31 +1241,41 @@ def migrate_review_lanes(loaded: Mapping[str, Any]) -> Optional[MigrationOutcome
         minted_from = MINTED_FROM_FACTORY
     executions = effective_executions(document, lanes, authored=authored)
     pool = _Pool(document, catalog)
-    if not authored and factory_review_rows is not None:
-        claimed: set = set()
+    never_configured = not authored and migration_trigger(document) == TRIGGER_NEVER_CONFIGURED
+    if never_configured and factory_review_rows is not None:
+        # The both-absent cell owns EXACTLY the factory pool (canon 07): no lane of the
+        # owner's ran, so no frozen seat is placed beside the rows. The frozen panel's
+        # reading of a document whose Main is absent (OpenRouter ids beside a direct
+        # provider's rows) is not a seat anyone ran — it is what the startup
+        # normalization would have rewritten before the first review.
         for template in factory_review_rows(document):
-            existing = pool.unmarked_existing_engine(_row_engine(document, template), excluding=claimed)
-            if existing is not None:
-                # F6: a catalog row already runs this engine — its seat below marks
-                # it (merge) instead of a twin row; the remaining templates keep
-                # the first free ``review-<n>`` ids.
-                claimed.add(existing)
-                continue
             pool.adopt({**template, "subagent_id": ""})
-        for seat in executions["triad"]:
-            # One frozen seat lands on one row: an existing row of its engine first
-            # (F6), else a template of its engine that no seat has landed on yet
-            # (twins stay twins, F5), else the ordinary placement.
-            vacant = None if pool.unmarked_existing_match(seat) is not None else pool.vacant_template(seat)
-            if vacant is not None:
-                pool.attach(vacant, seat)
-            else:
-                _place_triad(pool, seat, minted_from)
     else:
-        for seat in executions["triad"]:
-            _place_triad(pool, seat, minted_from)
-    for seat in executions["scope"]:
-        _place_scope(pool, seat, minted_from)
+        if not authored and factory_review_rows is not None:
+            claimed: set = set()
+            for template in factory_review_rows(document):
+                existing = pool.unmarked_existing_engine(_row_engine(document, template), excluding=claimed)
+                if existing is not None:
+                    # F6: a catalog row already runs this engine — its seat below marks
+                    # it (merge) instead of a twin row; the remaining templates keep
+                    # the first free ``review-<n>`` ids.
+                    claimed.add(existing)
+                    continue
+                pool.adopt({**template, "subagent_id": ""})
+            for seat in executions["triad"]:
+                # One frozen seat lands on one row: an existing row of its engine first
+                # (F6), else a template of its engine that no seat has landed on yet
+                # (twins stay twins, F5), else the ordinary placement.
+                vacant = None if pool.unmarked_existing_match(seat) is not None else pool.vacant_template(seat)
+                if vacant is not None:
+                    pool.attach(vacant, seat)
+                else:
+                    _place_triad(pool, seat, minted_from)
+        else:
+            for seat in executions["triad"]:
+                _place_triad(pool, seat, minted_from)
+        for seat in executions["scope"]:
+            _place_scope(pool, seat, minted_from)
     helper_lines = _place_helpers(pool, executions, lanes, factory=not authored)
     rows_after = pool.rows_after()
     from ouroboros.configured_subagents import MAX_CONFIGURED_SUBAGENTS

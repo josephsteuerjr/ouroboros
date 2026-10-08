@@ -798,6 +798,102 @@ def test_m1_the_no_settings_file_path_reaches_the_factory_pool(tmp_path, monkeyp
     assert len(cfg.review_pool_migrations_seen()) == 1
 
 
+DIRECT_PROVIDER_CELLS = [
+    ("OPENAI_API_KEY", "openai", "openai::gpt-5.6-terra"),
+    ("ANTHROPIC_API_KEY", "anthropic", "anthropic::claude-opus-5"),
+]
+
+
+def _exactly_the_factory_pool(loaded, document, provider, main):
+    """FIX5 M1-direct: the marked rows ARE ``factory_review_rows(document)`` — the provider's
+    three direct rows around its default Main — and nothing else; every seat routes to the
+    provider the document holds a credential for, none to the credential-less OpenRouter ids."""
+    from ouroboros import reviewer_slot_config as rs
+    from ouroboros.provider_models import model_has_credentials_in_settings, provider_for_model
+    from ouroboros.subscription_install_presets import factory_review_rows
+
+    items = json.loads(loaded[SUBAGENTS])["items"]
+    assert items == factory_review_rows(document), items
+    assert _marked(items) == ["review-1", "review-2", "review-3"]
+    assert [row["route"]["target_id"] for row in items] == [main] * 3
+    assert all(row["minted_from"] == "factory_default" and row["effort"] == "high" for row in items)
+    pool = rs.review_pool_rows(loaded)
+    assert [(row.slot_id, row.target_id) for row in pool] == [(f"review-{n}", main) for n in (1, 2, 3)]
+    assert {provider_for_model(row.target_id) for row in pool} == {provider}
+    assert all(model_has_credentials_in_settings(row.target_id, dict(document)) for row in pool)
+    assert not {row.target_id for row in pool} & set(OPENROUTER_REVIEW_DEFAULTS["triad"])
+    assert rs.review_pool_state(loaded[SUBAGENTS])["state"] == "structured"
+
+
+@pytest.mark.parametrize("catalog_cell", ["absent", "blank-string"])
+@pytest.mark.parametrize("key, provider, main", DIRECT_PROVIDER_CELLS, ids=["openai-only", "anthropic-only"])
+def test_m1_a_never_configured_direct_provider_document_reads_exactly_its_factory_rows(
+        catalog_cell, key, provider, main):
+    """FIX5 M1-direct (Astra, Coupling): a document holding ONLY a direct provider's key and no
+    Main is read before the defaults merge, so the frozen panel sees no Main and derives the
+    OpenRouter triad — which it then placed BESIDE the provider's three factory rows: six marked
+    seats, three of them on routes the install has no credential for. The never-configured cell
+    owns exactly the canonical factory pool; the frozen seats are the authored-lane migration's
+    business, not this install's. Repeated reads are one migration; the document is not written."""
+    document = {key: "present"}
+    if catalog_cell == "blank-string":
+        document[SUBAGENTS] = ""
+    assert m.migration_trigger(document) == m.TRIGGER_NEVER_CONFIGURED
+    loaded = cfg.normalize_settings_raw(dict(document))
+    _exactly_the_factory_pool(loaded, document, provider, main)
+    (outcome,) = cfg.review_pool_migrations_seen()
+    assert outcome.trigger == m.TRIGGER_NEVER_CONFIGURED and not outcome.error and not outcome.noop
+    assert outcome.snapshot["summary"]["rows_marked_after"] == 3 and outcome.snapshot["summary"]["distinct_models"] == 1
+    assert document == ({key: "present", SUBAGENTS: ""} if catalog_cell == "blank-string" else {key: "present"})
+    # Idempotent: the migrated document is a pool document; a second read re-mints nothing.
+    assert m.migrate_review_lanes(dict(loaded)) is None
+    assert cfg.normalize_settings_raw(dict(loaded)) == loaded
+    assert len(cfg.review_pool_migrations_seen()) == 1
+    text = m.owner_message(outcome, "snap.json")
+    assert text.startswith("⚙️ Review pool initialized.") and "3 reviewer rows, 1 distinct models" in text
+
+
+@pytest.mark.parametrize("key, provider, main", DIRECT_PROVIDER_CELLS, ids=["openai-only", "anthropic-only"])
+def test_m1_the_no_settings_file_path_of_a_direct_provider_reaches_exactly_its_factory_pool(
+        tmp_path, monkeypatch, key, provider, main):
+    """The other never-configured entry for a direct provider: no settings file, the key in the
+    environment (a container). The env-merged defaults carry the shipped OpenRouter Main, which is
+    not on the provider — the factory rows take the provider's default Main, nothing else is
+    minted, no file is created, and a second read replays the one outcome."""
+    from ouroboros import reviewer_slot_config as rs
+
+    path = tmp_path / "absent" / "settings.json"
+    monkeypatch.setattr(cfg, "SETTINGS_PATH", path)
+    for other in m._SHA_PRESENCE_KEYS:  # the operator's shell must not add a provider to the cell
+        monkeypatch.delenv(other, raising=False)
+    monkeypatch.setenv(key, "present")
+    settings = cfg.load_settings_lock_held(_settings_lock_held=False)
+    assert not path.exists() and not path.parent.exists(), "a read never creates the document"
+    pool = rs.review_pool_rows(settings)
+    assert [(row.slot_id, row.target_id) for row in pool] == [(f"review-{n}", main) for n in (1, 2, 3)]
+    items = json.loads(settings[SUBAGENTS])["items"]
+    assert _marked(items) == ["review-1", "review-2", "review-3"]
+    assert all(row["minted_from"] == "factory_default" for row in items)
+    assert not {row.target_id for row in pool} & set(OPENROUTER_REVIEW_DEFAULTS["triad"])
+    (outcome,) = cfg.review_pool_migrations_seen()
+    assert outcome.trigger == m.TRIGGER_NEVER_CONFIGURED
+    assert cfg.load_settings_lock_held(_settings_lock_held=False)[SUBAGENTS] == settings[SUBAGENTS]
+    assert len(cfg.review_pool_migrations_seen()) == 1 and not path.exists()
+
+
+@pytest.mark.parametrize("key", ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"])
+def test_m1_a_direct_provider_structural_empty_catalog_stays_empty(key):
+    """The structural-empty rule is not weakened for a direct provider: a catalog the owner
+    saved empty beside the provider's key mints nothing and the pool is loudly empty."""
+    from ouroboros import reviewer_slot_config as rs
+
+    document = {key: "present", SUBAGENTS: catalog()}
+    assert m.migration_trigger(document) == "" and m.migrate_review_lanes(dict(document)) is None
+    loaded = cfg.normalize_settings_raw(dict(document))
+    assert loaded[SUBAGENTS] == catalog() and rs.review_pool_rows(loaded) == []
+    assert rs.review_pool_state(loaded[SUBAGENTS])["state"] == "empty" and cfg.review_pool_migrations_seen() == ()
+
+
 @pytest.mark.parametrize("document", [
     {"OUROBOROS_MODEL": "x/y", "OPENROUTER_API_KEY": "present"},
     {"OUROBOROS_MODEL": "x/y", "OPENROUTER_API_KEY": "present", SUBAGENTS: ""},
