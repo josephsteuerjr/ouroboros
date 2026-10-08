@@ -67,7 +67,13 @@ def test_record_round_trip_schema_version_and_read_by_id(tmp_path):
     assert loaded["brief"]["parts"] == ["change", "coupling"] and loaded["brief"]["checklist"]["body_fact"] == "unknown"
     assert loaded["brief"]["checklist"]["how"] == "unknown"
     assert loaded["panel"]["composition"] == "configured" and loaded["panel"]["chosen_by"] == "owner"
-    assert loaded["fingerprints"] == {"review_contract": "cf", "binding": "fp"}
+    fingerprints = loaded["fingerprints"]
+    assert fingerprints["review_contract"] == "cf" and fingerprints["binding"] == "fp"
+    # The reuse key is derived from the record's own fields when the gate hook gives none;
+    # the gate's retry key rides the structured facts into the record.
+    assert len(fingerprints["reuse_key"]) == 64 and fingerprints["retry_key"] == ""
+    assert set(fingerprints) == {"review_contract", "binding", "reuse_key", "retry_key"}
+    assert rl.recent_records(tmp_path, "task-1", 5)[0]["reuse_key"] == fingerprints["reuse_key"]
     assert loaded["review_wave_id"] == "wave-1" and loaded["state"] == "settled"
     assert json.loads(rl.record_path(tmp_path, record.record_id).read_text(encoding="utf-8")) == loaded
     assert rl.load_record(tmp_path, "rl-missing") is None and rl.load_record(tmp_path, "../evil") is None
@@ -250,6 +256,38 @@ def test_sources_are_retained_before_the_index_row_and_survive_rotation_and_chil
         assert all(rl.source_ref_resolvable(root, "task-1", ref) for ref in refs)
 
 
+def test_reuse_lookup_reads_the_hot_index_first_and_opens_the_archive_only_on_a_miss(tmp_path, monkeypatch):
+    """A6: the reuse lookup is staged — the bounded hot index, then (only after a
+    hot miss) the archived segments newest-first until the first match — and it
+    discloses what it read."""
+    monkeypatch.setattr(rl, "INDEX_MAX_BYTES", 1)  # every write after the first rotates the hot index
+    keys = [f"reuse-key-{n}" for n in range(3)]
+    for key in keys:  # three records → the two oldest keys live in archived segments, the newest in the hot index
+        rl.write_record(tmp_path, rl.build_commit_gate_record(_facts(_three(), _scope(), reuse_key=key), drive_root=tmp_path))
+    assert len(rl._index_segments(tmp_path)) == 2
+    opened = []
+    real_iter = rl.iter_jsonl_objects
+    monkeypatch.setattr(rl, "iter_jsonl_objects", lambda path: (opened.append(pathlib.Path(path).name), real_iter(path))[1])
+
+    lookup = {}
+    hit = rl.find_reusable(tmp_path, keys[2], lookup=lookup)
+    assert hit is not None and hit["fingerprints"]["reuse_key"] == keys[2]
+    assert lookup == {"rows_read": 1, "archive_segments": 0} and opened == ["index.jsonl"]
+
+    opened.clear()
+    lookup = {}
+    hit = rl.find_reusable(tmp_path, keys[1], lookup=lookup)  # the newest archived segment: one is opened, not both
+    assert hit is not None and hit["fingerprints"]["reuse_key"] == keys[1]
+    assert lookup == {"rows_read": 2, "archive_segments": 1}
+    assert opened[0] == "index.jsonl" and len(opened) == 2 and opened[1] != "index.jsonl"
+
+    opened.clear()
+    lookup = {}
+    assert rl.find_reusable(tmp_path, "reuse-key-of-a-new-subject", lookup=lookup) is None  # a miss reads everything, disclosed
+    assert lookup == {"rows_read": 3, "archive_segments": 2} and len(opened) == 3
+    assert rl.find_reusable(tmp_path, "", lookup=(lookup := {})) is None and lookup["rows_read"] == 0
+
+
 def test_index_keeps_heavy_fields_for_a_row_whose_source_does_not_resolve(tmp_path, monkeypatch):
     rows = _three()
     rows[0]["parsed_items"] = [{"item": "bug", "verdict": "FAIL", "severity": "critical"}]
@@ -296,6 +334,25 @@ def test_late_settle_raises_revision_and_a_stale_snapshot_never_overwrites(tmp_p
     noted = rl.note_author_decision(tmp_path, record.record_id, {"disposition": "accepted", "rationale": "ok"})
     assert noted["revision"] == 3 and noted["author_decision"] == {
         "disposition": "accepted", "rationale": "ok", "reused_record_id": record.record_id}
+
+
+def test_tests_evidence_lands_only_on_the_record_of_the_tested_tree(tmp_path):
+    """A hermetic test run proves ONE tree. Its fact is written on the record whose
+    subject is that tree and refused (record untouched, ``None``) for any other, so
+    an external runner cannot stamp a passed suite onto a different candidate."""
+    record = rl.build_commit_gate_record(_facts(_three(), _scope()), drive_root=tmp_path)
+    written = rl.write_record(tmp_path, record)
+    assert written["subject"]["tree_sha"] == TREE and written["tests"]["policy"] != "run"
+    tests = {"policy": "run", "result": "passed", "proof": "candidate_bound"}
+
+    assert rl.attach_tests_evidence(tmp_path, record.record_id, tests=tests, tree_sha="x" * 40) is None
+    assert rl.attach_tests_evidence(tmp_path, record.record_id, tests=tests, tree_sha="") is None
+    assert rl.attach_tests_evidence(tmp_path, "rl-absent", tests=tests, tree_sha=TREE) is None
+    assert rl.load_record(tmp_path, record.record_id) == written, "a refused attachment changes nothing"
+
+    revised = rl.attach_tests_evidence(tmp_path, record.record_id, tests=tests, tree_sha=TREE)
+    assert revised["revision"] == 2 and revised["tests"] == {**tests, "tree_sha": TREE}
+    assert rl.load_record(tmp_path, record.record_id)["tests"] == {**tests, "tree_sha": TREE}
 
 
 # --- commit gate hook ---------------------------------------------------------

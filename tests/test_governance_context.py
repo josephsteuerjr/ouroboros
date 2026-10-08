@@ -22,7 +22,7 @@ from ouroboros.tools.governance_context import (
 from ouroboros.tools.review_helpers import load_checklist_section
 from ouroboros.utils import estimate_tokens
 
-CHECKLIST_SECTION = "## Repo Commit Checklist\n\n1. item\n"
+CHECKLIST_SECTION = "## Change Review Checklist\n\n1. item\n"
 SHARED_PATH = f"docs/CHECKLISTS.md#{SHARED_CHECKLIST_SECTION}"
 # The shared section comes from the review code's own checklist, never from the
 # reviewed tree, whose copy (written by the fixture) says something else.
@@ -122,14 +122,29 @@ def test_tier_one_rules_are_always_inline(repo):
         len(CHECKLIST_SECTION), len(SHARED_SECTION)]
 
 
-def test_a_non_repository_subject_receives_no_shared_section(repo):
-    """A skill payload is not this repository's code: no row, no text."""
+def test_a_skill_payload_keeps_the_constitution_without_the_shared_section(repo):
+    """A skill payload is judged under the constitution (body layer: BIBLE and the
+    standing disclosures arrive) but is not this repository's CODE: no shared
+    repository section — no row, no text (integrator decision R1)."""
     context = _context(repo, repository_rules=False)
 
     assert SHARED_PATH not in _paths(context)
     assert SHARED_CHECKLIST_SECTION not in context.stable_inline + context.navigation
     assert _paths(context, "inline", tier=1) == [
         "docs/CHECKLISTS.md", "BIBLE.md", "docs/CHECKLISTS_ARCHIVE.md"]
+    assert context.layer == "body"
+
+
+def test_a_non_body_subject_runs_the_core_layer_without_the_shared_section(repo):
+    """Another repository is not Ouroboros's body: the core layer names the
+    shared section `not_applicable` and inlines no text of it; the supplied
+    checklist section is the only tier-1 inline row."""
+    context = _context(repo, layer="core")
+
+    assert SHARED_PATH in _paths(context, "not_applicable")
+    assert SHARED_CHECKLIST_SECTION not in context.stable_inline + context.navigation
+    assert _paths(context, "inline", tier=1) == ["docs/CHECKLISTS.md"]
+    assert context.layer == "core" and _context(repo).layer == "body"
 
 
 def test_an_unloadable_shared_section_is_named_not_claimed(repo, monkeypatch):
@@ -192,9 +207,12 @@ def test_a_surface_with_no_checklist_section_says_so_instead_of_claiming_one(rep
     assert f"its `{SHARED_CHECKLIST_SECTION}` section is inlined above." in context.navigation
     assert "the section that applies to this review" not in context.navigation
     assert context.stable_inline.startswith(SHARED_RENDERED)
-    bare = _context(repo, checklist_section_text="", repository_rules=False)
-    assert "NO section of it is inlined for this review" in bare.navigation
+    bare = _context(repo, checklist_section_text="", layer="core")
+    assert "NO section of `docs/CHECKLISTS.md` is inlined for this review" in bare.navigation
     assert "is inlined above" not in bare.navigation
+    skill = _context(repo, checklist_section_text="", repository_rules=False)
+    assert "NO section of it is inlined for this review" in skill.navigation
+    assert "is inlined above" not in skill.navigation
     # A surface that does supply one keeps the inline row and the pointer.
     supplied = _context(repo)
     assert next(r for r in supplied.manifest

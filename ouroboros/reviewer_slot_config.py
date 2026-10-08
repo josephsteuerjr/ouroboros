@@ -68,7 +68,7 @@ from ouroboros.settings_integrity import runtime_environ, runtime_setting
 from ouroboros.model_slots import normalize_processing_preference, resolve_processing_preference
 import pathlib
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from ouroboros.route_spec import (
@@ -694,11 +694,46 @@ def _default_config() -> ReviewerSlotConfig:
 
 
 def load_reviewer_slot_config() -> ReviewerSlotConfig:
-    """THE loader: structured when present, the shipped default panel otherwise."""
+    """THE loader: structured when present, the shipped default panel otherwise;
+    inside ``composed_review_panel`` the composition that wave was given."""
+    composed = _COMPOSED_PANEL.get()
+    if composed is not None:
+        return composed
     raw = structured_reviewer_slots_raw()
     if raw:
         return parse_reviewer_slots(raw)
     return _default_config()
+
+
+# One ``review_change`` wave's composition (the author names the seats for a
+# subject outside the owner-bound body review). Context-local: a concurrent
+# wave on another thread keeps the configured panel, while the wave's own pool
+# threads run under ``contextvars.copy_context`` and read this composition.
+_COMPOSED_PANEL: "_contextvars.ContextVar[Optional[ReviewerSlotConfig]]" = _contextvars.ContextVar(
+    "review_composed_panel", default=None)
+
+
+@_contextlib.contextmanager
+def composed_review_panel(triad: Sequence[ConfiguredReviewerSlot], scope: Sequence[ConfiguredReviewerSlot]):
+    """Every panel reader in this block sees exactly these triad/scope rows; the
+    advisory and deep-review rows stay the configured ones."""
+    token = _COMPOSED_PANEL.set(replace(load_reviewer_slot_config(), triad=tuple(triad), scope=tuple(scope)))
+    try:
+        yield
+    finally:
+        _COMPOSED_PANEL.reset(token)
+
+
+def roster_review_row(slot_id: str, subagent_id: str) -> ConfiguredReviewerSlot:
+    """A configured subagent seated as one reviewer row (its roster route and
+    effort); an unknown or disabled roster id raises the parser's ValueError."""
+    return _resolve_actor_slot(slot_id, subagent_id, "", f"review seat {slot_id!r}")
+
+
+def row_at_effort_order(row: ConfiguredReviewerSlot, effort: str) -> Optional[ConfiguredReviewerSlot]:
+    """The row under a caller's effort order (``row_effort``'s rule): ``None`` for a
+    compound Cursor/Agy route, whose encoded effort is the route's identity."""
+    return None if _compound_effort(row) else replace(row, effort=effort)
 
 
 def reviewer_slot_config_error() -> str:
@@ -765,12 +800,12 @@ def synthesized_deep_review_slot(*, authored_panel: bool = False) -> ConfiguredR
 
 
 def structured_scope_review_slots() -> Optional[list]:
-    """The scope ReviewSlots from the structured SSOT, or None on legacy.
+    """The scope ReviewSlots from the structured SSOT (or a composed panel), or None on legacy.
 
     Lives here (not in the substrate) purely for module-size altitude: the
     substrate stays the owner of ReviewSlot semantics and calls this first.
     """
-    if not structured_reviewer_slots_present():
+    if _COMPOSED_PANEL.get() is None and not structured_reviewer_slots_present():
         return None
     return [
         _delivery_slot(row, effort_surface="scope_review", role_hint=SCOPE_ROLE_HINT)

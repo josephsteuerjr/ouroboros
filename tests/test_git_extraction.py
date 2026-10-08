@@ -109,7 +109,7 @@ def test_git_catalog_schema_bytes_and_handler_owners_are_stable():
     ).encode()
     # Informed Advisory commit aliases plus explicit local vcs_diff base/head.
     assert hashlib.sha256(schema_bytes).hexdigest() == (
-        "93c0f6fced87cf33dc7a46395367f8315cb1ba7760d738489960dffd0084949a"
+        "2f84efeb7144cd1379e3fc92146e9d976e9c4623744fc82f31ff6ec015a3c3b3"  # commit_reviewed gained root=["system_repo"] (review_change takes other roots)
     )
     assert {
         entry.name: (entry.handler.__module__, entry.handler.__name__)

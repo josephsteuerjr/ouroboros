@@ -10,15 +10,27 @@ optional or opportunistic inclusions via touched-file packs. Each registry row
 names its inline and on-demand delivery; neither permits silent truncation.
 
 Commit triad, scope, advisory and deep self-review share
-`ouroboros/tools/governance_context.py`. Tier 1 always delivers BIBLE.md, the
-applicable CHECKLISTS sections and CHECKLISTS_ARCHIVE standing disclosures in
-full. Tier 2 selects the review-protocol chapter, DEVELOPMENT chapters naming
-touched files, and DESIGN for `web/` changes within
-`runtime_limits.REVIEW_GOVERNANCE_INLINE_SHARE` of the usable window; overflow
-stays named in navigation. Tier 3 delivers the ARCHITECTURE book navigation,
-never the whole map; tool-free triad packet rows also receive relevant
-sections within that share. This keeps shared rules consistent without
-letting reference books crowd out the change. A pointer gives a packet row
+`ouroboros/tools/governance_context.py`, driven by ONE external switch: the
+checklist `layer`, decided by the body predicate
+(`ouroboros/review_body_fact.py`: `body_fact` → `layer_for`; ARCHITECTURE §6
+"Governance delivery"). The governance root is always the installed system
+repository — the installed body's rules execute. **Body layer** (the subject is
+Ouroboros's body): tier 1 always delivers BIBLE.md, the applicable CHECKLISTS
+sections (the universal `Change Review Checklist` plus the `Ouroboros Body
+Layer` for a change review, `review_helpers.load_checklist_layers("body")`)
+and CHECKLISTS_ARCHIVE standing disclosures in full. Tier 2 selects the
+review-protocol chapter, DEVELOPMENT chapters naming touched files, and DESIGN
+for `web/` changes within `runtime_limits.REVIEW_GOVERNANCE_INLINE_SHARE` of
+the usable window; overflow stays named in navigation. Tier 3 delivers the
+ARCHITECTURE book navigation, never the whole map; tool-free triad packet rows
+also receive relevant sections within that share. **Core layer** (another
+repository, or a skill payload in skill advisory): the surface's own universal
+section is the whole rule set; BIBLE, the archive, the shared-contract section,
+DEVELOPMENT, DESIGN and ARCHITECTURE are recorded `not_applicable`, and the
+navigation indexes the subject's own documents plus its required-source
+manifest. This keeps shared rules consistent without letting reference books
+crowd out the change, and keeps Ouroboros's constitution off repositories it
+does not govern (owner clarification 2026-10-07). A pointer gives a packet row
 no tools or evidence it did not receive.
 
 Plan governance tiering uses only declared `affected_paths` resolving under the system repository, never prose or plan-kind taxonomy. The subject is an intention; tiering permits no silent omission. Unassemblable required governance raises typed `PlanPacketError`; unattached evidence remains a named absence (`[reviewer-requested]`, head cut `truncated_to_<N>`). Repeated locators stay `need_evidence`/`need_evidence_repeat` without new memory or paid cycles. Classification, bounds and wave/replay owners: ARCHITECTURE §6 "Plan construction and review", `ouroboros/tools/plan_packet.py`, `plan_spec.py`.
@@ -35,10 +47,11 @@ The context-delivery registry:
 |------|----------|-----------------|----------------|
 | Main task context (`context.py`) | full tier-0 | full composition in Max, a subagent child excepted (issue #1026), which starts from the helper start composition — no whole dialogue history or resident knowledge, a nanny without the life account; book navigation in Low/Nano and for every subagent child | book navigation in Low/Nano and for a subagent child; in Max a separate stable block after the common governance prefix when the active binding targets the system repo (evolution/self-body work, `workspace="none"`, a project-room turn with no external binding), else a visible on-demand pointer (external workspace, API/CLI/scheduled surface) |
 | Triad review (`tools/review.py`) | full via API preamble or retrieving task | Tier 3: book navigation; packet rows also receive sections naming touched files within the inline share | Tier 2: review protocol and chapters naming touched files within the share; the rest remains navigable |
+| ↳ `review_change` by layer (`review_body_fact.layer_for`) | body: as the triad row above; core: not delivered — recorded `not_applicable`, the preamble names no constitution (`review_prompt_text.review_preamble("core")`) | body: as above; core: not delivered; the navigation indexes the SUBJECT's own documents (`governance_context(..., layer="core", subject_root=...)`) | body: as above; core: not delivered; the universal `Change Review Checklist` alone, with the subject's (empty-by-rule) required-source manifest |
 | ↳ Cold-start density rung | — | — | Triad packets only: an oversized packet without fresh exact-model density evidence gets one bounded probe of its own 80,000-char slice and one rebuild; a budget refusal stays disclosed (`review_admission.density_probe_before_size_refusal`). Retrieving surfaces have no packet-fit rung. |
 | ↳ Anti-thrashing | — | — | Open obligations from `review_state` (`load_state(drive_root)` + `make_repo_key(repo_dir)`) enter `_build_review_history_section`; the scope brief does the same when `drive_root` is available (`scope_review_session.build_scope_session_task`). |
 | Background consciousness wake-up (`consciousness.py` → `handle_wake_direct`) | = Main task context | = Main task context | = Main task context |
-| Advisory pre-review (`tools/claude_advisory_review.py`) | full, shared tier 1 on both retrieving deliveries | Tier 3: book navigation and on-demand reading | Tier 2 within this row’s transcript-bound share; touched files arrive as a size/disposition manifest with the span-only carrier cut disclosed, while changed lines are in the diff |
+| Advisory pre-review (`tools/claude_advisory_review.py`) | body layer on both retrieving deliveries: full tier 1 (BIBLE, the standing disclosures, the surface's own section); the repository surface also carries `Shared Contract Ownership`, the skill surface — a payload judged under the constitution but not this repository's code — does not (`repository_rules=False`) | Tier 3: book navigation and on-demand reading | Tier 2 within this row’s transcript-bound share; touched files arrive as a size/disposition manifest with the span-only carrier cut disclosed, while changed lines are in the diff |
 | Scope review (`tools/scope_review.py`) | full, shared tier 1 beside the Intent / Scope checklist, in every context mode | Tier 3: physical chapter navigation and on-demand reading | Tier 2 within the usable-window share; the brief carries the complete staged change inline or as an exact paged source |
 | Skill review (`skill_review.py`) | full inline (`api_chat`) / mandatory full source-root read (`agent_session`) | same two classes | same two classes |
 | Plan review (`tools/plan_review.py`) | full for a SELF-MODIFICATION plan; otherwise a runtime heading-derived navigation map, never a copy | full for a self-modification plan (`api_chat` inline, `agent_session` mandatory full read); otherwise book navigation + a resolvable pointer | not resident: a named on-demand pointer; a reviewer needing it returns `need_evidence` with an exact `::lines=A-B` range |
@@ -49,7 +62,11 @@ A scheduled child's `input_sources="declared"` (API model or configured session)
 Scope's change-relative source manifest (`tools/scope_required_sources.py`)
 names touched protected runtime, frozen contracts and prompts, their declared
 families and cross-language twins. It is a minimum, not a sufficiency claim;
-reviewers may read any part of the body. Native delivered-range receipts are
+reviewers may read any part of the body. Every one of those rules names a file
+of the body, so for the core layer (`layer="core"`, another repository) the
+manifest is empty by rule and says so: no source is owed categorically, the
+staged diff is the complete change evidence, and the reviewer reads what its
+own judgment needs. Native delivered-range receipts are
 host-observed; session journals yield weaker harness-observed facts or
 unobserved extents. Complete, incomplete, declared-empty and unobserved
 coverage, including unavailable sources, stays diagnostic on every route: it
@@ -233,7 +250,7 @@ engineering standards MUST:
 2. Log a warning if the file is missing or unavailable — never skip silently
    (a REQUIRED artifact that cannot FIT fails assembly — "No silent truncation").
 3. Add a test asserting the file is present in the assembled context/prompt.
-   That test is the enforcing surface; CHECKLISTS item 11 (`context_building`,
+   That test is the enforcing surface; CHECKLISTS item 25 (`context_building`,
    advisory) backstops the review.
 
 ---

@@ -689,7 +689,10 @@ def scan_data_paths(root: pathlib.Path = REPO) -> frozenset[str]:
 # records, the hot ``index.jsonl`` and its rotated ``index.<stamp>[_n].jsonl`` segments
 # (``ouroboros/review_ledger.py``; one section-4 row), plus ``locks/review_ledger.lock``,
 # which the existing ``locks/**`` sidecar row covers.
-EXPECTED_SCAN_PATHS = 345
+# 345 -> 347 (2026-10-07): the isolated review checkout of a frozen review subject,
+# ``state/review_checkouts/<token>`` and its ``repo`` worktree
+# (``ouroboros/tools/review_subject.py`` ``isolated_checkout``; one section-4 row).
+EXPECTED_SCAN_PATHS = 347
 
 # Scanned paths that must always be present — guards the scanner itself
 # against a silent regression that would shrink coverage while keeping counts

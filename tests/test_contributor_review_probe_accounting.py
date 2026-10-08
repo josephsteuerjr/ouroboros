@@ -51,7 +51,7 @@ class Catalog:  # the free pricing catalog read: priced reservations, never a pa
 
 httpx.get = lambda url, **_kw: httpx.Response(200, json={"data": {"limit": None}}, request=httpx.Request("GET", url))
 httpx.post, requests.get = post, lambda *_a, **_kw: Catalog()
-wrapper._contributor_snapshot = lambda *_args: {"base_sha": "b" * 40}
+wrapper._contributor_proposal = lambda *_args: {"base_sha": "b" * 40}
 args = SimpleNamespace(contributor=True, base_ref="base", head_ref="head", drive_root=drive,
                        run_cap_usd="1", attach_host_engine=attach)
 try:

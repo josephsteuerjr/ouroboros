@@ -14,9 +14,9 @@ from typing import Any, Dict, List, Optional
 
 from ouroboros.triad_review import REVIEW_JSON_MATRIX_CONTRACT, extract_json_array
 from ouroboros.tools.review_helpers import (
-    REPO_ANTI_PATTERN_LOCK_GUARD,
-    REVIEW_PREAMBLE,
+    anti_pattern_lock_guard,
     emit_review_usage,
+    review_preamble,
 )
 
 log = logging.getLogger(__name__)
@@ -358,13 +358,28 @@ def build_scope_review_prompt(
     repo_pack_placeholder: str,
     critical_calibration: str,
     task_evidence_section: str = "",
+    layer: str = "body",
 ) -> tuple:
     # STABLE-FIRST for provider prompt caching: instructions, checklist and the
     # always-inline governance tier are byte-stable across commits and form the
     # cache-marked prefix; goal/scope/history/diff/index are the per-commit
-    # tail. The returned boundary is the length of that prefix.
+    # tail. The returned boundary is the length of that prefix. ``layer`` is
+    # the checklist layer (review_body_fact.layer_for): the core layer names no
+    # Ouroboros governance document and inlines none.
+    canonical_section = (
+        "## Canonical Documentation Context\n\n"
+        "These rules are inlined for every review of every change. Every other governance\n"
+        "document is named in the navigation below and is one read away; none of them is\n"
+        f"omitted.\n\n{canonical_docs}\n"
+    ) if layer == "body" else (
+        "## Canonical Documentation Context\n\n"
+        "The subject is not the Ouroboros body: none of Ouroboros's own governance documents\n"
+        "governs it or is inlined here. The `Governance navigation (core layer)` block in the\n"
+        "wider repository context names the whole rule set and indexes the subject's own\n"
+        "documents.\n"
+    )
     stable = f"""\
-{REVIEW_PREAMBLE}
+{review_preamble(layer)}
 
 ## Your role
 
@@ -429,20 +444,13 @@ Do NOT invent a new id for the same root cause.
 
 ## Anti pattern-lock guard
 
-{REPO_ANTI_PATTERN_LOCK_GUARD}
+{anti_pattern_lock_guard(layer)}
 
 {critical_calibration}
 
 {scope_checklist}
 
-## Canonical Documentation Context
-
-These rules are inlined for every review of every change. Every other governance
-document is named in the navigation below and is one read away; none of them is
-omitted.
-
-{canonical_docs}
-"""
+{canonical_section}"""
     dynamic = f"""\
 {intent_context}
 

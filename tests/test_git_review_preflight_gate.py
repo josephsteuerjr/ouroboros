@@ -61,7 +61,7 @@ _PREFLIGHT_CASES = [
     ),
     # Regression (#447): the tests-required predicate was removed — a .py
     # change under ouroboros/ (e.g. comment-only) without staged tests is no
-    # longer refused; CHECKLISTS.md item 6 (tests_affected) owns coverage.
+    # longer refused; CHECKLISTS.md item 4 (tests_affected) owns coverage.
     (
         "logic_without_tests_passes",
         "fix something",

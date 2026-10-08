@@ -1166,6 +1166,12 @@ def _commit_reviewed(ctx: ToolContext, commit_message: str, *args: Any, **kwargs
     return name_review_record(ctx, _repo_commit_push(ctx, commit_message, *args, **kwargs))
 
 
+_COMMIT_ROOT_REFUSAL = (
+    "⚠️ TOOL_ARG_ERROR: commit_reviewed lands in the system repository; review a project copy "
+    "with review_change and commit it with ordinary git."
+)
+
+
 def _repo_commit_push(ctx: ToolContext, commit_message: str,
                        paths: Optional[List[str]] = None,
                        skip_tests: bool = False,
@@ -1174,11 +1180,13 @@ def _repo_commit_push(ctx: ToolContext, commit_message: str,
                        skip_advisory_pre_review: bool = False,
                        goal: str = "",
                        scope: str = "", review_reference: Optional[dict] = None,
-                       author_disposition: Optional[dict] = None) -> str:
+                       author_disposition: Optional[dict] = None, root: str = "") -> str:
     """Stage, review, and commit files with unified pre-commit review."""
     from ouroboros import body_candidate  # lazy: the Git tools reach the candidate owner only when committing
     skip_advisory_pre_review = bool(skip_advisory_review or skip_advisory_pre_review)
     _reset_commit_review_state(ctx)
+    if str(root or "system_repo") != "system_repo":  # before any staging, review or record: no id to name
+        return _publish_tool_result(ctx, ToolResult(status="error", code="TOOL_ARG_ERROR", text=_COMMIT_ROOT_REFUSAL))
     error = prepare_author_commit_request(ctx, review_reference, author_disposition, review_rebuttal)
     if error:
         return error
@@ -1493,6 +1501,7 @@ def get_tools() -> List[ToolEntry]:
         f"{ADVISORY_REVIEW_CHOICE_GUIDANCE}"
     )
     commit_properties = {
+        "root": {"type": "string", "enum": ["system_repo"], "default": "system_repo", "description": "The reviewed commit lands in Ouroboros's own body only; review any other root with review_change and commit it with ordinary git."},
         "commit_message": {"type": "string"},
         "paths": {"type": "array", "items": {"type": "string"}, "description": "Optional subset of task-attributed paths. Omitted computes candidates; empty never stages the whole tree."},
         "skip_tests": {"type": "boolean", "default": False, "description": "Skip pre-commit tests."},

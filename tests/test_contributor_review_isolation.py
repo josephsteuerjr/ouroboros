@@ -4,15 +4,17 @@ The full entrypoint runs as a real subprocess against a fake LEGACY host: a
 journal-era usage ledger the current store imports on first open, settings with
 a lifetime ``TOTAL_BUDGET`` and agent-session reviewer rows, and an
 Ouroboros-owned engine home whose loopback descriptor points at an in-process
-fake engine. The proposal is reviewed by its base's own machinery, a copy of
-this runtime whose review cycle is a probe: it drives the ordinary default
-writers and engine funnels, then returns. Every host byte and mtime survives;
-money, reviewer marker and engine traffic land where the isolation says.
+fake engine. The wrapper runs from the installed body, a clean checkout of the
+proposal's base: a copy of this runtime whose review operation is a probe. It
+drives the ordinary default writers and engine funnels, then returns. Every
+host byte and mtime survives; money, reviewer marker and engine traffic land
+where the isolation says.
 
-What the probe proves is the isolation of what it drives (the trusted-base
-handoff, the data-root switch, settings pin, panel and efforts, the run cap and
-the attach-only engine funnels). It dispatches no reviewer, so no outcome here
-is a review verdict: every run ends INCOMPLETE (exit 3), never READY.
+What the probe proves is the isolation of what it drives (the installed body's
+review operation running in the wrapper's own process, the data-root switch,
+settings pin, panel and efforts, the run cap and the attach-only engine
+funnels). It dispatches no reviewer, so no outcome here is a review verdict:
+every run ends INCOMPLETE (exit 3), never READY.
 """
 from __future__ import annotations
 
@@ -171,14 +173,20 @@ def _tree_state(root: pathlib.Path) -> dict[str, tuple]:
     return state
 
 
-# The base's review cycle in the fixture repository: the ordinary runtime
-# writers and engine funnels, driven exactly as a reviewer would reach them.
-_PROBE_CYCLE = '''"""Fixture review cycle: exercise the default writers, report, return."""
+# The installed body's review operation in the fixture repository: the ordinary
+# runtime writers and engine funnels, driven exactly as a reviewer would reach them.
+_PROBE_OPERATION = '''"""Fixture review operation: exercise the default writers, report, return."""
 import json, os, pathlib, subprocess
 from types import SimpleNamespace
 
+_MACHINERY = "installed"
 
-def _run_non_committing_review_cycle(ctx, commit_message, **_kwargs):
+
+class ReviewChangeArgumentError(ValueError):
+    """The operation's typed argument refusal, part of the wrapper's contract."""
+
+
+def run_review_change(ctx, **arguments):
     from ouroboros import config
     from ouroboros.claudexor_daemon import ensure_owned_gateway, read_owned_gateway
     from ouroboros.gateways.claudexor import ClaudexorGateway
@@ -190,6 +198,8 @@ def _run_non_committing_review_cycle(ctx, commit_message, **_kwargs):
 
     here = pathlib.Path(__file__).resolve().parents[2]
     report = {
+        "machinery": _MACHINERY, "ppid": os.getppid(),
+        "arguments": {key: arguments.get(key) for key in ("root", "surface", "subject", "base", "head")},
         "machinery_sha": subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(here),
                                         capture_output=True, text=True).stdout.strip(),
         "data_dir": str(config.DATA_DIR), "settings_path": str(config.SETTINGS_PATH),
@@ -227,7 +237,7 @@ def _run_non_committing_review_cycle(ctx, commit_message, **_kwargs):
     record_reviewer_slot_executions(
         "review", [SimpleNamespace(slot_id="t1", status="responded", usage={})], slots)
     pathlib.Path(os.environ["ISOLATION_PROBE_OUT"]).write_text(json.dumps(report, default=str))
-    return {"status": "blocked", "block_reason": "isolation_probe", "message": "fixture cycle"}
+    return {"error": "isolation probe: no reviewer was dispatched"}
 '''
 
 _CARRIERS = ("VERSION", "pyproject.toml", "uv.lock", "web/package.json", "web/modules/api_types.js",
@@ -239,13 +249,10 @@ def _git(repo: pathlib.Path, *args: str) -> str:
                           capture_output=True, text=True).stdout
 
 
-def _fixture_repo(root: pathlib.Path, *, predecessor_base: bool = False) -> pathlib.Path:
-    """Base = this runtime (probe review cycle); head = base + one proposal file.
-
-    ``predecessor_base``: the base's wrapper parser predates the isolation
-    options (the head carries the current wrapper), as an official base does
-    until this lane lands on it.
-    """
+def _fixture_repo(root: pathlib.Path) -> pathlib.Path:
+    """Base = this runtime (probe review operation), checked out as the installed body;
+    branch ``proposal`` = base + one proposal file + its own review operation, which
+    must never run."""
     repo = root / "repo"
     repo.mkdir()
     for args in (("init",), ("config", "user.email", "t@example.com"), ("config", "user.name", "T"),
@@ -258,25 +265,18 @@ def _fixture_repo(root: pathlib.Path, *, predecessor_base: bool = False) -> path
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(REPO / rel, target)
     (repo / ".gitignore").write_text("__pycache__/\n*.pyc\n", encoding="utf-8")
-    (repo / "ouroboros" / "tools" / "_isolation_probe_cycle.py").write_text(_PROBE_CYCLE, encoding="utf-8")
-    with (repo / "ouroboros" / "tools" / "git.py").open("a", encoding="utf-8") as handle:
-        handle.write("\nfrom ouroboros.tools._isolation_probe_cycle import "
-                     "_run_non_committing_review_cycle  # noqa: E402,F811 (fixture)\n")
-    wrapper = repo / "scripts" / "run_external_review.py"
-    if predecessor_base:
-        text = wrapper.read_text(encoding="utf-8")
-        for option in ("--run-cap-usd", "--attach-host-engine"):
-            declaration = f'parser.add_argument("{option}"'
-            assert text.count(declaration) == 1
-            text = text.replace(declaration, f'parser.add_argument("--retired{option}"')
-        wrapper.write_text(text, encoding="utf-8")
+    operation = repo / "ouroboros" / "tools" / "review_change.py"
+    operation.write_text(_PROBE_OPERATION, encoding="utf-8")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "base")
     _git(repo, "branch", "base")
-    shutil.copyfile(REPO / "scripts" / "run_external_review.py", wrapper)
+    operation.write_text(_PROBE_OPERATION.replace('_MACHINERY = "installed"', '_MACHINERY = "proposal"'),
+                         encoding="utf-8")
     (repo / "proposal.txt").write_text("proposal\n", encoding="utf-8")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "proposal")
+    _git(repo, "branch", "proposal")
+    _git(repo, "checkout", "-q", "--detach", "base")
     return repo
 
 
@@ -291,7 +291,7 @@ def _review(repo: pathlib.Path, host: pathlib.Path, out: pathlib.Path, *extra: s
     env.update(inherited or {})
     return subprocess.run(
         [sys.executable, str(repo / "scripts" / "run_external_review.py"), "--contributor",
-         "--base-ref=base", "--head-ref=HEAD", f"--output={out / 'packet'}",
+         "--base-ref=base", "--head-ref=proposal", f"--output={out / 'packet'}",
          f"--drive-root={out / 'drive'}", *extra, "--", "PR title"],
         cwd=str(repo), env=env, capture_output=True, text=True, timeout=600,
     )
@@ -300,7 +300,7 @@ def _review(repo: pathlib.Path, host: pathlib.Path, out: pathlib.Path, *extra: s
 def test_full_entrypoint_keeps_a_legacy_host_untouched(tmp_path, engine):
     host = _legacy_host(tmp_path, engine.port)
     repo = _fixture_repo(tmp_path)
-    base_sha = _git(repo, "rev-parse", "base").strip()
+    base_sha, head_sha = (_git(repo, "rev-parse", ref).strip() for ref in ("base", "proposal"))
 
     # Control: the fixture IS the hazard. A default reader on (a copy of) this
     # host imports its journal into a new store and leaves lock evidence.
@@ -328,8 +328,12 @@ def test_full_entrypoint_keeps_a_legacy_host_untouched(tmp_path, engine):
     assert after == before
     assert not (host / "state" / "usage.sqlite").exists()
     assert not list(host.rglob("*.lock")) and not (host / "logs").exists()
-    # The standard trusted-base workflow ran: the base's machinery reviewed it.
-    assert report["machinery_sha"] == base_sha
+    # D31: the installed body (the base checkout) ran its own review operation over the
+    # frozen base..head, in the wrapper's process; the proposal's copy never ran.
+    assert (report["machinery"], report["machinery_sha"]) == ("installed", base_sha)
+    assert report["ppid"] == os.getpid()  # the wrapper this test started, never a re-executed copy
+    assert report["arguments"] == {"root": "system_repo", "surface": "change", "subject": "base..head",
+                                   "base": base_sha, "head": head_sha}
     # The drive is the whole data root; the host settings are read pinned, never copied.
     drive = (out / "drive").resolve()
     assert pathlib.Path(report["data_dir"]).resolve() == drive
@@ -370,6 +374,13 @@ def test_full_entrypoint_keeps_a_legacy_host_untouched(tmp_path, engine):
     assert record["run_cap_usd"] == 4.0
     assert record["settings_sha256"] == hashlib.sha256((host / "settings.json").read_bytes()).hexdigest()
     evidence = json.loads((out / "packet" / "review-evidence.json").read_text(encoding="utf-8"))
+    assert evidence["trust"]["installed_body_execution"]["executing_checkout_head"] == base_sha
+    # No record, no reviewer: incomplete evidence, with both facts disclosed.
+    outcome = evidence["production_outcome"]
+    assert (outcome["block_reason"], outcome["original_block_reason"]) == (
+        "execution_receipt_mismatch", "review_record_unavailable")
+    assert outcome["execution_receipt_mismatches"] == ["missing_actor:scope:s1", "missing_actor:triad:t1"]
+    assert evidence["review_record"] == {"record_id": None, "available": False}
     assert evidence["budget"]["run_cap_usd"] == 4.0
     assert evidence["budget"]["authority"] == "isolated_review_ledger"
     isolation = evidence["review_config"]["data_isolation"]
@@ -403,18 +414,20 @@ def test_full_entrypoint_keeps_a_legacy_host_untouched(tmp_path, engine):
     assert _tree_state(host) == before
 
 
-def test_a_base_that_predates_isolation_refuses_before_touching_settings_or_data(tmp_path, engine):
-    """Bootstrap: the head's wrapper cannot isolate a review its base executes."""
+def test_the_proposal_checkout_is_refused_before_any_engine_or_review(tmp_path, engine):
+    """D31: run from a checkout that contains the proposal, the review would run the
+    proposal's own review operation; it refuses before reaching the engine or any review."""
     host = _legacy_host(tmp_path, engine.port)
-    repo = _fixture_repo(tmp_path, predecessor_base=True)
+    repo = _fixture_repo(tmp_path)
+    _git(repo, "checkout", "-q", "proposal")
     before = _tree_state(host)
+    out = tmp_path / "isolated"
 
-    run = _review(repo, host, tmp_path / "isolated", "--run-cap-usd=4", "--attach-host-engine")
+    run = _review(repo, host, out, "--run-cap-usd=4", "--attach-host-engine")
 
     assert run.returncode == 3, run.stderr[-4000:]  # infrastructure, never "empty diff" (2)
-    assert "unrecognized arguments: --run-cap-usd=4 --attach-host-engine" in run.stderr
-    assert "INCOMPLETE_MAINTAINER_TRUSTED_BASE_RERUN_REQUIRED" in run.stderr
-    assert not (tmp_path / "isolated").exists()
+    assert "already contains proposal" in run.stderr
+    assert not (out / "probe.json").exists() and not (out / "packet").exists()
     assert engine.requests == []
     assert _tree_state(host) == before
 
@@ -735,7 +748,7 @@ def test_a_default_drive_is_refused_before_allocating_inside_the_host(tmp_path, 
         sys.modules["ouroboros.config"] = config
     assert drive.parent == tmp_path.resolve() and drive.name.startswith("ouroboros-external-review-")
 
-    # The wrapper entrypoint on its own base (no trusted-base checkout) leaves no allocation either.
+    # The wrapper entrypoint leaves no allocation either.
     review = subprocess.run(
         [sys.executable, str(REPO / "scripts" / "run_external_review.py"), "--contributor", "--base-ref=HEAD",
          "--head-ref=HEAD", "--run-cap-usd=4", f"--output={tmp_path / 'packet'}", "--", "PR title"],
@@ -820,7 +833,7 @@ with task_settings_scope(apply_task_start_settings()):
 print(json.dumps({"source": source, "triad": triad, "scope": scope}))
 '''
 # The wrapper's resolution in ``_prepare_review_configuration`` order, after its real
-# isolation (no git snapshot, no provider probe), frozen and then delivered as the
+# isolation (no proposal read, no provider probe), frozen and then delivered as the
 # review dispatches it, with the OpenRouter rows the wrapper would probe a key for.
 _WRAPPER_PANEL = '''import json, sys
 import scripts.run_external_review as wrapper

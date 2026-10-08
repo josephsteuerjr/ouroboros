@@ -329,7 +329,7 @@ def test_triad_review_prompt_reaches_architecture_md_by_navigation():
         touched_paths=["web/modules/chat.js"],
         usable_window_tokens=200_000,
         delivery="packet",
-        checklist_section_text="## Repo Commit Checklist\n",
+        checklist_section_text="## Change Review Checklist\n",
         already_inline=("BIBLE.md", "docs/CHECKLISTS_ARCHIVE.md"),
     )
     # The map is named, addressable and never inlined whole.

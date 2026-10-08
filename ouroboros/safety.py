@@ -167,6 +167,7 @@ TOOL_POLICY: Dict[str, str] = {
     "enable_tools": POLICY_SKIP,
     "preflight_review": POLICY_SKIP,
     "advisory_review": POLICY_SKIP,  # compat alias of preflight_review
+    "review_change": POLICY_SKIP,
     "start_service": POLICY_CHECK_CONDITIONAL,
     "stop_service": POLICY_SKIP,
 

@@ -34,6 +34,7 @@ from ouroboros.triad_review import (
 )
 from ouroboros.tools.review_helpers import (
     build_rebuttal_section,
+    load_checklist_layers,
     REVIEW_SEVERITY_THRESHOLDS,
     REVIEW_THOROUGHNESS_BLOCK,
     _ANTI_THRASHING_RULE_ITEM_NAME,
@@ -228,11 +229,13 @@ def advisory_governance_context(
     """The governance tiers this advisory brief delivers, from the ONE SSOT.
 
     Both advisory deliveries retrieve, so the tiers are asked for the
-    ``retrieving`` delivery: the applicable checklist section, ``BIBLE.md`` and
-    the standing disclosures arrive in full (a repository review also carries
-    the shared repository section; a skill review does not), the rules this
-    change class activates arrive within the inline share, and the reference
-    books arrive as navigation the reviewer reads with its own ``read_file``.
+    ``retrieving`` delivery on the body layer: the applicable checklist
+    section, ``BIBLE.md`` and the standing disclosures arrive in full (a
+    repository review also carries the shared repository section; a skill
+    review — a payload judged under the constitution but not this
+    repository's code — does not), the rules this change class activates
+    arrive within the inline share, and the reference books arrive as
+    navigation the reviewer reads with its own ``read_file``.
 
     The share is taken against the window this brief is actually sent in: the
     native episode's transcript bound (``review_native_transcript_bound`` — the
@@ -267,8 +270,13 @@ def _governance_delivery_section(governance) -> str:
     disk, so no rule is silently absent (BIBLE P1) and the reviewer knows which
     reads are still its own; the caller's durable prompt facts carry the same
     rows."""
+    from ouroboros.tools.governance_context import NOT_APPLICABLE_DISPOSITION
+
     inline = [row for row in governance.manifest if row.get("disposition") == "inline"]
-    named = [row for row in governance.manifest if row.get("disposition") != "inline"]
+    not_applicable = [row for row in governance.manifest
+                      if row.get("disposition") == NOT_APPLICABLE_DISPOSITION]
+    named = [row for row in governance.manifest
+             if row.get("disposition") not in ("inline", NOT_APPLICABLE_DISPOSITION)]
 
     def _row(row: dict) -> str:
         chars = int(row.get("chars") or 0)
@@ -284,6 +292,10 @@ def _governance_delivery_section(governance) -> str:
         lines.append(
             "Named and read on demand (complete on disk, nothing dropped): "
             + "; ".join(_row(row) for row in named) + ".")
+    if not_applicable:
+        lines.append(
+            "Not applicable to this subject (Ouroboros body rules, not delivered by rule): "
+            + "; ".join(_row(row) for row in not_applicable) + ".")
     return "\n".join(lines) + "\n"
 
 
@@ -398,11 +410,16 @@ def _build_advisory_prompt(
     review_surface = str(prompt_context.get("review_surface") or "repo")
     expected_items = prompt_context.get("expected_items")
     owner_words = str(prompt_context.get("owner_words") or "")
-    checklist_name = "Skill Review Checklist" if review_surface == "skill" else "Repo Commit Checklist"
     checklists = str(prompt_context.get("checklist_section") or "")
     if not checklists:
         try:
-            checklists = _car().load_checklist_section(checklist_name)
+            # The preflight always reviews the Ouroboros body in this release
+            # (its subject is the system repository's staged change), so a
+            # repository brief carries the layered checklist for the body.
+            if review_surface == "skill":
+                checklists = _car().load_checklist_section("Skill Review Checklist")
+            else:
+                checklists = load_checklist_layers("body")
         except Exception:
             checklists = _car().load_governance_doc(repo_dir, "docs/CHECKLISTS.md", on_missing="placeholder", fallback="(CHECKLISTS.md not found)")
     governance = prompt_context.get("governance") or advisory_governance_context(
@@ -483,7 +500,7 @@ def _build_advisory_prompt(
         )
         step_instructions = (
             "1. Read the FULL content of every changed file with read_file. Do not skip any file.\n"
-            "2. Check EVERY item from the \"Repo Commit Checklist\" — do not stop after the first issue.\n"
+            "2. Check EVERY item from the \"Change Review Checklist\" and its \"Ouroboros Body Layer\" — do not stop after the first issue.\n"
             "3. Pay equal attention to EVERY checklist item listed below — do not favour early items.\n   bible_compliance and security_issues must be evaluated at the same strictness as the\n   downstream blocking reviewers.\n"
             "4. Look for ALL bugs, logic errors, regressions, race conditions, and violations of BIBLE.md or DEVELOPMENT.md.\n"
             "5. Cross-check: do tool descriptions in prompts match actual get_tools() exports?\n   Does ARCHITECTURE.md header version match the VERSION file?\n"

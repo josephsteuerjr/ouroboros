@@ -51,13 +51,13 @@ def test_native_retrieval_keeps_run_cap_and_probe(configured, monkeypatch):
     monkeypatch.setattr(runner, "isolate_review_data",
                         lambda **kwargs: isolated.append(kwargs) or {"run_cap_usd": 1.0, "review_data_root": "/d"})
     monkeypatch.setattr(runner, "_load_settings_into_env", lambda: None)
-    monkeypatch.setattr(runner, "_contributor_snapshot", lambda *a: {"base_sha": "base"})
+    monkeypatch.setattr(runner, "_contributor_proposal", lambda *a: {"base_sha": "base"})
     probes = []
     monkeypatch.setattr(runner, "_select_healthy_openrouter_key", lambda **kw: probes.append(kw))
     args = SimpleNamespace(contributor=True, base_ref="base", head_ref="head",
                            drive_root="", run_cap_usd="1", attach_host_engine=False)
     monkeypatch.delenv("TOTAL_BUDGET", raising=False)
-    _snapshot, _base, resolved = runner._prepare_review_configuration(args)
+    _proposal, resolved = runner._prepare_review_configuration(args)
     assert [call["run_cap"] for call in isolated] == ["1"]  # isolated before settings load
     assert resolved["data_isolation"]["run_cap_usd"] == 1.0
     assert probes == [{"required": True, "probe_all_models": True, "probe_models": ["openai/test"]}]

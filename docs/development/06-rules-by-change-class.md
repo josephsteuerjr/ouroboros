@@ -10,7 +10,7 @@ Rules by change class: tool registration, skill payloads, the live E2E stand, li
 - A tool that WRITES the repo working tree needs the GUARD surfaces too, not only the visibility ones: add it to `_ROOT_ARG_REPO_WRITE_TOOLS` (the single set every repo-write fence keys on — the acting-no-workspace fence, the protected-write gate and the acting root-enum narrowing; ARCHITECTURE §6 "Tool capability and execution") and canonicalize its target paths — `_PATH_NORMALIZED_TOOLS` for a top-level `path`, `canonical_repo_relative_path` + `_payload_write_paths` for payload-borne paths. Visibility checks can all be green while these are missing, so tests must exercise the real guard chain, not only a mocked resolver.
 - New memory/data files: decide in the same change whether they appear in LLM context (`context.py`).
 
-Enforcement: CHECKLISTS items 2(g) and 10 (`tool_registration`) in commit review; `tests/test_tool_api_v2_public_surface.py` pins the public schema/registry contract and `tests/test_local_routing_and_safety.py` the safety-policy fallthrough; CHECKLISTS item 11 backstops the memory/context decision.
+Enforcement: CHECKLISTS items 11(g) and 14 (`tool_registration`) in commit review; `tests/test_tool_api_v2_public_surface.py` pins the public schema/registry contract and `tests/test_local_routing_and_safety.py` the safety-policy fallthrough; CHECKLISTS item 25 (`context_building`) backstops the memory/context decision.
 
 ### Skill repair and payload lanes
 
@@ -241,8 +241,8 @@ Enforcement: `tests/test_phase3c_observability_gc.py` (the unified knob and the 
 Mechanism — registry, scheduling, bootstrap, zero-run receipts, custody, work
 orders, supervision, recovery, patch integration — lives in ARCHITECTURE §6
 "Delegated subagents (Claudexor transport + the nanny)" and the module
-docstrings it names. Review gate: CHECKLISTS items 18 (`subagent_isolation`)
-and 23 (`delegated_transport`), both critical. The imperatives:
+docstrings it names. Review gate: CHECKLISTS items 17 (`subagent_isolation`)
+and 20 (`delegated_transport`), both critical. The imperatives:
 
 - Schedule only through `schedule_subagent`; its public schema and the
   handler's closed keyword set are BOTH derived from
@@ -320,7 +320,7 @@ and 23 (`delegated_transport`), both critical. The imperatives:
   subagent browser boundary (typed `BROWSER_POLICY_UNAVAILABLE`, loopback
   minus Ouroboros control-service endpoints by identity, private origins only
   via host-established `resource_policy.allowed_origins`, every redirect hop
-  re-checked) are CHECKLISTS item 18 and ARCHITECTURE §6 "Tool capability and
+  re-checked) are CHECKLISTS item 17 and ARCHITECTURE §6 "Tool capability and
   execution" (`tests/test_browser_url_policy.py`,
   `tests/test_browser_isolation.py`, `tests/test_browser_redirect_chain.py`).
 - Acting children return `workspace.patch`; only the parent commits the live body,
@@ -695,7 +695,7 @@ and what enforces each.
   canonical tools and recovery actions; same-invocation bytes and consumed history
   stay fixed (`test_send_clock.py`, `test_processing_transport.py`).
 - New LLM calls go through the shared `LLMClient`/`llm.py` layer — no ad-hoc HTTP
-  clients or provider SDKs outside it (review gate: CHECKLISTS item 2(e)). Exception:
+  clients or provider SDKs outside it (review gate: CHECKLISTS item 11(e)). Exception:
   skill/extension `plugin.py` modules may call providers directly until a host-mediated
   bridge lands; runtime callers inside `ouroboros/` must use `LLMClient`.
 - Canonical messages/tools stay provider-neutral and function-shaped; a dialect is an
@@ -794,7 +794,7 @@ and what enforces each.
   `tests/test_openai_system_prefix_split.py` (projection, placement, per-family
   session), `tests/test_prompt_cache_v664.py` (derived identity, one exact retry),
   `tests/test_transcript_prefix.py` (real Main loop, plain/multipart) and
-  `tests/test_transcript_provider_shapes.py` (local/GigaChat); CHECKLISTS item 22.
+  `tests/test_transcript_provider_shapes.py` (local/GigaChat); CHECKLISTS item 28.
 - Only sealed reasoning artifacts bind fallback to their endpoint
   (`reasoning_artifacts.transcript_has_sealed_reasoning`); readable reasoning
   stays failover-eligible across families (`test_llm_provider_routing.py`).
@@ -990,7 +990,8 @@ and what enforces each.
   wave's real pair labelled `historical_critic`, never an invented verdict. An envelope
   `reviewer_effort` outranks a row's pinned effort for plan review only (an argument of
   `plan_review_slots`, never a contextvar; a compound route slug keeps its encoded
-  effort); every wave records its effective per-seat efforts, the owner baseline captured
+  effort — `review_change`'s composed panel is the one disclosed contextvar seam,
+  ARCHITECTURE §6 "Change review on any root"); every wave records its effective per-seat efforts, the owner baseline captured
   at dispatch and one typed `ordered_weaker`. On a same-spec cycle a seat that does not
   answer keeps its still-open findings listed (`carried_absent_answer`), never counted as
   parseable. The own-room conversation reaches every reviewer as numbered readable lines;
@@ -1182,7 +1183,7 @@ Enforcement: the failure-path tests the first bullet mandates, plus
   reasoning flow MUST follow that contract, never rely on
   touched-file inclusions.
 
-Enforcement: review-only — CHECKLISTS item 2(f) scores the no-`[:N]` rule in
+Enforcement: review-only — CHECKLISTS item 11(f) scores the no-`[:N]` rule in
 commit review.
 
 ## Android platform development

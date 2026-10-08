@@ -80,6 +80,22 @@ REVIEW_PREAMBLE = (
 )
 
 
+# The core layer: the subject is a repository that is NOT Ouroboros's body, so
+# the preamble names neither the constitution nor the handbook — the universal
+# checklist is the whole rule set and the subject's own documents are evidence.
+REVIEW_PREAMBLE_CORE = (
+    "You are a pre-commit reviewer for a change that Ouroboros, an AI agent, is\n"
+    "landing in a repository that is not its own body. Judge the change by the\n"
+    "universal checklist below and by what the subject repository itself promises\n"
+    "in its documents and tests; no other project's rules apply to it.\n"
+)
+
+
+def review_preamble(layer: str = "body") -> str:
+    """The reviewer preamble for a checklist layer (`review_body_fact.layer_for`)."""
+    return REVIEW_PREAMBLE if layer == "body" else REVIEW_PREAMBLE_CORE
+
+
 REVIEW_THOROUGHNESS_BLOCK = """\
 - Do NOT stop after finding the first issue. Check EVERY item in the checklist.
 - Report every distinct, evidenced problem you find; zero, one, or many findings are all valid.
@@ -109,6 +125,26 @@ if your FAIL is `code_quality`, re-examine `tests_affected` and
 and `self_consistency`. Update PASS entries in-place if your second pass
 uncovers new FAILs — return only one JSON array, not two.
 """
+
+
+# The core layer's guard names only universal items: a reviewer of a subject that
+# is not the body has no `version_bump`, `changelog_and_badge` or `self_consistency`.
+REPO_ANTI_PATTERN_LOCK_GUARD_CORE = """\
+Before returning, do a deliberate SECOND pass focused on a materially
+DIFFERENT concern class. This is a semantic breadth check, not a numeric
+finding quota: zero or one FAIL is valid, and you must never manufacture a
+finding merely to increase the count. For example:
+if your FAIL is `code_quality`, re-examine `tests_affected` and
+`capability_regression`; if `cross_platform`, re-examine `security_issues` and
+`architecture_doc`; if `changelog_accuracy`, re-examine `perf_lifecycle`
+and `secrets_check`. Update PASS entries in-place if your second pass
+uncovers new FAILs — return only one JSON array, not two.
+"""
+
+
+def anti_pattern_lock_guard(layer: str = "body") -> str:
+    """The triad's second-pass guard for a checklist layer (`review_body_fact.layer_for`)."""
+    return REPO_ANTI_PATTERN_LOCK_GUARD if layer == "body" else REPO_ANTI_PATTERN_LOCK_GUARD_CORE
 
 
 _ANTI_THRASHING_RULE_VERDICT = (

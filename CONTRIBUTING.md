@@ -201,8 +201,15 @@ self-review. Mark the review `NOT_RUN` and explain why in the PR.
 
 ### Maintainer-grade project-native review command
 
-Ouroboros can produce review evidence in a structured SHA-bound packet. Its
-contributor mode uses the reviewer slots actually configured on the machine:
+Ouroboros can produce review evidence in a structured SHA-bound packet.
+`scripts/run_external_review.py` is an operator wrapper over the runtime's own
+review flow: without `--contributor` it runs the commit gate's review-only
+cycle over the staged index of the checkout it runs from (in an isolated
+checkout of that staged patch, so edits during the run never reach the
+reviewers); with `--contributor` it runs the proposal's own hermetic tests and
+then the same runtime operation Ouroboros uses to review a change,
+`review_change`, over a committed `base..head` proposal, and writes the public
+packet. It uses the reviewer slots actually configured on the machine:
 `api_chat`, `agent_session`, or a mixture.
 
 Treat this command as **maintainer tooling**, not the default contributor
@@ -248,13 +255,16 @@ where it has a reliable probe; the selected route reports other failures
 explicitly. A paid readiness probe (one token on a configured reviewer model)
 is an attempt in the review ledger, under the cap.
 
-From a clean committed branch:
+Commit the proposal on a branch, then run the command from a clean checkout of
+the target base (a worktree shares the repository's branches and remote refs):
 
 ```bash
+git worktree add --detach ../ouroboros-review upstream/ouroboros
+cd ../ouroboros-review
 python scripts/run_external_review.py \
   --contributor \
   --base-ref upstream/ouroboros \
-  --head-ref HEAD \
+  --head-ref <your-branch> \
   --run-cap-usd 25 \
   "<PR title>" \
   --goal "<goal>" \
@@ -265,20 +275,32 @@ The command creates `review-evidence.json`, `full-output.txt`, and
 `review-packet.zip`. The packet records the configured slots, observed
 route/model/profile facts, absent telemetry, base/head/tree/diff hashes,
 verdicts, and incomplete or degraded actors. It fails closed when the declared
-slot route and observable execution receipt disagree or cannot be correlated.
+slot route and observable execution receipt disagree or cannot be correlated,
+or when the review record is missing or names another subject. It names the
+review record the operation wrote (its aggregate verdict, tests and cost), and
+`full-output.txt` carries every seat row with its retained answer. Before any
+reviewer is paid the lane runs the proposal's hermetic test suite in an
+isolated checkout of the same frozen `base..head` subject: a failure is the
+typed `tests_preflight_blocked` refusal (exit 3, nothing dispatched, no
+record), and a pass lands on the review record of that exact tree as
+`tests={policy: run, result: passed, proof: candidate_bound, tree_sha}`. The
+review operation itself runs no tests, so a record without that attachment
+says `NOT_RUN`; the verification of section 4 is still yours to run and
+report.
 
 Applied reasoning effort is not currently exposed by every route. The packet
 records configured effort as requested and leaves effective effort absent
 rather than presenting the request as observed fact.
 
-The lane always executes the target base's own review machinery: run from any
-checkout that is not the base, it re-runs itself from a detached worktree of
-the base commit. Your proposal is therefore never reviewed by its own copy of
-the review flow, whatever it touches, and no extra step is needed when a PR
-changes the review script or review substrate. A base older than
-`--run-cap-usd` cannot run an isolated review: it refuses the invocation
-before touching your settings or data, reported as
-`INCOMPLETE_MAINTAINER_TRUSTED_BASE_RERUN_REQUIRED`.
+The lane always executes the installed body's review flow and rules, those of
+the checkout the command runs from, and never the proposal's copy: the review
+operation freezes `base..head` as a subject it only reads. Your proposal is
+therefore never reviewed by its own copy of the review flow or checklists,
+whatever it touches, and no extra step is needed when a PR changes the review
+script, review substrate or `docs/CHECKLISTS.md`. A checkout that already
+contains the proposal (its own branch, or anything built on it) is refused
+before anything is spent. `READY_FOR_INTEGRATION` is evidence for the
+maintainer's own review and landing, never merge authority.
 
 ## 6. Open the Pull Request
 

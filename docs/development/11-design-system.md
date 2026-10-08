@@ -74,7 +74,7 @@ select is not clipped there — so a change to a control recipe or a page
 scroll body is verified on the engine that shows the class (Playwright
 WebKit for native-control clipping, Chromium for engine-independent track
 geometry), measuring overflow on the scroll body's `scrollWidth` rather than
-on `documentElement`. Review-only: scored by CHECKLISTS items 2(i) and 30
+on `documentElement`. Review-only: scored by CHECKLISTS items 11(i) and 30
 (`web_design_system`).
 
 ### Browser dialogs

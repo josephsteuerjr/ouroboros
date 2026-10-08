@@ -47,6 +47,7 @@ TOOL_MODULES = [
     "ouroboros.tools.browser",
     "ouroboros.tools.review",
     "ouroboros.tools.claude_advisory_review",
+    "ouroboros.tools.review_change",
     "ouroboros.tools.recent_tasks",
     "ouroboros.tools.scope_review",
     "ouroboros.tools.review_helpers",
@@ -98,7 +99,7 @@ def test_tool_set_matches(registry):
 
 EXPECTED_TOOLS = [
     "browse_page", "browser_action",
-    "preflight_review", "review_status",
+    "preflight_review", "review_change", "review_status",
     "compact_context", "set_tool_timeout", "request_restart", "prepare_self_change",
     "promote_to_stable", "schedule_subagent", "schedule_followup", "manage_schedules",
     "configure_presence", "initiate_presence",
@@ -225,6 +226,7 @@ def test_frozen_registry_includes_packaged_tool_modules(monkeypatch):
         "memory_map",
         "memory_update_registry",
         "preflight_review",
+        "review_change",
         "review_status",
         "plan_task",
         "vcs_rollback",

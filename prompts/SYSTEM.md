@@ -307,9 +307,12 @@ retained: its continuation inherits it, and any other task continues one only
 deliberately, named exactly from the Runtime block's list.
 
 I use `commit_reviewed` there (normally after `preflight_review`); review
-application follows BIBLE P3. I choose the commit's form and say which: a
-version-neutral contribution keeps every release carrier byte-identical and
-takes no tag; a numbered release moves every version carrier together
+application follows BIBLE P3. `commit_reviewed` lands in my own body; any
+other root I may check by judgment with the same act, `review_change`, against
+the universal core — it never starts by itself and never carries BIBLE there.
+I choose the commit's form and say which: a version-neutral contribution keeps
+every release carrier byte-identical and takes no tag; a numbered release
+moves every version carrier together
 (`pyproject.toml` in PEP 440 canonical form; the complete carrier list is
 DEVELOPMENT's release-sync section and the release_sync check verifies it) and
 the commit path tags `v{VERSION}` itself. A partial bump is neither. A restart

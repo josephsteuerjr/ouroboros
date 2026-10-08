@@ -211,6 +211,72 @@ def test_architecture_component_map_covers_every_live_runtime_module():
     )
 
 
+def test_architecture_map_row_of_the_review_subject_names_its_nodes():
+    """The component-map row of ``tools/review_subject.py`` must name the subject
+    operation's nodes, not only the managed resolution delta it began as: a reader
+    sent to the map finds where a subject is frozen, materialized and identified."""
+    arch = _read("docs/ARCHITECTURE.md")
+    rows = [line for line in arch.splitlines() if "review_subject.py ←" in line]
+    assert len(rows) == 1, rows
+    for node in ("ReviewSubjectSpec", "freeze_subject", "FrozenSubject", "is_gate_subject", "isolated_checkout",
+                 "checkout_token", "review_reuse_key", "review_round_sha", "review_retry_key", "reuse_or_none",
+                 "Subject operation"):
+        assert node in rows[0], node
+
+
+def _change_review_items() -> dict:
+    """``number -> item`` over the Change Review Checklist and the Ouroboros Body
+    Layer tables (one continued numbering), read from the live CHECKLISTS.md."""
+    text = (REPO / "docs/CHECKLISTS.md").read_text(encoding="utf-8")
+    start = text.index("## Change Review Checklist")
+    end = text.index("## Shared Contract Ownership")
+    return {int(n): name for n, name in re.findall(r"^\| (\d+) \| ([a-z_]+) \|", text[start:end], flags=re.M)}
+
+
+def test_checklist_item_numbers_cited_outside_the_checklist_name_the_current_items():
+    """The change-review checklist was renumbered (core 1-9, body layer 10-31).
+    Every place that cites an item BY NUMBER AND NAME — the engineering chapters,
+    the architecture book, runtime comments, test docstrings — must agree with the
+    live table; a number that names the wrong item sends a reviewer to the wrong
+    rule. The standing archive keeps its historical numbers by its own note."""
+    items = _change_review_items()
+    assert items[7] == "capability_regression" and items[11] == "development_compliance" and len(items) == 31
+    names = "|".join(sorted(items.values(), key=len, reverse=True))
+    forms = (
+        # "item 17 (`subagent_isolation`)", "item 21 `source_completeness`", "item 15 (self_consistency)", "item 27, `gateway_parity`"
+        re.compile(rf"\bitems?\s+(\d{{1,2}})(?:\([a-z]\))?,?\s+\(?`?({names})`?", flags=re.I),
+        # "cache_friendliness item 28"
+        re.compile(rf"\b({names})\s+item\s+(\d{{1,2}})\b"),
+        # "`self_consistency` (item 15)"
+        re.compile(rf"`({names})`\s+\(item\s+(\d{{1,2}})\)"),
+    )
+    roots = ("docs/CHECKLISTS.md", "docs/development", "docs/architecture", "ouroboros", "tests")
+    skip = {pathlib.Path(__file__).resolve(), (REPO / "docs/CHECKLISTS_ARCHIVE.md").resolve()}
+    wrong = []
+    for root in roots:
+        path = REPO / root
+        files = [path] if path.is_file() else [*path.rglob("*.md"), *path.rglob("*.py")]
+        for file in files:
+            if file.resolve() in skip:
+                continue
+            text = file.read_text(encoding="utf-8", errors="replace")
+            for line_no, line in enumerate(text.splitlines(), 1):
+                for pattern in forms:
+                    for match in pattern.finditer(line):
+                        number, name = match.groups() if pattern is forms[0] else reversed(match.groups())
+                        if items.get(int(number)) != name:
+                            wrong.append(f"{file.relative_to(REPO)}:{line_no}: item {number} is not `{name}`")
+    assert not wrong, "\n".join(wrong)
+    # Sub-item citations carry no name; the engineering chapters cite the body layer's
+    # development_compliance (11) and self_consistency (15) letters, never the old 2/13.
+    dev = _read("docs/DEVELOPMENT.md")
+    for cite in ("CHECKLISTS items 11(g) and 14", "CHECKLISTS item 11(e)", "CHECKLISTS item 11(f)", "CHECKLISTS item 11(c)",
+                 "CHECKLISTS item 11(d)", "CHECKLISTS item 11(h)", "CHECKLISTS items 11(i) and 30", "CHECKLISTS item 15(b)",
+                 "CHECKLISTS item 17 and ARCHITECTURE", "CHECKLISTS items 10 and 7", "review-only under CHECKLISTS item 5."):
+        assert cite in dev, cite
+    assert not re.search(r"CHECKLISTS items? (?:2|13)\([a-z]\)", dev)
+
+
 def test_architecture_mentions_shared_log_grouping_and_direct_provider_review_fallback():
     arch = _read("docs/ARCHITECTURE.md")
 

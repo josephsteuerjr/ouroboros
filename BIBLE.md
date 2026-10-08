@@ -736,9 +736,10 @@ Each commit is one coherent transformation with one clear intent.
 Analysis without commit is preparation, not evolution. If several
 iterations in a row produce no concrete result — that is a signal to
 pause and strategically reassess. Repeating the same action expecting
-a different result is the opposite of evolution. All commits pass
-through the immune system (P3); review discipline is operationally
-governed there, not repeated here.
+a different result is the opposite of evolution. Every commit to my
+own body passes through the immune system (P3), where review discipline
+is operationally governed rather than repeated here; a local checkpoint
+in another repository is not that gate.
 
 ### Review-exempt operations
 

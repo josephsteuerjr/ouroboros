@@ -133,7 +133,7 @@ def density_probe_before_size_refusal(ctx: Any, model: str, sample: str, *, surf
 
 def fit_triad_prompt(api_models: list, assemble, current_files_section: str,
                      diff_text: str, changed: str, target_repo, ctx=None,
-                     subject=None, slots: Optional[list] = None) -> tuple:
+                     subject=None, slots: Optional[list] = None, compact_diff=None) -> tuple:
     """The api pack's guaranteed-fit ladder (P3 one-pass): drop only evidence
     duplicated by the complete staged diff — full snapshots first, then unchanged
     diff context. Each api slot's limit uses its REAL window from Capability
@@ -143,8 +143,10 @@ def fit_triad_prompt(api_models: list, assemble, current_files_section: str,
     zero limit; the shared prompt is sized to the review QUORUM — the same SSOT
     plan review uses — so one small slot degrades its OWN seat rather than
     blocking the gate for the whole panel. Session rows are not constrained by
-    this pack at all (5.2/5.7): they retrieve with their own tools. Returns
-    ``(prompt, stable_prefix_len, block_message_or_empty)``."""
+    this pack at all (5.2/5.7): they retrieve with their own tools.
+    ``compact_diff`` is a frozen subject's own -U0 rendering (a zero-argument
+    callable); without it the rung re-captures the staged diff of
+    ``target_repo``. Returns ``(prompt, stable_prefix_len, block_message_or_empty)``."""
     # Resolved through the review-module namespace on purpose: these names are
     # documented monkeypatch seams pinned by the fit-ladder tests.
     from ouroboros.tools import review as _rv
@@ -224,17 +226,18 @@ def fit_triad_prompt(api_models: list, assemble, current_files_section: str,
             from ouroboros.tools.review_binary_context import StagedDiffUnavailable
             from ouroboros.tools.review_subject import capture_review_diff
             try:  # the SAME hardened capture as the primary diff, at zero context
-                # A managed subject re-renders ITS OWN pinned trees at -U0: the
-                # rung stays bound to the exact subject already under review
-                # instead of re-serializing a fresh candidate.
-                compact_diff = (
+                # A managed or frozen subject re-renders ITS OWN pinned trees at
+                # -U0: the rung stays bound to the exact subject already under
+                # review instead of re-serializing a fresh candidate.
+                compact = (
                     subject.render_prompt_diff(unified=0) if subject is not None
+                    else compact_diff() if compact_diff is not None
                     else capture_review_diff(ctx, target_repo, unified=0)
                 )
             except StagedDiffUnavailable:
-                compact_diff = ""  # keep the hardened full diff; the gate below blocks if it still overflows
-            if compact_diff.strip():
-                prompt, stable_prefix_len = assemble(fit_note, compact_diff)
+                compact = ""  # keep the hardened full diff; the gate below blocks if it still overflows
+            if compact.strip():
+                prompt, stable_prefix_len = assemble(fit_note, compact)
     prompt_tokens = estimate_tokens(prompt)
     if not input_limit or prompt_tokens > input_limit:
         # The split imperative is structurally impossible for a managed
@@ -404,6 +407,7 @@ def prepare_scope_review(
     session_target: str = "",
     session_profile: str = "",
     subagent_id: str = "",
+    subject: Any = None,
 ) -> Tuple[Optional[dict], Optional[Any]]:
     """Assemble ONE scope row's brief without dispatching anything.
 
@@ -417,11 +421,21 @@ def prepare_scope_review(
     Every scope row retrieves (owner decision 2026-09-17): the brief is the same
     for both transports, scope review applies in every context mode, and no
     brief is ever assembled as a packet.
+
+    With a frozen ``subject`` (``review_subject.FrozenSubject``) the governance
+    root is the spec's (always the installed body) and the reading root is the
+    subject's ``review_root`` (its isolated checkout, else the live root); the
+    manifest is computed against the FROZEN trees. ``None`` keeps the gate's
+    path: the context's review roots and the live staged index.
     """
     sr = _scope()
     window_binding = {"model_role": f"reviewer:{slot_id}", "credential_profile_id": session_profile} if slot_id else {}
     try:
-        governance_repo, repo_dir = sr.review_repo_dirs_for(ctx)
+        if subject is not None:
+            governance_repo = pathlib.Path(subject.spec.governance_root).resolve(strict=False)
+            repo_dir = pathlib.Path(subject.review_root).resolve(strict=False)
+        else:
+            governance_repo, repo_dir = sr.review_repo_dirs_for(ctx)
     except (TypeError, ValueError) as exc:
         return None, sr.ScopeReviewResult(
             blocked=True,
@@ -448,13 +462,22 @@ def prepare_scope_review(
     from ouroboros.tools.review_binary_context import StagedDiffUnavailable
     from ouroboros.tools.review_subject import managed_review_subject
 
+    frozen, subject = subject, None
     try:
-        subject = managed_review_subject(ctx, repo_dir)
+        # The system repo's own index is read through the gate's capture (the
+        # frozen subject's ``managed`` is the same artifact; the live call keeps
+        # the gate's tree assertion and memo exactly as today).
+        subject = managed_review_subject(ctx, repo_dir) if frozen is None or frozen.is_system_index else frozen.managed
     except (RuntimeError, StagedDiffUnavailable, ValueError) as exc:
         return None, sr.ScopeReviewResult(
             blocked=True, status="error", failure_phase="authority", failure_code="subject_unavailable",
             block_message=f"⚠️ SCOPE_REVIEW_BLOCKED: review subject could not be established: {exc}",
         )
+    # The path/tree source of the manifest: the managed artifact when the subject
+    # is one; the frozen trees and diff of every other frozen subject; the live
+    # staged index only for the gate's own subject (the gate's path, byte-identical).
+    frozen_read = frozen is not None and not frozen.is_system_index
+    path_subject = subject if subject is not None else (frozen if frozen_read else None)
     required_sources: list = []
     required_ref: dict = {}
     try:
@@ -473,10 +496,11 @@ def prepare_scope_review(
             ScopeBriefInputs, build_scope_session_task,
         )
 
-        touched = staged_touched_paths(repo_dir, subject)
-        tree_sha = staged_tree_identity(repo_dir, subject)
+        touched = staged_touched_paths(repo_dir, path_subject)
+        tree_sha = staged_tree_identity(repo_dir, path_subject)
+        layer = str(frozen.spec.layer or "body") if frozen is not None else "body"
         manifest_rows = scope_required_sources(
-            repo_dir, touched, staged_tree_sha=tree_sha, subject=subject)
+            repo_dir, touched, staged_tree_sha=tree_sha, subject=path_subject, layer=layer)
         required_ref = required_sources_ref(manifest_rows, staged_tree_sha=tree_sha)
         session_task, session_manifest = build_scope_session_task(repo_dir, ScopeBriefInputs(
             commit_message=commit_message,
@@ -486,11 +510,13 @@ def prepare_scope_review(
             drive_root=pathlib.Path(ctx.drive_root) if getattr(ctx, "drive_root", None) else None,
             governance_repo_dir=governance_repo,
             managed_subject=subject,
+            subject_diff=str(frozen.diff_text) if frozen_read else "",
             task_evidence_section=task_evidence_section,
             required_sources=manifest_rows,
             required_sources_ref=required_ref,
             touched_manifest=touched_manifest(repo_dir, touched),
             touched_paths=tuple(path for _status, path in touched),
+            layer=layer,
             delegated=delegated,
             scope_model=scope_model_id,
             slot_id=slot_id,
@@ -633,6 +659,7 @@ def commit_gate_paid_seats(triad_prepared, triad_exited, scope_rows) -> list:
                 messages, _ = triad_api_messages(
                     str(triad_prepared.get("prompt") or ""),
                     int(triad_prepared.get("stable_prefix_len") or 0), TRIAD_USER_TURN,
+                    layer=str(triad_prepared.get("layer") or "body"),
                 )
                 triad_chars = _chars(messages)
             chars = triad_chars
