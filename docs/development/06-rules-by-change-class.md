@@ -1239,11 +1239,11 @@ descendants without removing root. The existing
 `OUROBOROS_PREFLIGHT_TEST_WORKERS` operator lever defaults to 2 and
 `OUROBOROS_PREFLIGHT_TIMEOUT_SEC` to 3600 seconds at this entry, preserving explicit
 overrides. Other installs retain the upstream 1800-second total test budget.
-Standalone preflight ToolEntry bounds add that resolved test total to the
-existing plan-style task/transport settlement envelope and finalization grace;
-they must not expire before tests and the critic can settle. This outer bound
-creates no new cognitive deadline; inner critic/owner deadlines, test containment
-and the reviewed commit's terminal wait remain unchanged. These settings change
+The test budget belongs to `commit_reviewed`. Standalone `preflight_review`
+uses the same ToolEntry envelope as `review_change`: the task/transport
+settlement envelope plus finalization grace, with no tests or test budget.
+This creates no new cognitive deadline; inner critic/owner deadlines, test
+containment and the reviewed commit's terminal wait remain unchanged. These settings change
 test concurrency/time, not test content, review models or context. Measure memory/swap and confirm process cleanup before
 running full preflight on a phone; do not deliberately reproduce a kernel panic.
 Keep reusable large downloads in the installer's durable cache.
