@@ -778,6 +778,65 @@ class ClaudexorGateway:
             json_body=control,
         ), operation_id)
 
+    # ------------------------------------------------------------------
+    # Image operations (PR-CX companion family; negotiated structurally via
+    # GET /v2/operations — see image_operation_supported above).
+    # ------------------------------------------------------------------
+
+    def create_image_operation(self, request: Dict[str, Any], *, image_bytes: Optional[List[bytes]] = None,
+                               idempotency_key: str = "") -> Dict[str, Any]:
+        """Create or rejoin exactly one caller-identified image generation.
+
+        Mirrors create_model_operation: the Idempotency-Key is the caller's
+        identity for THIS generation; this client never mints a second one for
+        a retry. Edit inputs ride as staged uploads the same way model request
+        payloads do (the engine returns per-image upload refs in the response
+        when image_bytes is provided; the body carries them as image refs).
+        """
+        key = _model_idempotency_key(idempotency_key)
+        body: Dict[str, Any] = {"request": _model_payload_ref(request)}
+        if image_bytes:
+            body["images"] = [
+                {"dataUrl": "data:%s;base64,%s" % (m, base64.b64encode(b).decode("ascii"))}
+                for b, m in ((data, "image/png") for data in image_bytes)
+            ]
+        return _model_operation(self._request(
+            "POST", "/v2/image-operations", json_body=body,
+            headers={"Idempotency-Key": key},
+        ))
+
+    def get_image_operation(self, operation_id: str, *, timeout_sec: Optional[float] = None) -> Dict[str, Any]:
+        from urllib.parse import quote
+
+        return _model_operation(self._request(
+            "GET", f"/v2/image-operations/{quote(str(operation_id), safe='')}",
+            timeout_sec=timeout_sec,
+        ), operation_id)
+
+    def get_image_result(self, operation_id: str, *, idempotency_key: str = "",
+                         timeout_sec: Optional[float] = None) -> Dict[str, Any]:
+        """Read the settled image result envelope (data[].b64_json + usage).
+
+        Unlike the model result there is no size/digest custody contract here
+        yet; the engine returns the JSON envelope directly. The caller decodes
+        payload bytes straight to artifacts — base64 never enters model context.
+        """
+        from urllib.parse import quote
+
+        body = self._request(
+            "GET", f"/v2/image-operations/{quote(str(operation_id), safe='')}/result",
+            timeout_sec=timeout_sec,
+        )
+        return body if isinstance(body, dict) else {}
+
+    def acknowledge_image_result(self, operation_id: str, sha256: str) -> Dict[str, Any]:
+        from urllib.parse import quote
+
+        return _model_operation(self._request(
+            "POST", f"/v2/image-operations/{quote(str(operation_id), safe='')}/ack",
+            json_body={"sha256": sha256},
+        ), operation_id)
+
     def harnesses(self) -> List[Dict[str, Any]]:
         """GET /v2/harnesses — per-harness status rows WITH the full manifest.
 

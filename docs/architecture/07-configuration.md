@@ -84,6 +84,7 @@ A registry of `config.SETTINGS_DEFAULTS` (exact defaults canonical in `settings_
 | OUROBOROS_MODEL_PROCESSING_PREFERENCES | "{}" | Optional role-owned preferences; empty roles inherit the global one |
 | OUROBOROS_MODEL_CONTEXT_WINDOWS | "{}" | Role-owned context sizing assertions; zero means Auto, not a provider limit, and no value grants reviewer authority |
 | OUROBOROS_MODEL_VISION | "" | Vision model (empty inherits) |
+| OUROBOROS_MODEL_IMAGE | "" | Image generation model for the Claudexor engine's image operations (empty uses gpt-image-2); surfaced in Settings → Models as its own slot beside Vision |
 | OUROBOROS_IMAGE_INPUT_MODE | auto | Send-time image routing (`vision_routing.py`) |
 | OUROBOROS_VISION_CAPTION_TIMEOUT_SEC | 90 | Caption-generation ceiling |
 | OUROBOROS_MODEL_CONSCIOUSNESS | "" | Background-consciousness model (empty inherits) |

@@ -382,6 +382,24 @@ TOOL_CODE_SPECS: Mapping[str, ToolCodeSpec] = MappingProxyType(
             "warning",
             "enable or configure the capability",
         ),
+        "IMAGE_RATE_LIMITED": _code_spec(
+            "unavailable",
+            "quota",
+            "warning",
+            "retry after the image window resets; the text lane is unaffected",
+        ),
+        "IMAGE_OUTCOME_UNKNOWN": _code_spec(
+            "error",
+            "unknown_outcome",
+            "error",
+            "re-read the engine operation or start a NEW generation deliberately; never blind-retry",
+        ),
+        "IMAGE_ERROR": _code_spec(
+            "error",
+            "provider",
+            "error",
+            "inspect the engine operation state for the failure reason",
+        ),
         "MCP_UNAVAILABLE": _code_spec(
             "unavailable",
             "unavailable",
