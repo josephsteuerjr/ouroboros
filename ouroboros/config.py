@@ -455,15 +455,12 @@ def _settings_file_value(key: str, default: str) -> str:
     """Read ONE persisted setting off disk, without normalizing the whole file. DISK ONLY, for EVERY caller: env
     is inherited and freely rewritten by any subprocess, so it can never be a ratchet's PREVIOUS value — reading it
     there turns ``max -> low`` into ``low -> low`` and the gate opens. Absent/corrupt = the fail-closed default."""
-    if SETTINGS_PATH.exists():
-        try:
-            disk_settings = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
-            if isinstance(disk_settings, dict):
-                value = disk_settings.get(key, default)
-                return str(default if value is None or value == "" else value)
-        except (OSError, json.JSONDecodeError):
-            pass
-    return default
+    try:
+        disk_settings = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return default
+    value = disk_settings.get(key, default) if isinstance(disk_settings, dict) else default
+    return str(default if value is None or value == "" else value)
 
 
 def _guard_context_mode_lowering(settings: dict, *, allow_context_lowering: bool = False) -> None:

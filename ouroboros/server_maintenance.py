@@ -405,16 +405,17 @@ def _startup_retired_settings_notice(settings: dict) -> None:
                 "⚙️ Settings: " + retired_setting_keys_notice(dropped),
                 role="system", system_type="retired_settings_notice",
             )
-
-            def _mark(st: dict, key: str = marker) -> None:
-                seen = st.get("retired_settings_notified")
-                seen = dict(seen) if isinstance(seen, dict) else {}
-                seen[key] = utc_now_iso()
-                st["retired_settings_notified"] = seen
-
-            update_state(_mark)
+            update_state(lambda st, key=marker: _mark_retired_settings_notified(st, key))
     except Exception:
         log.debug("retired settings owner notice failed", exc_info=True)
+
+
+def _mark_retired_settings_notified(st: dict, marker: str) -> None:
+    """Stamp ``marker`` in the durable owner-notice ledger ``state.json:retired_settings_notified``."""
+    seen = st.get("retired_settings_notified")
+    seen = dict(seen) if isinstance(seen, dict) else {}
+    seen[marker] = utc_now_iso()
+    st["retired_settings_notified"] = seen
 
 
 def environment_retired_review_keys(environ: Dict[str, str] | None = None) -> tuple[str, ...]:
@@ -468,14 +469,7 @@ def _startup_environment_review_notice() -> None:
         if marker in (notified if isinstance(notified, dict) else {}):
             return
         send_with_budget(owner_chat, text, role="system", system_type="retired_settings_notice")
-
-        def _mark(st: dict) -> None:
-            seen = st.get("retired_settings_notified")
-            seen = dict(seen) if isinstance(seen, dict) else {}
-            seen[marker] = utc_now_iso()
-            st["retired_settings_notified"] = seen
-
-        update_state(_mark)
+        update_state(lambda st: _mark_retired_settings_notified(st, marker))
     except Exception:
         log.debug("environment review keys owner notice failed", exc_info=True)
 
