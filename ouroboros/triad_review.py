@@ -415,7 +415,15 @@ def parse_two_part_answer(raw_text: str, parts: Sequence[str], *, model_label: s
         elif not payload["change"] and not payload.get("change_clean"):
             answers["change"] = _unanswered("change", "an empty change block needs change_clean: true")
         else:
-            answers["change"] = _change_answer(_change_items(payload["change"], model_label=model_label, slot_id=slot_id))
+            items = _change_items(payload["change"], model_label=model_label, slot_id=slot_id)
+            if payload["change"] and not items:
+                # The seat wrote entries the gate cannot read (no ``item``, a verdict
+                # outside PASS/FAIL): that is no answer, not a clean one — whatever
+                # ``change_clean`` says beside it.
+                answers["change"] = _unanswered("change", (
+                    f"none of the {len(payload['change'])} change entries has an item and a PASS/FAIL verdict"))
+            else:
+                answers["change"] = _change_answer(items)
     if "coupling" in asked:
         if "coupling" not in payload:
             answers["coupling"] = _unanswered("coupling", "coupling_block_missing")

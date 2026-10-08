@@ -123,6 +123,31 @@ def test_an_empty_change_block_needs_the_clean_flag():
     assert answers["coupling"]["status"] == "responded"
 
 
+_UNREADABLE = [{"verdict": "FAIL", "severity": "critical", "reason": "a key is committed"},  # no item
+               {"item": "tests", "verdict": "WARN", "reason": "coverage looks thin"}]  # no PASS/FAIL verdict
+_READABLE = {"item": "secrets_check", "verdict": "FAIL", "severity": "critical", "reason": "a key is committed"}
+
+
+@pytest.mark.parametrize("clean", [False, True])
+def test_a_non_empty_change_block_with_no_readable_entry_is_unanswered(clean):
+    """Entries the gate cannot read (no item, a verdict outside PASS/FAIL) are no
+    answer to Part 1 — not a clean PASS — whatever ``change_clean`` says beside
+    them; ``coupling`` still counts on its own."""
+    answers = parse_two_part_answer(_b(change=_UNREADABLE, coupling=_matrix(), change_clean=clean), BOTH)
+    assert answers["change"]["status"] == "unanswered" and answers["change"]["verdict"] == ""
+    assert answers["change"]["findings"] == [] and "PASS/FAIL verdict" in answers["change"]["error"]
+    assert answers["coupling"]["status"] == "responded" and answers["coupling"]["verdict"] == "PASS"
+
+
+def test_one_readable_entry_among_unreadable_ones_is_the_answer():
+    answers = parse_two_part_answer(_b(change=[*_UNREADABLE, _READABLE], coupling=_matrix()), BOTH)
+    assert answers["change"]["status"] == "responded" and answers["change"]["verdict"] == "FAIL"
+    assert [f["item"] for f in answers["change"]["findings"]] == ["secrets_check"]
+    assert "error" not in answers["change"]
+    clean = parse_two_part_answer(_b(coupling=_matrix()), BOTH)["change"]
+    assert clean["status"] == "responded" and clean["verdict"] == "PASS" and "error" not in clean
+
+
 def test_a_coupling_only_seat_may_answer_the_object_or_the_bare_matrix():
     for raw in (json.dumps({"coupling": _matrix()}), json.dumps(_matrix())):
         answers = parse_two_part_answer(raw, ("coupling",))
