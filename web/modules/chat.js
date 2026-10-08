@@ -448,8 +448,7 @@ export function createChatInstance({
     const pendingSubmissions = new Map();
     // В9: Starting… until a snapshot says supervisor_ready; a disconnect forgets it.
     let hostReady = false;
-    // Bounded conclusions block stale state snapshots; reusable logical task
-    // slots are cleared whenever their cycle settles.
+    // Bounded conclusions retain known outcomes for later cards; reusable slots clear on settlement.
     const concludedDirectActivities = new Map();
     const CONCLUDED_ACTIVITY_LEDGER_MAX = 200;
     // Queue-loss candidates and single-flight detail reads.
@@ -467,23 +466,24 @@ export function createChatInstance({
         }
     }
 
-    function recordConcludedActivity(activityId) {
+    function recordConcludedActivity(activityId, phase = '') {
         const aid = taskKey(activityId);
         if (!aid) return;
         missingManagedTaskIds.delete(aid);
+        phase ||= concludedDirectActivities.get(aid) || '';
         concludedDirectActivities.delete(aid);
-        concludedDirectActivities.set(aid, Date.now());
+        concludedDirectActivities.set(aid, phase);
         while (concludedDirectActivities.size > CONCLUDED_ACTIVITY_LEDGER_MAX) {
             concludedDirectActivities.delete(concludedDirectActivities.keys().next().value);
         }
     }
-    function recordTerminalActivity(taskId) {
+    function recordTerminalActivity(taskId, phase = '') {
         const id = taskKey(taskId);
         if (!id) return;
         activeDirectActivities.delete(id);
         missingManagedTaskIds.delete(id);
         if (REUSABLE_TASK_IDS.has(id)) concludedDirectActivities.delete(id);
-        else recordConcludedActivity(id);
+        else recordConcludedActivity(id, phase);
         settleTerminalRootChildren(id);
     }
     // A terminal root reconciles open descendants through single-flight detail
@@ -1382,6 +1382,8 @@ export function createChatInstance({
         resetLiveCardRecord(record);
         const activity = activeDirectActivities.get(normalizedGroupId);
         if (activity) syncParkedPhase(record, activity.phase, activity);
+        const ended = concludedDirectActivities.get(normalizedGroupId);
+        if (ended) finishLiveCardMutation(normalizedGroupId, ended);
         // P5: the cancelable marker may have arrived (scheduled progress frame /
         // history replay) before this card was minted.
         syncCancelRunButton(record);
@@ -1671,6 +1673,7 @@ export function createChatInstance({
                 && ['working', 'thinking'].includes(summary.phase))) {
             restoreCardActivity(record);
             if (!summary.terminal) {
+                if (record.isSubagent && record.parkedPhase === 'unknown' && ws.isConnected?.() !== false) syncParkedPhase(record, summary.phase);
                 record.lastLiveObservedAt = Date.now();
                 missingManagedTaskIds.delete(nextGroupId);
             }
@@ -2166,7 +2169,7 @@ export function createChatInstance({
         if (typeof evt._is_direct_chat === 'boolean') noteDirectTurn(liveCardRecords.get(taskId), evt._is_direct_chat);
         if (evt.cancelable === true) markTaskCancelable(taskId);
         if (eventType === 'task_done' && summary.terminal) {
-            recordTerminalActivity(taskId);
+            recordTerminalActivity(taskId, summary.phase);
             syncChatStatus();
         }
         return Boolean(changed || queued || subagentChanged);
@@ -3507,7 +3510,7 @@ export function createChatInstance({
                     return Boolean(reconcileCancelCardFromDetail(currentRecord, taskId, detail) || changed);
                 }
                 if (vouched) return changed;
-                recordTerminalActivity(taskId);
+                recordTerminalActivity(taskId, taskTerminalPhase(detail));
                 return Boolean(appendTaskSummaryToLiveCard({ ...detail, task_id: taskId }) || changed);
             });
         } catch {
@@ -3540,11 +3543,12 @@ export function createChatInstance({
         );
         activeDirectActivities.clear();
         for (const [k, v] of nextMap.entries()) {
+            if (v.clientMessageId) pendingSubmissions.delete(v.clientMessageId);
             const record = liveCardRecords.get(k);
             if (!connected) v._activityUnconfirmed = true;
             const facts = censusTaskFacts(v);
             if (facts.ended) {
-                recordTerminalActivity(k);
+                recordTerminalActivity(k, facts.outcome);
                 if (record) finishLiveCardMutation(k, facts.outcome);
                 continue;
             }
@@ -3555,7 +3559,6 @@ export function createChatInstance({
             markReviewAnchor(record);
             noteDirectTurn(record, v.kind !== 'managed_task');
             if (v.kind === 'managed_task') missingManagedTaskIds.delete(k);
-            if (v.clientMessageId) pendingSubmissions.delete(v.clientMessageId);
         }
         for (const taskId of globallyActiveActivityIds) missingManagedTaskIds.delete(taskId);
         for (const row of settledDirectRows) {
@@ -3691,7 +3694,7 @@ export function createChatInstance({
                     // concurrent turn's state (2A keeps later `Sending...`).
                     const finished = activeDirectActivities.get(explicitTaskId);
                     activeDirectActivities.delete(explicitTaskId);
-                    if (!REUSABLE_TASK_IDS.has(explicitTaskId)) recordConcludedActivity(explicitTaskId);
+                    if (!REUSABLE_TASK_IDS.has(explicitTaskId)) recordConcludedActivity(explicitTaskId, taskTerminalPhase(msg));
                     if (finished?.clientMessageId) {
                         pendingSubmissions.delete(finished.clientMessageId);
                     }

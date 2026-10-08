@@ -146,9 +146,16 @@ def test_project_work_entries_share_live_phase_title_and_motion(engine, theme, w
                 # without pre-populating private record outcome flags.
                 page.evaluate("""()=>emit('chat',{chat_id:1,task_id:'observed',role:'assistant',
                     is_progress:true,content:'Reviewing the current work',ts:'2026-10-08T14:00:00Z'})""")
+                child_frame = {"chat_id": 1, "task_id": "child", "role": "assistant", "is_progress": True,
+                               "content": "Inspecting a related file", "ts": "2026-10-08T14:00:01Z",
+                               "subagent_task_id": "child", "parent_task_id": "observed",
+                               "delegation_role": "subagent", "subagent_event": "running", "subagent_role": "scout"}
+                page.evaluate("r=>emit('chat',r)", child_frame)
+                child_chip = page.locator('.chat-live-card[data-task-id="child"] [data-live-phase]')
+                playwright.expect(child_chip).to_have_text("Working")
                 card = page.locator('.chat-live-card[data-task-id="observed"]')
-                outcome = card.locator('[data-live-phase]')
-                secondary = card.locator('[data-live-phase-secondary]')
+                outcome = card.locator('[data-live-phase]').first
+                secondary = card.locator('[data-live-phase-secondary]').first
                 fact = {"activity_id": "observed", "chat_id": 1, "kind": "managed_task",
                         "phase": "finalizing", "status": "failed",
                         "root_phase_checkpoint": {"post_task_synthesis": "running"}}
@@ -165,11 +172,25 @@ def test_project_work_entries_share_live_phase_title_and_motion(engine, theme, w
                 playwright.expect(secondary).to_have_text("Activity unconfirmed")
                 assert secondary.get_attribute("data-motion") == "0"
                 assert secondary.evaluate("e=>getComputedStyle(e).animationName") == "none"
+                playwright.expect(child_chip).to_have_text("Activity unconfirmed")
                 page.evaluate("connection(true)")
                 playwright.expect(secondary).to_have_text("Activity unconfirmed")
                 page.evaluate("a=>chat.hydrateStateSnapshot({supervisor_ready:true,active_chat_activities_complete:true,active_chat_activities:[a]})", fact)
                 playwright.expect(secondary).to_have_text("Finalizing…")
                 assert secondary.get_attribute("data-motion") == "1"
+                playwright.expect(child_chip).to_have_text("Activity unconfirmed")
+                page.evaluate("r=>emit('chat',r)", child_frame)
+                playwright.expect(child_chip).to_have_text("Working")
+                assert child_chip.get_attribute("data-motion") == "1"
+
+                ended = {**fact, "activity_id": "late-card", "status": "cancelled"}
+                page.evaluate("a=>chat.hydrateStateSnapshot({supervisor_ready:true,active_chat_activities_complete:true,active_chat_activities:[a]})", ended)
+                page.evaluate("""()=>emit('chat',{chat_id:1,task_id:'late-card',role:'assistant',
+                    is_progress:true,content:'Earlier progress arriving later',ts:'2026-10-08T14:00:00Z'})""")
+                late = page.locator('.chat-live-card[data-task-id="late-card"]')
+                playwright.expect(late.locator('[data-live-phase]')).to_have_text("Cancelled")
+                assert late.locator('[data-live-phase]').get_attribute("data-motion") == "0"
+                assert late.get_attribute("data-finished") == "1"
                 assert not errors
             finally:
                 browser.close()

@@ -31,6 +31,9 @@ function makeInstance({ details = {}, calls = [], state = { census: null }, chat
         // `state.census` is what a fetched /api/state answers with (null = idle);
         // `state.fail` makes the read reject like a dropped connection.
         if (state.fail) throw new Error('offline');
+        if (String(url).startsWith('/api/chat/history') && state.history) {
+            return { ok: true, json: async () => ({ messages: state.history, window: { complete: true } }) };
+        }
         return { ok: true, json: async () => state.census || { active_direct_turns: [] } };
     });
     const handlers = new Map();
@@ -41,7 +44,7 @@ function makeInstance({ details = {}, calls = [], state = { census: null }, chat
         ws: {
             on(type, fn) { handlers.set(type, fn); return () => handlers.delete(type); },
             isConnected: () => connected,
-            send: () => ({ status: 'sent', clientMessageId: 'cm-send' }),
+            send: () => ({ status: 'sent', clientMessageId: state.messageId || 'cm-send' }),
         },
         state: { activePage: 'chat', projectChatIds: new Set(), unreadCount: 0 },
         updateUnreadBadge() {},
@@ -204,6 +207,108 @@ test('the census alone moves the header between Thinking... and Online', () => {
         fx.census([], true);
         assert.equal(fx.status(), 'Online');
         assert.equal(fx.typingHidden(), true);
+    } finally { fx.instance.destroy(); restoreDom(fx.prior); }
+});
+
+for (const withdrawBeforeMount of [false, true]) {
+    test(`R2 terminal census precedes its card, withdrawal first=${withdrawBeforeMount}`, async () => {
+        const fx = makeInstance();
+        try {
+            const id = 'early-cancel', row = { activity_id: id, chat_id: 1, kind: 'managed_task', phase: 'finalizing',
+                status: 'cancelled', root_phase_checkpoint: { post_task_synthesis: 'running' } };
+            fx.census([row], true);
+            if (withdrawBeforeMount) fx.census([], true);
+            fx.handlers.get('chat')({ chat_id: 1, task_id: id, role: 'assistant', is_progress: true,
+                content: 'A progress frame already in transit.', ts: '2026-10-08T10:00:00Z' });
+            const card = fx.card(id);
+            assert.ok(card);
+            assert.equal(card.dataset.finished, '1');
+            assert.equal(card.querySelector('[data-live-phase]').textContent, 'Cancelled');
+            assert.equal(card.querySelector('[data-live-phase]').dataset.motion, '0');
+            fx.census([row], true);
+            fx.census([], true);
+            await fx.settle();
+            assert.equal(card.querySelector('[data-live-phase]').textContent, 'Cancelled');
+            assert.equal(card.dataset.finished, '1');
+            assert.equal(fx.calls.filter(url => url.endsWith(`/api/tasks/${id}`)).length, 0, 'the known outcome needs no rescue read');
+            const fresh = { activity_id: 'independent', chat_id: 1, kind: 'managed_task', phase: 'working', status: 'running' };
+            fx.census([fresh], true);
+            fx.handlers.get('chat')({ chat_id: 1, task_id: 'independent', role: 'assistant', is_progress: true,
+                content: 'A different task is running.', ts: '2026-10-08T10:00:01Z' });
+            assert.equal(fx.card('independent').dataset.finished, '0');
+            assert.equal(fx.card('independent').querySelector('[data-live-phase]').dataset.motion, '1');
+        } finally { fx.instance.destroy(); restoreDom(fx.prior); }
+    });
+}
+
+test('R2 a terminal census retires only its linked Sending receipt without a typing frame', async () => {
+    const fx = makeInstance();
+    try {
+        fx.census([], true);
+        const input = globalThis.document.byId.get('chat-input');
+        const send = () => globalThis.document.byId.get('chat-send').listeners.get('click')[0]();
+        input.value = 'Complete this request'; send(); await fx.settle();
+        assert.equal(fx.status(), 'Sending...');
+        const row = { activity_id: 'completed-before-receipt', client_message_id: 'cm-send', chat_id: 1,
+            kind: 'direct_chat', phase: 'thinking', status: 'completed',
+            root_phase_checkpoint: { post_task_synthesis: 'completed' } };
+        fx.census([row], true);
+        assert.equal(fx.status(), 'Online');
+        fx.state.messageId = 'second-send'; input.value = 'Another request'; send(); await fx.settle();
+        fx.census([row], true);
+        assert.equal(fx.status(), 'Sending...', 'an old completion cannot retire a different request');
+        fx.census([{ activity_id: 'second', client_message_id: 'second-send', chat_id: 1,
+            kind: 'direct_chat', phase: 'thinking' }], true);
+        assert.equal(fx.status(), 'Thinking...');
+    } finally { fx.instance.destroy(); restoreDom(fx.prior); }
+});
+
+test('R2 only fresh connected child activity releases disconnect uncertainty; replay, waits and terminals stay factual', async () => {
+    const fx = makeInstance();
+    try {
+        const root = { activity_id: 'parent', chat_id: 1, kind: 'managed_task', phase: 'working' };
+        const childFrame = { chat_id: 1, task_id: 'child', subagent_task_id: 'child', root_task_id: 'parent',
+            parent_task_id: 'parent', delegation_role: 'subagent', subagent_role: 'research', subagent_event: 'running',
+            role: 'system', is_progress: true, content: 'Inspecting the evidence.', ts: '2026-10-08T10:00:00Z' };
+        fx.handlers.get('chat')({ chat_id: 1, task_id: 'parent', role: 'assistant', is_progress: true,
+            content: 'Working with a child.', ts: '2026-10-08T09:59:00Z' });
+        fx.handlers.get('chat')(childFrame);
+        fx.census([root], true);
+        const phase = () => fx.card('child').querySelector('[data-live-phase]');
+        assert.equal(phase().dataset.motion, '1');
+        fx.close();
+        assert.equal(phase().textContent, 'Activity unconfirmed');
+        fx.handlers.get('chat')({ ...childFrame, content: 'Already buffered before the socket closed.' });
+        assert.equal(phase().dataset.motion, '0');
+        const historyText = 'Retained history-only child evidence';
+        fx.state.history = [{ ...childFrame, subagent_event: 'progress', history_id: 'progress:r2-child', text: historyText, content: historyText,
+            ts: '2026-10-08T10:00:00.500Z', is_progress: true }];
+        fx.state.census = { active_chat_activities: [root], active_chat_activities_complete: true, supervisor_ready: true };
+        fx.open(); await fx.instance.refreshHistory({ revision: 1 }); await fx.settle();
+        const replayed = fx.card('child');
+        if (replayed.dataset.expanded !== '1') replayed.querySelector('[data-live-summary-button]').listeners.get('click')[0]({});
+        const rendered = node => [node.textContent, node.innerHTML, ...node.children.map(rendered)].join(' ');
+        assert.match(rendered(replayed), /Retained history-only child evidence/,
+            'the negative control must have admitted and rendered the historical row');
+        assert.equal(phase().textContent, 'Activity unconfirmed', 'history replay and the fresh parent do not prove child activity');
+        fx.handlers.get('chat')({ ...childFrame, content: 'Fresh child progress.', ts: '2026-10-08T10:00:01Z' });
+        assert.equal(phase().textContent, 'Working');
+        assert.equal(phase().dataset.motion, '1');
+        const wait = { wait_id: 'child-wait', revision: 1, task_attempt: 1, state: 'waiting', reason: 'quota', role: 'main', model: 'test' };
+        fx.handlers.get('log')({ chat_id: 1, data: { type: 'task_model_wait', chat_id: 1, task_id: 'child', ...wait } });
+        fx.close(); fx.open(); await fx.settle();
+        fx.handlers.get('chat')({ ...childFrame, content: 'Fresh progress with an unresolved model wait.', ts: '2026-10-08T10:00:02Z' });
+        assert.equal(phase().textContent, 'Waiting for access');
+        assert.equal(phase().dataset.motion, '0');
+        fx.handlers.get('log')({ chat_id: 1, data: { type: 'task_model_wait', chat_id: 1, task_id: 'child',
+            ...wait, revision: 2, state: 'resolved' } });
+        assert.equal(phase().dataset.motion, '1');
+        fx.handlers.get('chat')({ ...childFrame, subagent_event: 'completed', status: 'completed', content: 'Child result.',
+            ts: '2026-10-08T10:00:03Z' });
+        assert.equal(fx.card('child').dataset.finished, '1');
+        fx.handlers.get('chat')({ ...childFrame, content: 'Late old progress.', ts: '2026-10-08T10:00:04Z' });
+        assert.equal(fx.card('child').dataset.finished, '1');
+        assert.equal(phase().dataset.motion, '0');
     } finally { fx.instance.destroy(); restoreDom(fx.prior); }
 });
 
