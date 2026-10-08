@@ -783,13 +783,26 @@ def _as_report(record: Any, drive: Any, text: str) -> None:
     record.brief["parts"] = []
 
 
+def _system_tree(system: pathlib.Path) -> Tuple[str, str]:
+    """The live system tree as the reviewer finds it (``worktree_snapshot_tree``: tracked
+    edits and untracked files over HEAD) and HEAD itself, ``""`` where git cannot say."""
+    tree = ""
+    with contextlib.suppress(Exception):
+        from supervisor.update_candidate import worktree_snapshot_tree
+
+        tree, _error = worktree_snapshot_tree("HEAD", cwd=str(system))
+    return str(tree or ""), _git_line(system, "rev-parse", "HEAD")
+
+
 def run_system_review(ctx: ToolContext, *, reviewer: str = "", effort: str = "", goal: str = "", llm: Any = None,
                       emit_progress: Any = None, deadline_at: str = "") -> Dict[str, Any]:
     """``/review`` = ``review_change(subject=system, surface=system)``: one seat (``system_review_row``)
     reads the whole system against BIBLE.md through ``deep_self_review`` (retrieving delivery, the
     memory whitelist inline) and writes a report, kept as that seat's answer in one ``surface=system``
-    record. The report becomes ``memory/deep_review.md`` unless the review failed. Returns the
-    record's result plus ``report`` and ``usage``; ``BudgetExceeded`` propagates."""
+    record. The subject is the live tree snapshotted BEFORE the reviewer reads (a tree that moved
+    under the review is disclosed as a degraded reason). The report becomes ``memory/deep_review.md``
+    unless the review failed. Returns the record's result plus ``report`` and ``usage``;
+    ``BudgetExceeded`` propagates."""
     from dataclasses import replace
 
     from ouroboros.deep_self_review import run_deep_self_review
@@ -803,6 +816,7 @@ def run_system_review(ctx: ToolContext, *, reviewer: str = "", effort: str = "",
         from ouroboros.llm import LLMClient
 
         llm = LLMClient()
+    tree, head = _system_tree(system)  # the tree the reviewer is about to read
     scope = current_usage_scope() or UsageScope()
     wave = str(getattr(scope, "review_wave_id", "") or "") or new_review_wave_id()
     with usage_scope(replace(scope, review_wave_id=wave)):  # the record and its sends share one round
@@ -816,17 +830,15 @@ def run_system_review(ctx: ToolContext, *, reviewer: str = "", effort: str = "",
     cost = usage.get("cost")
     fact = body_fact(system, system_repo=system, data_dir=drive, treat_as_body=False)
     goal = goal or "Deep self-review of the whole system against BIBLE.md."
-    tree, _error = "", ""
-    with contextlib.suppress(Exception):
-        from supervisor.update_candidate import worktree_snapshot_tree
-
-        tree, _error = worktree_snapshot_tree("HEAD", cwd=str(system))
-    head = _git_line(system, "rev-parse", "HEAD")
+    degraded = [f"system_review_failed: {usage.get('reason_code')}"] if failed and not refused else []
+    after = _system_tree(system)
+    if after != (tree, head):
+        degraded.append(f"system_tree_moved_during_review: tree {tree[:12]}->{after[0][:12]} head {head[:12]}->{after[1][:12]}")
     record = build_wave_record({
         "task_id": task_id, "root_task_id": str(getattr(ctx, "root_task_id", "") or task_id),
         "review_wave_id": wave,
         "subject": {"root_kind": "system_repo", "root": str(system), "kind": "system", "base": head, "head": head,
-                    "tree_sha": str(tree or ""), "diff_sha": "", "checkout": ""},
+                    "tree_sha": tree, "diff_sha": "", "checkout": ""},
         "goal": goal, "layer": layer_for(fact), "body_fact": str(fact.body), "body_how": str(fact.how),
         "enforcement": str(get_review_enforcement() or ""),
         "structured": {"started_ts": started, "triad_rows": [{
@@ -838,7 +850,7 @@ def run_system_review(ctx: ToolContext, *, reviewer: str = "", effort: str = "",
             "model_id": str(usage.get("resolved_model") or ""), "cost_usd": cost if isinstance(cost, (int, float)) else None,
             "capability_delta": list(usage.get("capability_delta") or [])}],
         "dispatch_refusal": {"kind": "reviewer_unavailable", "message": report} if refused else None,
-        "degraded_reasons": [f"system_review_failed: {usage.get('reason_code')}"] if failed and not refused else [],
+        "degraded_reasons": degraded,
     }, surface="system", record_id=record_id)
     _as_report(record, drive, "" if failed else report)
     record.panel = {**dict(record.panel or {}), "composition": "composed", "chosen_by": "author" if reviewer else "owner",

@@ -265,6 +265,35 @@ class TestRunSystemReview:
         assert record["dispatch_refusal"] == {"kind": "reviewer_unavailable", "message": refusal}
         assert (system_ctx.drive_root / "memory" / "deep_review.md").read_text(encoding="utf-8") == "PREVIOUS REPORT"
 
+    def test_the_record_binds_the_tree_the_reviewer_read_not_the_one_after(self, system_ctx, monkeypatch):
+        """D1-06 / V13: the subject is snapshotted BEFORE the reviewer reads; a tree that
+        moves under the review is disclosed, never passed off as the one read."""
+        import ouroboros.deep_self_review as dsr
+        from supervisor.update_candidate import worktree_snapshot_tree
+        from ouroboros.review_ledger import load_record
+        from ouroboros.tools.review_change import run_system_review
+
+        repo = system_ctx.repo_dir
+        before_tree, _ = worktree_snapshot_tree("HEAD", cwd=str(repo))
+        before_head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+
+        def review(*args, **kwargs):  # another process lands a commit while the review reads
+            (repo / "moved.py").write_text("x = 1\n", encoding="utf-8")
+            _git(repo, "add", "-A")
+            _git(repo, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qm", "moved")
+            return "REPORT", {"resolved_model": "openai/main-model"}
+
+        monkeypatch.setenv("OUROBOROS_MODEL", "openai/main-model")
+        monkeypatch.setattr(dsr, "run_deep_self_review", review)
+        result = run_system_review(system_ctx)
+        after_head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+        assert after_head != before_head
+        record = load_record(system_ctx.drive_root, result["record_id"])
+        assert (record["subject"]["tree_sha"], record["subject"]["head"], record["subject"]["base"]) == (
+            before_tree, before_head, before_head)
+        [moved] = [r for r in record["verdict"]["degraded_reasons"] if r.startswith("system_tree_moved_during_review")]
+        assert before_head[:12] in moved and after_head[:12] in moved
+
     @pytest.mark.parametrize("args, fragment", [
         ({"subject": "system", "surface": "change"}, "subject=system goes with surface=system"),
         ({"subject": "worktree", "surface": "system"}, "subject=system goes with surface=system"),
