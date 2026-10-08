@@ -1430,7 +1430,7 @@ def get_tools() -> List[ToolEntry]:
         "review_rebuttal": {"type": "string", "default": "", "description": "A NEW content-hashed counter-argument buys one paid re-review within capacity; repeating it is free-refused."},
         "preflight_reviewer": {"type": "string", "default": "", "description": "One ENABLED catalog row (id or handle; a review-pool member or not) for an early informational look at the worktree before the panel; unknown or disabled is TOOL_ARG_ERROR."},
         "skip_advisory_review": {"type": "boolean", "default": False, "description": skip_advisory_description},
-        "goal": {"type": "string", "default": "", "description": "High-level goal of this change. Used by the panel's coupling questions to judge completeness."}, "scope": {"type": "string", "default": "", "description": "Declared scope boundary. Issues outside scope are advisory-only for scope reviewer."},
+        "goal": {"type": "string", "default": "", "description": "High-level goal of this change. Used by the panel's coupling questions to judge completeness."}, "scope": {"type": "string", "default": "", "description": "Declared scope boundary. Without a goal it is the intended transformation the panel's coupling questions judge the change against (completeness, forgotten adjacent surfaces)."},
         "review_reference": {"type": "object", "description": "Exact reference returned by this task's prior commit review, for free informed Advisory continuation."},
         "author_disposition": {"type": "object", "additionalProperties": False,
             "properties": {"disposition": {"type": "string", "enum": ["accepted", "rejected", "partial", "deferred"]}, "rationale": {"type": "string"}},

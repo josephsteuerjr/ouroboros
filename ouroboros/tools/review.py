@@ -1123,12 +1123,13 @@ def _prepare_unified_review(ctx: ToolContext, commit_message: str,
 
     touched_paths = [f.strip() for f in review_changed.strip().splitlines() if f.strip()]
 
-    # Per-row identity/delivery/strength from the ONE reviewer-slot SSOT (6.1):
-    # structured rows when configured, the shipped default panel otherwise
-    # (ABI 7.0/ABI-10: the comma-list migration read is gone). A malformed
-    # configuration is an infra failure, never a silent api spend. Resolved
-    # BEFORE the packet's governance and file evidence: only the api rows
-    # receive a packet at all, and their windows size its governance share.
+    # Per-row identity/delivery/strength from the ONE review-pool builder
+    # (``review_pool_slots``): the catalog's marked rows, which a never-configured
+    # install owns as the factory rows minted at the settings read seam; there is
+    # no default panel here. A malformed configuration is an infra failure, never
+    # a silent api spend. Resolved BEFORE the packet's governance and file
+    # evidence: only the api rows receive a packet at all, and their windows size
+    # its governance share.
     from ouroboros.review_execution import ReviewRouteKind
     from ouroboros.reviewer_slot_config import commit_triad_delivery, row_plan_retrieves
     from ouroboros.tools.review_admission import assemble_packet_prompt, prepare_retrieving_seats, seat_vectors

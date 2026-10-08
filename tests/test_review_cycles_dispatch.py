@@ -391,7 +391,7 @@ def test_advisory_replay_reasons_drive_the_stage_cycle_to_a_disclosed_pass(
     # The loud disclosure reached the advisory channel AND the commit result.
     assert any(expected_reason in w for w in ctx._review_advisory)
     result = git_mod._format_commit_result(ctx, "msg", "", "")
-    assert "no new triad+scope review was bought" in result
+    assert "no new review wave was bought" in result
     assert expected_reason in result
     events = [json.loads(line) for line in
               (ctx.drive_root / "logs" / "events.jsonl").read_text(encoding="utf-8").splitlines()]

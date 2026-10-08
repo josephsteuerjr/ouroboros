@@ -342,6 +342,9 @@ def test_commit_gate_ceiling_reads_live_setting(monkeypatch, tmp_path):
     exhausted = check_review_cycles_ceiling(ctx, root_task_id="root-1")
     assert exhausted is not None and "REVIEW_CYCLES_EXHAUSTED" in exhausted["message"]
     assert exhausted["cycles_paid"] == 2 and exhausted["cap"] == 2
+    # The gate speaks of what it bought — review waves of the pool — never of a
+    # triad and a scope reviewer, which no longer exist as surfaces (FIX3 T1).
+    assert "paid review wave(s)" in exhausted["message"] and "triad" not in exhausted["message"].lower()
     # Another root task has its own ceiling.
     assert check_review_cycles_ceiling(ctx, root_task_id="root-2") is None
     # An unknown root never gates (fail-open, disclosed).
@@ -358,6 +361,42 @@ def test_commit_gate_ceiling_reads_live_setting(monkeypatch, tmp_path):
     # Garbage fails closed to the bounded default (2), never to "no cap".
     monkeypatch.setenv(KEY, "lots")
     assert check_review_cycles_ceiling(ctx, root_task_id="root-1") is not None
+
+
+@pytest.mark.parametrize("enforcement, reason", [
+    ("blocking", "identical_diff_refused"), ("blocking", "review_cycles_exhausted"), ("advisory", "identical_diff_refused"),
+])
+def test_t1_the_replay_disclosure_names_the_review_wave_not_a_triad(monkeypatch, enforcement, reason):
+    """The free-replay words the author and the owner read (progress note, Advisory
+    disclosure) name what was not bought — a review wave of the pool — never the retired
+    triad and scope reviewer (FIX3 T1); the identical-diff note still says the verdict is reused."""
+    from ouroboros.tools.commit_gate import disclose_commit_review_replay
+
+    monkeypatch.setenv("OUROBOROS_REVIEW_ENFORCEMENT", enforcement)
+    notes, advisory = [], []
+    ctx = types.SimpleNamespace(_review_advisory=advisory, emit_progress_fn=notes.append)
+    disclose_commit_review_replay(ctx, {"replay_reason": reason, "advisory_replay": "Prior outcome: FAIL."})
+    [note], [disclosure] = notes, advisory
+    assert "triad" not in (note + disclosure).lower() and "scope reviewer" not in (note + disclosure).lower()
+    assert disclosure.startswith(f"Review enforcement=Advisory: no new review wave was bought for this commit ({reason})")
+    assert disclosure.endswith("Prior outcome: FAIL.")
+    if reason == "identical_diff_refused":
+        assert note == "Max Review Cycles: identical staged diff — reusing the recorded review verdict, no paid review-wave dispatch."
+    else:
+        assert note.startswith("Max Review Cycles: paid-cycle ceiling exhausted")
+
+
+def test_t1_the_commit_schema_explains_scope_by_the_coupling_questions():
+    """``commit_reviewed.scope`` is read by the panel's coupling questions as the intended
+    transformation (``resolve_intent``: goal > scope > commit subject); its description says
+    so and no longer promises a "scope reviewer" that no longer exists (FIX3 T1)."""
+    from ouroboros.tools import git
+    from ouroboros.tools.review_helpers import resolve_intent
+
+    [entry] = [entry for entry in git.get_tools() if entry.name == "commit_reviewed"]
+    description = entry.schema["parameters"]["properties"]["scope"]["description"]
+    assert "coupling questions" in description and "scope reviewer" not in description
+    assert resolve_intent("", "only the gate wording", "subject: x") == ("only the gate wording", "scope")
 
 
 def test_paid_cycle_count_counts_dispatched_money_only(tmp_path, monkeypatch):

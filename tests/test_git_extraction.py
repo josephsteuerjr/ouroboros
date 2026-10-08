@@ -108,7 +108,7 @@ def test_git_catalog_schema_bytes_and_handler_owners_are_stable():
     ).encode()
     # Informed Advisory commit aliases plus explicit local vcs_diff base/head.
     assert hashlib.sha256(schema_bytes).hexdigest() == (
-        "f344cca50840de21c7347c350c1dcb295c2a6e842056073a3e7819453384ae18"  # commit_reviewed gained preflight_reviewer (decision 3A); its text names the review panel, not triad + scope
+        "2f81c9c6672334865c92b3d374c872e8949f44f2860d6f5f2c65713de3fe472f"  # FIX3 T1: `scope` is described by the panel's coupling questions (the intended transformation when no goal is given), no longer as "advisory-only for scope reviewer" — a surface that no longer exists
     )
     assert {
         entry.name: (entry.handler.__module__, entry.handler.__name__)

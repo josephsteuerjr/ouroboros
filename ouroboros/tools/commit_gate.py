@@ -71,7 +71,7 @@ def _attempt_accepts_reviewing_update(existing: Any) -> bool:
 # identical bytes are never re-reviewed for pay. From the FIRST genuine
 # review-verdict block of a staged diff, resubmitting the same
 # pre_review_fingerprint without a NEW rebuttal is refused for FREE — before
-# the advisory-freshness gate and before any paid triad+scope dispatch —
+# the advisory-freshness gate and before any paid review-wave dispatch —
 # quoting the recorded verdict. A rebuttal is identified by CONTENT
 # (sha256): a hash new to the current identical-fingerprint streak buys
 # exactly ONE paid re-review; a repeated hash is refused free, quoting the
@@ -79,7 +79,7 @@ def _attempt_accepts_reviewing_update(existing: Any) -> bool:
 # revalidation, transport/no-quorum) are not verdicts: they never build the
 # refusal streak and retry freely. The shared OUROBOROS_REVIEW_MAX_CYCLES
 # knob (``review_max_cycles()``; ``None`` = unlimited) bounds PAID
-# triad+scope cycles per ROOT task (the whole task tree shares one ceiling;
+# review-wave cycles per ROOT task (the whole task tree shares one ceiling;
 # a manual session is its own task; a follow-up task starts a fresh one).
 # The ceiling counts MONEY: every attempt that physically dispatched a wave
 # (``paid`` recorded at dispatch) counts regardless of how it terminated —
@@ -476,7 +476,7 @@ def check_review_cycles_ceiling(
         return None
     message = (
         f"⚠️ REVIEW_CYCLES_EXHAUSTED: this task tree (root {root}) already spent "
-        f"{paid} of {cap} paid triad+scope review cycle(s) "
+        f"{paid} of {cap} paid review wave(s) "
         "(OUROBOROS_REVIEW_MAX_CYCLES). Refusing to buy another review.\n"
         "Honest exits: finalize honestly with what is already reviewed and committed; "
         "escalate to the owner (the ceiling is the owner's Max Review Cycles setting — "
@@ -1060,7 +1060,7 @@ def disclose_commit_review_replay(ctx: ToolContext, replay: dict) -> None:
     elif replay_reason == IDENTICAL_DIFF_BLOCK_REASON:
         progress_note = (
             "Max Review Cycles: identical staged diff — reusing the recorded "
-            "review verdict, no paid triad+scope dispatch."
+            "review verdict, no paid review-wave dispatch."
         )
     else:
         progress_note = (
@@ -1069,7 +1069,7 @@ def disclose_commit_review_replay(ctx: ToolContext, replay: dict) -> None:
             "choosing Advisory author continuation."
         )
     disclosure = (
-        "Review enforcement=Advisory: no new triad+scope review was bought for "
+        "Review enforcement=Advisory: no new review wave was bought for "
         f"this commit ({replay_reason}); no fresh automatic preflight was bought. "
         + str(replay.get("advisory_replay") or "")
     )
