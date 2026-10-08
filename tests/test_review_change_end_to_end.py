@@ -279,6 +279,38 @@ def test_below_cyber_pro_the_whole_pool_judges_the_commit_and_named_rows_only_ad
     assert record["verdict"]["aggregate"] == "PASS"
 
 
+@pytest.mark.parametrize("mode", ["cyber_pro", "pro"])
+def test_the_commit_panel_hears_any_enabled_catalog_row_as_an_added_critic(staged_body, tmp_path, monkeypatch, mode):
+    """``commit_reviewed`` composes through the one composer: an unmarked api row and an
+    unmarked agent-session row (its own effort kept) are added critics beside the counted
+    pool seats, in Cyber Pro and below; a switched-off row is refused before anything is
+    staged, reviewed or recorded."""
+    from ouroboros.review_execution import ReviewRouteKind
+    from ouroboros.tools import commit_gate
+    from ouroboros.tools.review_change import ReviewChangeArgumentError
+    from tests.review_pool_rosters import pool_seat
+
+    set_review_pool(monkeypatch, shared.golden_pool(
+        pool_seat("scout", "openai/gpt-5.6-sol", effort="high", marked=False),
+        pool_seat("session-critic", "codex=gpt-5.6-sol", kind="agent_session", effort="xhigh", marked=False),
+        pool_seat("retired", "openai/retired-model", marked=False, enabled=False)))
+    monkeypatch.setattr(git_mod, "get_runtime_mode", lambda: mode)
+    ctx = ToolContext(repo_dir=Path(staged_body["repo"]), drive_root=tmp_path / "gate-drive")
+
+    panel = commit_gate.compose_commit_panel(ctx, ["s1", "scout", "session-critic"], REASON)
+    seats = {seat.slot.slot_id: seat for seat in panel.seats}
+    assert panel.facts["additional"] == ["scout", "session-critic"]
+    assert sorted(name for name, seat in seats.items() if not seat.additional) == (
+        ["s1"] if mode == "cyber_pro" else ["s1", "t1", "t2"])
+    critic = seats["session-critic"].slot
+    assert (critic.route, critic.session_target, critic.effort) == (ReviewRouteKind.AGENT_SESSION, "codex=gpt-5.6-sol", "xhigh")
+    assert panel.facts["composition"] == ("composed" if mode == "cyber_pro" else "full_pool")
+
+    for names in (["s1", "retired"], ["retired"]):
+        with pytest.raises(ReviewChangeArgumentError, match="switched off"):
+            commit_gate.compose_commit_panel(ctx, names, REASON)
+
+
 def test_a_commit_panel_that_names_no_pool_seat_is_refused_before_anything_is_staged(staged_body, tmp_path, monkeypatch):
     from tests.review_pool_rosters import pool_seat
 

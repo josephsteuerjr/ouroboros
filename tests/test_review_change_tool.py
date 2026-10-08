@@ -515,6 +515,48 @@ def test_a_composed_panel_counts_pool_seats_only_and_hears_an_unmarked_row_as_a_
     assert len(h.wave.calls) == 2, "no wave was paid for a composition without a pool seat"
 
 
+def test_an_added_critic_is_any_enabled_catalog_row_and_a_switched_off_row_is_refused(
+        h: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The added critic outside the quorum is ANY enabled catalog row (the owner's words:
+    Ouroboros keeps the possibility to take any model; BIBLE «I may add a critic») — an
+    unmarked api row or an unmarked agent-session row with its own effort, named in
+    ``reviewers`` or in ``coupling_only``, on the body below Cyber Pro (the pool judges, the
+    rows only add) and in Cyber Pro (the named pool seat counts). The marked rows stay the
+    only counted seats; a switched-off row is refused before any wave, like an unknown name."""
+    pool = _pool()
+    set_review_pool(monkeypatch, pool_roster(
+        *mixed_pool_rows(), pool_seat("scout", "openai/scout-model", marked=False),
+        pool_seat("session-critic", "codex=gpt-5.6-sol", kind="agent_session", effort="xhigh", marked=False),
+        pool_seat("retired", "openai/retired-model", marked=False, enabled=False)))
+    assert _pool() == pool, "unmarked rows do not change the pool"
+
+    _stage(h.system, "body.py", "x = 1\n")
+    below = h.run(root="system_repo", subject="index", reviewers=["session-critic"], coupling_only=["scout"])
+    call = h.wave.calls[-1]
+    assert (call.triad, call.coupling) == (pool, ["session-critic", "scout"])
+    assert rl.PART_CHANGE in call.parts["session-critic"] and call.parts["scout"] == (rl.PART_COUPLING,)
+    assert call.efforts["session-critic"] == "xhigh"
+    assert (below["panel"]["composition"], below["panel"]["additional"]) == ("full_pool", ["session-critic", "scout"])
+    assert {row["seat_id"]: row["additional"] for row in below["rows"]} == {
+        **{seat: False for seat in pool}, "session-critic": True, "scout": True}
+
+    monkeypatch.setattr(rc, "get_runtime_mode", lambda: "cyber_pro")
+    _stage(h.system, "more.py", "y = 2\n")
+    composed = h.run(root="system_repo", subject="index", reviewers=[pool[0], "session-critic"],
+                     coupling_only=["scout"], reason="one pool seat, two critics")
+    call = h.wave.calls[-1]
+    assert (call.triad, call.coupling) == ([pool[0]], ["session-critic", "scout"])
+    assert (composed["panel"]["composition"], composed["panel"]["additional"]) == ("composed", ["session-critic", "scout"])
+    assert composed["quorum"]["required"] == 1
+
+    _stage(h.system, "later.py", "z = 3\n")
+    paid = len(h.wave.calls)
+    for args in ({"reviewers": [pool[0], "retired"]}, {"reviewers": [pool[0]], "coupling_only": ["retired"]}):
+        with pytest.raises(rc.ReviewChangeArgumentError, match="switched off"):
+            h.run(root="system_repo", subject="index", reason="a retired row", **args)
+    assert len(h.wave.calls) == paid, "no wave was paid for a refused composition"
+
+
 def test_reviewer_effort_is_this_waves_order(h: Harness) -> None:
     pool = _pool()
     _stage(h.project, "a.py", "a = 1\n")
