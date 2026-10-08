@@ -1176,7 +1176,7 @@ def _store_task_result(env: Any, task: Dict[str, Any], text: str,
                     "pass_index": 0,
                 }
             root_phase_checkpoint.setdefault("post_task_synthesis", "pending_once")
-        review_projection = _compact_review_projection(llm_trace)
+        review_projection = _compact_review_projection(llm_trace, task, env.drive_root)
         model_execution = model_execution_projection(usage)
         from ouroboros.acceptance_history import retain_acceptance_history
         history_fields = retain_acceptance_history(

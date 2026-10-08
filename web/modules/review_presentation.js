@@ -14,6 +14,7 @@ const SURFACE_ORDER = new Map([
     ['skill', 0],
     ['plan', 1],
     ['task_acceptance', 2],
+    ['review_record', 3],
 ]);
 
 const ACTIVE_STATES = new Set(['queued', 'running', 'open', 'working', 'pending']);
@@ -845,10 +846,40 @@ export function taskAcceptanceGroupFromTaskDetail(detail, ownerTaskId = '') {
     return acceptanceGroupWithIncident({ owner, attempts, incident, authorDecisionText, statusTone });
 }
 
+/** The task's own review-ledger records (panels carrying `record_id`), one attempt per record, oldest first. */
+export function reviewRecordGroupFromTaskDetail(detail, ownerTaskId = '') {
+    const owner = text(ownerTaskId || detail?.task_id);
+    const projection = detail?.review_projection;
+    const panels = (Array.isArray(projection?.panels) ? projection.panels : []).filter((panel) => text(panel?.record_id));
+    if (!owner || !panels.length) return null;
+    const attempts = panels.map((panel, index) => {
+        const verdict = text(panel.aggregate_signal) || 'UNKNOWN';
+        return {
+            id: `record:${text(panel.record_id)}`, surface: 'review_record', state: 'terminal', progress: '',
+            // NOT_PERFORMED, QUORUM_FAILED and NOT_DISPATCHED reached no verdict: a warning, never a quiet neutral.
+            tone: { PASS: 'done', FAIL: 'error' }[verdict] || 'warn', verdict, timestamp: text(panel.ts), ordinal: index,
+            label: `${text(panel.surface) || 'review'} record ${text(panel.record_id)}`, summary: text(panel.reason),
+            superseded: false, replayed: false, revised: false, initiatorTaskId: owner, executions: [], execution: null,
+            detailRef: null,
+            detailText: [formatReviewProjection({ panels: [panel] }), text(panel.source_ref?.path) ? `Full record: ${text(panel.source_ref.path)}` : ''].filter(Boolean).join('\n'),
+        };
+    });
+    const latest = attempts.at(-1);
+    return {
+        id: `review_record:${owner}`, surface: 'review_record', label: 'Review records', subject: '',
+        presentationOwnerTaskId: owner, subjectTaskId: owner, initiatorTaskId: owner,
+        state: 'terminal', progress: '', tone: latest.tone, verdict: latest.verdict, summary: latest.summary,
+        warning: '', authorDecisionText: '', activeCount: 0, attemptCount: attempts.length,
+        // Older records stay in the ledger: the count is exact only when the projection says none exist.
+        countIsAuthoritative: projection.review_records_omitted === 0, attempts,
+    };
+}
+
 export function reviewGroupsFromTaskDetail(detail, ownerTaskId = '') {
     return [
         planReviewGroupFromTaskDetail(detail, ownerTaskId),
         taskAcceptanceGroupFromTaskDetail(detail, ownerTaskId),
+        reviewRecordGroupFromTaskDetail(detail, ownerTaskId),
     ].filter(Boolean);
 }
 
