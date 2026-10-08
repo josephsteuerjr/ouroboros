@@ -4,7 +4,7 @@ Shared pages, frontend contracts and runtime truth serve desktop, browser, Docke
 
 The Web UI is a build-free vanilla-JavaScript SPA (`web/index.html`, shared CSS, `web/modules/*`) — no TypeScript or bundler step, so the running interface stays inspectable and editable by Ouroboros without regenerating opaque artifacts. `web/app.js` owns top-level page, Project-panel and mobile-navigation state; feature modules own their presentation; every long-lived UI acquisition carries a disposer bound to the lifecycle that created it (DEVELOPMENT "UI resources carry a disposer"). The same SPA serves every surface: the Linux browser fallback changes presentation only — no second API, onboarding contract, runtime identity or state owner — and the browser stays the owner's application outside process custody (§1). One shared WebSocket serves the whole application; Projects open no independent sockets, and REST remains the recovery and durable-read path (protocol and connection order: the WebSocket protocol subsection of §4).
 
-The desktop shell exposes a small `MainApi` JS bridge (`window.pywebview.api`, `launcher.py`): three native confirmation methods (runtime mode, reviewed-skill auto-grant, skill key grant); the alert half inherited from `launcher_background.DesktopApi` — `request_attention`, also named `notify_owner` for pages that pass the alert's title and text (raise a visible window and request one platform system sound, returning explicit `native_sound`/`window_only`/`unsupported`/`unavailable` facts; a window hidden in background mode is never raised: a banner or Dock cue answers `background`; a page about to show its own browser banner asks first with a last `false`, and a visible window answers `visible` with no cue), `shell_info` (the app's own version, persistent storage and system-notification permission), `request_native_notifications` and `show_native_notification` (one `desktop_notifications.py` notification: `submitted`, `unknown` — handed over, unanswered — or a typed `not_determined`/`denied`/`unavailable`/`failed`; its click shows the window and calls `window.ouroNotifications.activate(token)`) — `download_file_to_downloads`, `open_file_with_default_app`, `open_external_url` (absolute http(s)/mailto) and `save_bytes_to_downloads` for live base64 payloads; the loopback-file methods share one guard — loopback host, exact server port, and a path allowlist of `/api/files/download`, `/api/extensions/...` and `/api/tasks/...`. For consistent native link and download handling, `ui_helpers.js` installs a shell-only link interceptor in BOTH top-level documents (SPA and framed onboarding wizard) when the bridge is present, routing each URL class to the matching bridge method; methods are feature-detected per call, because the packaged launcher updates only on reinstall while the served frontend updates with the managed repo, and a missing method degrades to copy-link-plus-toast or the file-helper fallback chain. The separate first-run `OnboardingHostApi` exposes window completion and the same external opener, injected by `launcher.py`. Subscription sign-in cards call `openExternalViaHostBridge` during an ordinary click or keyboard activation; handled clicks are not opened again by the document interceptor, while browser modifier clicks remain native. The helper resolves desktop and Telegram capabilities from a same-origin parent for the framed wizard. The authenticated Telegram proxy's `X-Ouroboros-Telegram-MiniApp: 1` presentation marker makes `server_web.make_index_page` include the asynchronous Telegram SDK and host hint in the main document; an unavailable SDK reports a click failure and never replays it after loading, and the marker grants no authentication authority.
+The desktop shell exposes a small `MainApi` JS bridge (`window.pywebview.api`, `launcher.py`): three native confirmation methods (runtime mode, reviewed-skill auto-grant, skill key grant); the alert half inherited from `launcher_background.DesktopApi` — `request_attention`, also named `notify_owner` for pages that pass the alert's title and text (raise a visible window and request one platform system sound, returning explicit `native_sound`/`window_only`/`unsupported`/`unavailable` facts; a window hidden in background mode is never raised: a banner or Dock cue answers `background`; a page about to show its own browser banner asks first with a last `false`, and a visible window answers `visible` with no cue), `shell_info` (the app's own version, persistent storage and system-notification permission), `request_native_notifications` and `show_native_notification` (one `desktop_notifications.py` notification: `submitted`, `unknown` — handed over, unanswered — or a typed `not_determined`/`denied`/`unavailable`/`failed`; its click shows the window and calls `window.ouroNotifications.activate(token)`) and `set_native_appearance` (the page's painted palette for the window's caption tint, below) — `download_file_to_downloads`, `open_file_with_default_app`, `open_external_url` (absolute http(s)/mailto) and `save_bytes_to_downloads` for live base64 payloads; the loopback-file methods share one guard — loopback host, exact server port, and a path allowlist of `/api/files/download`, `/api/extensions/...` and `/api/tasks/...`. For consistent native link and download handling, `ui_helpers.js` installs a shell-only link interceptor in BOTH top-level documents (SPA and framed onboarding wizard) when the bridge is present, routing each URL class to the matching bridge method; methods are feature-detected per call: the served frontend can update before the shell, and older packaged launchers require reinstall while newer ones can re-execute changed launcher source (§2), and a missing method degrades to copy-link-plus-toast or the file-helper fallback chain. The separate first-run `OnboardingHostApi` exposes window completion, the same external opener and its own window's `set_native_appearance`, injected by `launcher.py`. Subscription sign-in cards call `openExternalViaHostBridge` during an ordinary click or keyboard activation; handled clicks are not opened again by the document interceptor, while browser modifier clicks remain native. The helper resolves desktop and Telegram capabilities from a same-origin parent for the framed wizard. The authenticated Telegram proxy's `X-Ouroboros-Telegram-MiniApp: 1` presentation marker makes `server_web.make_index_page` include the asynchronous Telegram SDK and host hint in the main document; an unavailable SDK reports a click failure and never replays it after loading, and the marker grants no authentication authority.
 
 ### Navigation and shared UI contracts
 
@@ -21,6 +21,33 @@ the standalone onboarding document each mount this shared control; late-injected
 Settings calls `window.ouroTheme.mount()`. It owns no `s-` input, so Settings'
 collector never posts it. `ouro:theme-changed` announces only a resolved palette
 change; Dark → System on a dark OS does not churn mounted views.
+
+On the Windows desktop the window's ordinary system caption takes the light or
+dark tint of the painted palette (DESIGN, top). `theme.js` in a top-level document
+— never a framed copy, which would speak for its parent's window — calls its own
+window's `set_native_appearance(theme, page, sequence)` at boot, on
+`pywebviewready`, on every painted change and when the back-forward cache restores
+it. `page` is when the document became the window's page (`performance.timeOrigin`,
+renewed on that restore), `sequence` its count of calls. Each bridge call runs on
+its own worker thread, so `launcher_appearance.py` keeps only a request newer by
+that pair: a replaced page's late call loses even when it is that page's first.
+The leaf takes the handle in pywebview's synchronous `before_show`, whose write
+precedes the first paint; every later write runs on the form's UI thread
+(`BeginInvoke`) and repaints the shown frame. The frame starts from the window's
+own background colour, clears `DWMWA_USE_IMMERSIVE_DARK_MODE` while High Contrast
+is on (a system preference change re-applies the page's palette) and drops its
+subscription when the window closes. There is no setting or native store.
+
+The intended caption is the app's palette whatever Windows' own mode: the
+attribute is TRUE exactly when the page paints dark. Microsoft's sources disagree
+on whether Windows honours it under a light system mode: the attribute reference
+says TRUE honours dark mode "when the dark mode system setting is enabled", while
+on Microsoft Q&A (question 966330, 16 Aug 2022) a Microsoft engineer reproduced a
+dark caption under a light system and left bug-or-documentation open. No native
+Windows run has checked it: dark-on-light, Windows 10 and the pixels are
+unproven, not excluded, and an accepted call is not proof of pixels. The
+launcher's transient pages (already running, Git install, startup failure) are
+outside it, and a desktop app without the bridge keeps its caption as before.
 
 `theme_palette.js` translates `--chart-*` tokens into mounted Chart options and
 updates in place without replacing data or caller-authored option groups.
@@ -74,11 +101,12 @@ there is no forced remount. Module intent is declared in `render.appearance`:
 author, and `fixed` names a stable visual world; the field is advisory. Desktop
 `webview.start(private_mode=False)` requests persistent website storage in
 `launcher.py` and `launcher_onboarding.py`, including
-cookies, not just appearance. Existing packaged launchers must be rebuilt and
-installed to change that flag: pywebview 5.4's default private mode erases the
-WebView's website data whenever a window opens (macOS: every data type of the
-bundle's default store; Windows: a temporary profile; GTK: local storage off),
-and in-app updates replace only the core. `desktop_shell.js` therefore discloses
+cookies, not just appearance. Older packaged launchers without source re-execution
+need a new desktop build to change that flag; newer ones can select updated
+launcher source at restart (§2), not merely by loading new frontend assets.
+That update path is not qualified here on native Windows. pywebview 5.4's private
+mode erases website data when a window opens (macOS: all default-store data;
+Windows: a temporary profile; GTK: local storage off). `desktop_shell.js` therefore discloses
 an app before 7.2.0 in Settings → Appearance, from `shell_info()` or, for an app
 without it, the launcher-stamped `/api/health` `app_version`. Profile identity, origin and platform storage
 still govern retention: source tests do not certify a cold-launch result. When
@@ -93,7 +121,7 @@ Each active or deleting Project has a sidebar row with pointer- and keyboard-ope
 Shared primitives keep pages from acquiring competing contracts — frontend work must not reimplement supervisor, review, marketplace, extension and provider semantics per page:
 
 - `web/ui.css` ← shared values and the explicit field/button/status/popup classes; `index.html` and `onboarding_template.html` load it before their page sheets, `style.css` keeps shell composition and tab chrome, and page-specific layout does not duplicate the palette (DESIGN §8 names the migrated families/regions).
-- `page_header.js` / `page_icons.js` ← page headers, tab-strip markup and `bindTabStrip` (selected class, ARIA, roving keyboard focus, reveal within the strip; pages keep panel/loading ownership; silent `select()` never calls the callback); navigation/header icons.
+- `page_header.js` / `page_icons.js` ← page headers, tab-strip markup and `bindTabStrip` (selected class, ARIA, roving keyboard focus, reveal within the strip; pages keep panel/loading ownership; silent `select()` never calls the callback); `renderSegmentedField`, the one segmented single-select, which writes the number of choices it rendered (`--segment-count`) for `settings.css` to lay out equal columns: up to four fill a row, a longer scale keeps four with a partial last row, a card of 20rem or less stacks two, the one-glyph cycle values stay one row; `settings_controls.bindEffortSegments` keeps an empty choice (inherit) as a real value; navigation/header icons.
 - `ui_interactions.js` ← `bindDialogFocus`, `bindMenu`, geometry-only `bindPopoverPosition` and `bindEnterSubmit` (message fields: Enter presses Send): callers mount/portal and remove their own markup, measured `--ui-popup-*` values drive the fixed, viewport-bounded `.ui-popup`, every binding returns teardown, and there is no global overlay registry.
 - `scroll_fade.js` ← `bindScrollFade` projects actually hidden content onto the scroll body's edge attributes, keeping a fully visible first/last edge readable, and owns its observers, listener and pending frame.
 - `api_client.js` / `api_types.js` ← browser API calls with typed error propagation; mirrors of the browser-facing contract shapes.

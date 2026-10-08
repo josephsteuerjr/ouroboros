@@ -31,7 +31,6 @@ fake_route = __fake_route
 from tests._review_session_route_shared import (
     FakeGateway,
     FakeLLM,
-    FakeSlotClock,
     _agent_request,
     _agent_slot,
     _run_session_directly,
@@ -825,37 +824,53 @@ class _DeadlineWitnessLLM(FakeLLM):
     """Records what the stop axes say at the moment the extraction call is made."""
 
     def chat(self, **kwargs):
+        import time
+
         from ouroboros.model_wait import dispatch_deadline_remaining_sec
 
         self.remaining_at_send = dispatch_deadline_remaining_sec()
+        self.sent_at = time.monotonic()
         return super().chat(**kwargs)
 
 
-def _late_success_executor(tmp_path, fake_route, monkeypatch, *, llm, seen_by, window=1.0, tick=0.0):
+def _late_success_executor(tmp_path, fake_route, monkeypatch, *, llm, seen_by, window=1.0):
     """A run still `running` through the whole slot budget whose natural
     `succeeded` is first seen either by the spent window's last read or by the
-    verify read of the slot-deadline cancel (completion wins). The budget is the
-    window's own: it starts with the run, on the clock the window reads."""
-    from ouroboros import review_execution
+    verify read of the slot-deadline cancel (completion wins).
+
+    The runtime's poll clock is test-local: it moves only by the runtime's own sleeps,
+    each really slept so the slot's execution deadline does expire, and the run turns
+    `succeeded` on the read the runtime itself makes with its window spent. No setup,
+    custody or host stall can then move the success relative to the window. Returns the
+    executor and the slot budget each of the runtime's reads was made with."""
+    import time
+    from types import SimpleNamespace
+
+    from ouroboros import review_execution as rx
     from ouroboros.review_execution import AgentSessionReviewExecutor, ReviewAssignment
 
     fake_route.nonterminal = True
     fake_route.manifest_capabilities = {}
     fake_route.detail = _terminal_detail("narrative first\n[]\nNO_FINDINGS")
-    clock, spent_at = FakeSlotClock(tick), []
-    original_start, original_get = FakeGateway.start_run, FakeGateway.get_run
+    clock, reads, observe, original = [0.0], [], rx._observe_session, FakeGateway.get_run
 
-    def start_run(self, request, **kw):
-        spent_at.append(clock.run_started() + window)
-        return original_start(self, request, **kw)
+    def sleep(seconds):
+        time.sleep(seconds)
+        clock[0] += seconds
+
+    def observe_session(gateway, run_id, remaining, streak):
+        reads.append(remaining)
+        if seen_by == "spent_read" and remaining <= 0:
+            FakeGateway.nonterminal = False  # it finished during the window's last sleep
+        return observe(gateway, run_id, remaining, streak)
 
     def get_run(self, run_id, **kw):
-        if (spent_at and clock.monotonic() >= spent_at[0]) if seen_by == "spent_read" else bool(self.cancels):
+        if seen_by == "verify_read" and self.cancels:
             FakeGateway.nonterminal = False
-        return original_get(self, run_id, **kw)
+        return original(self, run_id, **kw)
 
-    monkeypatch.setattr(review_execution, "time", clock)
-    monkeypatch.setattr(FakeGateway, "start_run", start_run)
+    monkeypatch.setattr(rx, "time", SimpleNamespace(monotonic=lambda: clock[0], sleep=sleep))
+    monkeypatch.setattr(rx, "_observe_session", observe_session)
     monkeypatch.setattr(FakeGateway, "get_run", get_run)
     if seen_by == "spent_read":
         # The subject is what the deadline read DOES with a `succeeded` it sees, not whether a
@@ -868,26 +883,30 @@ def _late_success_executor(tmp_path, fake_route, monkeypatch, *, llm, seen_by, w
     return AgentSessionReviewExecutor(
         ReviewAssignment(request=_agent_request(), slot=_agent_slot(timeout_sec=window),
                          call_id="c-late", call_type="scope_review", custody_root=tmp_path),
-        llm=llm)
+        llm=llm), reads
 
 
-@pytest.mark.parametrize("tick", [0.0, 0.015625], ids=["exact_clock", "windows_clock"])
 @pytest.mark.parametrize("seen_by, cancels", [("spent_read", []), ("verify_read", ["review_slot_timeout"])])
 def test_a_success_first_seen_at_the_slot_deadline_is_accepted_and_extracted_past_the_slot_deadline(
-        tmp_path, fake_route, monkeypatch, seen_by, cancels, tick):
-    """The deadline discovers `succeeded`: the verdict is accepted (``late_success_accepted``) and its
-    light-model extraction runs on the operation's own wait — the slot's expired execution deadline no
-    longer says ``deadline`` to the send. When the cancel's verify read is what found it, the cancel was
-    still written under ``review_slot_timeout``. Both hold on a clock as coarse as Windows' (``FakeSlotClock``)."""
+        tmp_path, fake_route, monkeypatch, seen_by, cancels):
+    """The deadline discovers `succeeded`: the verdict is accepted
+    (``late_success_accepted``) and its light-model extraction runs on the
+    operation's own wait — the slot's expired execution deadline no longer says
+    ``deadline`` to the send. When the cancel's verify read is what found it,
+    the cancel was still written under ``review_slot_timeout``."""
     import time
 
     from ouroboros.model_wait import execution_deadline_scope
 
     llm = _DeadlineWitnessLLM()
-    executor = _late_success_executor(tmp_path, fake_route, monkeypatch, llm=llm, seen_by=seen_by, tick=tick)
-    with execution_deadline_scope(time.monotonic() + 1.0, review_slot_id="scope_slot_1"):
+    executor, reads = _late_success_executor(tmp_path, fake_route, monkeypatch, llm=llm, seen_by=seen_by)
+    slot_deadline = time.monotonic() + 1.0
+    with execution_deadline_scope(slot_deadline, review_slot_id="scope_slot_1"):
         result = executor.execute()
+    assert reads[-1] == 0 and all(budget > 0 for budget in reads[:-1]), \
+        "the run read `running` inside its window; the runtime's last read was its spent one"
     assert llm.calls, "the late verdict was extracted, not dropped"
+    assert llm.sent_at >= slot_deadline, "the slot deadline had really expired by the extraction send"
     assert llm.remaining_at_send is None, "the expired SLOT deadline must not reach the paid verdict's extraction"
     assert result.usage["late_success_accepted"] is True and result.usage["extraction"]
     assert empty_array_is_verified_clean(result.raw_text)
@@ -902,12 +921,13 @@ def test_the_calendar_deadline_still_interrupts_the_late_verdict_phase(tmp_path,
     from ouroboros.model_wait import calendar_scope, execution_deadline_scope
 
     llm = _DeadlineWitnessLLM()
-    executor = _late_success_executor(tmp_path, fake_route, monkeypatch, llm=llm, seen_by="verify_read")
+    executor, _reads = _late_success_executor(tmp_path, fake_route, monkeypatch, llm=llm, seen_by="verify_read")
     with calendar_scope("2000-01-01T00:00:00+00:00"), \
             execution_deadline_scope(time.monotonic() + 1.0, review_slot_id="scope_slot_1"):
         result = executor.execute()
     assert llm.remaining_at_send == 0.0, "a spent calendar deadline is still visible to the send"
     assert result.usage["late_success_accepted"] is True
+    assert [reason for _rid, reason in fake_route.instances[0].cancels] == ["review_slot_timeout"]
 
 
 def test_a_success_read_inside_the_slot_budget_is_not_marked_late(tmp_path, fake_route):

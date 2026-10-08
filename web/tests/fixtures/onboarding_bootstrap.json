@@ -513,7 +513,7 @@
       "fallback": "zai::glm-5.3-flash",
       "light": "zai::glm-5.3-flash",
       "main": "zai::glm-5.3",
-      "vision": ""
+      "vision": "zai::glm-5.3-flash"
     }
   },
   "modelSuggestions": [
