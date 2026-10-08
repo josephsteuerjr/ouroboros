@@ -129,9 +129,10 @@ def test_a_compatible_only_install_reviews_on_main(clean_env):
     doc = {"OPENAI_COMPATIBLE_BASE_URL": "https://llm.example/v1", "OUROBOROS_MODEL": "openai-compatible::glm-5.3"}
     for key, value in doc.items():
         clean_env.setenv(key, value)
-    # The factory POOL is one row of the one reachable model (PR-3: the host
-    # never multiplies a seat; the env plane keeps the shipped list as-is).
-    assert [row["route"]["target_id"] for row in factory_review_rows(doc)] == ["openai-compatible::glm-5.3"]
+    # The factory POOL is the shipped panel's three seats on the one reachable
+    # model (three independent runs of Main, quorum 2 of 3 — what this install
+    # ran); the env plane keeps the shipped list as-is.
+    assert [row["route"]["target_id"] for row in factory_review_rows(doc)] == ["openai-compatible::glm-5.3"] * 3
     assert get_review_models() == list(OPENROUTER_REVIEW_DEFAULTS["triad"])
     assert get_scope_review_models() == ["openai-compatible::glm-5.3"]
     assert _advisory_default_model() == "openai-compatible::glm-5.3"
@@ -150,7 +151,7 @@ def test_another_remote_route_keeps_the_existing_defaults(clean_env, other_key):
     doc = {"OPENAI_COMPATIBLE_BASE_URL": "https://llm.example/v1", "OUROBOROS_MODEL": "openai-compatible::glm-5.3",
            other_key: "x-key" if other_key != "OPENAI_BASE_URL" else "https://base.example"}
     models = [row["route"]["target_id"] for row in factory_review_rows(doc)]
-    assert models != ["openai-compatible::glm-5.3"]
+    assert models != ["openai-compatible::glm-5.3"] * 3
     if other_key == "OPENROUTER_API_KEY":
         assert models == list(OPENROUTER_REVIEW_DEFAULTS["triad"])
 

@@ -667,6 +667,34 @@ def test_package_a_factory_rows_seam_is_adopted_when_bound(monkeypatch):
     assert outcome.snapshot["summary"]["rows_marked_after"] == 3
 
 
+@pytest.mark.parametrize("install, main", [
+    ("local-only", {"USE_LOCAL_MAIN": True, "LOCAL_MODEL_SOURCE": "owner/local.gguf", "OUROBOROS_MODEL": "owner/local-main"}),
+    ("compatible-only", {"OPENAI_COMPATIBLE_BASE_URL": "https://llm.example/v1", "OUROBOROS_MODEL": "openai-compatible::glm-5.3"}),
+])
+def test_factory_cells_of_a_one_model_install_mint_the_three_runs_of_main(install, main):
+    """I3-1: the factory pool of a local-only or compatible-only install (cells (A,0),
+    (C,0), (D,0), (E,0)) is what those installs ran — three independent seats of
+    Main (twins, quorum 2 of 3) — through package A's bound seam, so the migration
+    and a fresh onboarding mint one shape; an OpenRouter install keeps three models."""
+    from ouroboros.review_model_routes import adaptive_quorum
+
+    outcome, after = _migrated({SLOTS: "", **main})
+    marked = [row for row in after["items"] if row.get("review_eligible")]
+    assert [row["subagent_id"] for row in marked] == ["review-1", "review-2", "review-3"], install
+    assert [row["route"]["target_id"] for row in marked] == [main["OUROBOROS_MODEL"]] * 3, install
+    assert all(row["minted_from"] == "factory_default" and row["effort"] == "high" for row in marked), install
+    assert outcome.snapshot["summary"]["rows_marked_after"] == 3 and adaptive_quorum(len(marked)) == 2
+    assert outcome.snapshot["summary"]["distinct_models"] == 1, "twins are one engine, disclosed"
+    # The same seam on an existing catalog with one row of that engine: marked, not twinned (F6).
+    twin = api_row("mine", main["OUROBOROS_MODEL"], "high")
+    _outcome, after = _migrated({SLOTS: "", SUBAGENTS: catalog(twin), **main})
+    assert _marked(after["items"]) == ["mine", "review-1", "review-2"], install
+    # OpenRouter: three different models, as before.
+    _outcome, after = _migrated({SLOTS: "", "OPENROUTER_API_KEY": "present"})
+    assert [r["route"]["target_id"] for r in after["items"] if r.get("review_eligible")] == list(
+        OPENROUTER_REVIEW_DEFAULTS["triad"])
+
+
 # --- 5. the read seam -----------------------------------------------------------------
 
 

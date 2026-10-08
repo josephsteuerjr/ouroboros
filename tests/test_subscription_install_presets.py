@@ -563,11 +563,22 @@ def test_factory_review_rows_mint_the_shipped_panel_for_each_install_class():
     # The provider's own default Main when the document's Main is not on it.
     assert len(_factory({"DEEPSEEK_API_KEY": "configured", "OUROBOROS_MODEL": "openai/gpt-5.5"})) == 3
     assert all(t.startswith("deepseek::") for t, _e in _factory({"DEEPSEEK_API_KEY": "configured"}))
-    # A compatible-only route or a local-only Main: one row of the one reachable model.
-    assert _factory({"OPENAI_COMPATIBLE_API_KEY": "configured", "OPENAI_COMPATIBLE_BASE_URL": "http://x",
-                     "OUROBOROS_MODEL": "openai-compatible::glm-5.3"}) == [("openai-compatible::glm-5.3", "high")]
-    assert _factory({"USE_LOCAL_MAIN": True, "LOCAL_MODEL_SOURCE": "owner/model.gguf",
-                     "OUROBOROS_MODEL": "owner/local-main"}) == [("owner/local-main", "high")]
+    # A compatible-only route or a local-only Main: the shipped panel's three seats
+    # on the one reachable model (three independent runs of Main; twins are allowed,
+    # the quorum stays 2 of 3) — what ``get_review_models`` ran for those installs.
+    from ouroboros.review_model_routes import adaptive_quorum
+
+    compatible = _factory({"OPENAI_COMPATIBLE_API_KEY": "configured", "OPENAI_COMPATIBLE_BASE_URL": "http://x",
+                           "OUROBOROS_MODEL": "openai-compatible::glm-5.3"})
+    assert compatible == [("openai-compatible::glm-5.3", "high")] * 3 and adaptive_quorum(len(compatible)) == 2
+    local = _factory({"USE_LOCAL_MAIN": True, "LOCAL_MODEL_SOURCE": "owner/model.gguf",
+                      "OUROBOROS_MODEL": "owner/local-main"})
+    assert local == [("owner/local-main", "high")] * 3 and adaptive_quorum(len(local)) == 2
+    assert [row["subagent_id"] for row in factory_review_rows({"USE_LOCAL_MAIN": True, "LOCAL_MODEL_SOURCE": "o/m.gguf",
+                                                               "OUROBOROS_MODEL": "owner/local-main"})] == [
+        "review-1", "review-2", "review-3"]
+    # A local-only document without a Main mints nothing (there is no model to run).
+    assert factory_review_rows({"USE_LOCAL_MAIN": True, "LOCAL_MODEL_SOURCE": "o/m.gguf"}) == []
 
 
 def test_factory_review_rows_take_the_document_effort_and_free_ids():

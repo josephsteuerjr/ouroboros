@@ -323,10 +323,11 @@ def test_from_zero_local_only_review_slots_inherit_main_and_stay_local(monkeypat
     )
     monkeypatch.setenv("OUROBOROS_SCOPE_REVIEW_MODELS", "openai/gpt-5.6-terra")
 
-    # The factory pool is ONE row of the local Main (the host never multiplies
-    # a seat); every review slot built from it runs on the local lane.
+    # The factory pool is the shipped panel's three seats on the local Main (three
+    # independent runs, quorum 2 of 3); every review slot built from it runs on the
+    # local lane.
     assert _factory_pool_models({"USE_LOCAL_MAIN": "true", "LOCAL_MODEL_SOURCE": "owner/local.gguf",
-                                 "OUROBOROS_MODEL": "owner/local-main"}) == ["owner/local-main"]
+                                 "OUROBOROS_MODEL": "owner/local-main"}) == ["owner/local-main"] * 3
     assert get_scope_review_models() == ["owner/local-main"]
     assert review_model_uses_local("owner/local-main") is True
 
@@ -336,7 +337,7 @@ def test_from_zero_local_only_review_slots_inherit_main_and_stay_local(monkeypat
     rows = factory_review_rows({"USE_LOCAL_MAIN": "true", "LOCAL_MODEL_SOURCE": "owner/local.gguf",
                                 "OUROBOROS_MODEL": "owner/local-main"})
     slots = review_pool_slots({"OUROBOROS_SUBAGENTS": json.dumps({"enabled": True, "items": rows})})
-    assert [slot.model for slot in slots] == ["owner/local-main"]
+    assert [slot.model for slot in slots] == ["owner/local-main"] * 3  # three runs of Main, quorum 2 of 3
     assert all(slot.use_local for slot in slots)
 
 

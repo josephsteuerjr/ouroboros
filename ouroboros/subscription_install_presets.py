@@ -488,8 +488,10 @@ def factory_review_rows(doc: Mapping[str, Any]) -> List[Dict[str, Any]]:
     The semantics the shipped default panel had (``preview_api_reviewer_slots``
     / ``_default_config``), minted into the catalog instead of a lane:
     one exclusive direct provider → its ``DIRECT_PROVIDER_REVIEW_ROLES`` triad;
-    a compatible-only route or a local-only Main → one row of that one
-    reachable model; otherwise OpenRouter's three ``OPENROUTER_REVIEW_DEFAULTS``.
+    a compatible-only route or a local-only Main → as many twin rows of that
+    one reachable model as the shipped panel had seats (three independent runs
+    of Main, quorum 2 of 3 — what ``get_review_models`` ran for those installs);
+    otherwise OpenRouter's three ``OPENROUTER_REVIEW_DEFAULTS``.
     Every row is marked (``review_eligible``), ``minted_from: factory_default``,
     reads natively (the catalog's default delivery), and carries a non-empty
     effort: the document's ``OUROBOROS_EFFORT_REVIEW`` when it is on the scale,
@@ -519,9 +521,10 @@ def factory_review_rows(doc: Mapping[str, Any]) -> List[Dict[str, Any]]:
         models = compute_direct_review_models_fallback(
             provider, main, str(settings.get("OUROBOROS_MODEL_LIGHT") or ""))
     elif compatible := compatible_only_main_model(settings):  # #1116: the one reachable route
-        models = [compatible]
+        models = [compatible] * len(OPENROUTER_REVIEW_DEFAULTS["triad"])
     elif not has_remote_provider(settings) and str(settings.get("USE_LOCAL_MAIN")).lower() in {"true", "1"}:
-        models = [m for m in [str(settings.get("OUROBOROS_MODEL") or "")] if m]
+        main = str(settings.get("OUROBOROS_MODEL") or "")
+        models = [main] * len(OPENROUTER_REVIEW_DEFAULTS["triad"]) if main else []
     else:
         models = list(OPENROUTER_REVIEW_DEFAULTS["triad"])
     effort = str(settings.get("OUROBOROS_EFFORT_REVIEW") or "").strip().lower()

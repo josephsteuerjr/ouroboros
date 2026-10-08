@@ -584,11 +584,18 @@ def factory_lanes(document: Mapping[str, Any]) -> ReviewLanes:
 
 
 # Package A's seam: the rows a fresh install's onboarding mints for the pool
-# (``configured_subagents.factory_review_rows(document)``). When bound, M mints
+# (``subscription_install_presets.factory_review_rows(document)``). M mints
 # exactly those rows for a document without lanes and only covers what they
-# leave uncovered; unbound, the frozen factory lanes above are minted seat by
-# seat. Bound by the integrator; tests monkeypatch it here.
-factory_review_rows: Optional[Callable[[Mapping[str, Any]], List[Dict[str, Any]]]] = None
+# leave uncovered (the frozen factory lanes above say which seats the shipped
+# panel had). The import is deferred: the preset compiler reaches the provider
+# readers, which import this module's callers. Tests monkeypatch the attribute.
+def _package_a_factory_review_rows(document: Mapping[str, Any]) -> List[Dict[str, Any]]:
+    from ouroboros.subscription_install_presets import factory_review_rows as mint
+
+    return mint(document)
+
+
+factory_review_rows: Optional[Callable[[Mapping[str, Any]], List[Dict[str, Any]]]] = _package_a_factory_review_rows
 
 
 # ---------------------------------------------------------------------------
@@ -911,10 +918,23 @@ class _Pool:
         return None
 
     def unmarked_existing_match(self, seat: Seat) -> Optional[str]:
-        engine = seat.engine()
+        return self.unmarked_existing_engine(seat.engine())
+
+    def unmarked_existing_engine(self, engine: tuple, *, excluding: Any = ()) -> Optional[str]:
+        """An existing catalog row this run has not marked yet that runs ``engine``."""
         for row in self.items:
             row_id = str(row.get("subagent_id") or "")
-            if row_id not in self.marked and self.engines[row_id] == engine:
+            if row_id not in self.marked and row_id not in excluding and self.engines[row_id] == engine:
+                return row_id
+        return None
+
+    def vacant_template(self, seat: Seat) -> Optional[str]:
+        """An adopted factory row of the seat's engine that no seat has landed on yet."""
+        engine = seat.engine()
+        for row in self.minted:
+            row_id = str(row.get("subagent_id") or "")
+            if (row.get("review_eligible") and not self.minted_seats.get(row_id)
+                    and _row_engine(self.document, row) == engine):
                 return row_id
         return None
 
@@ -1175,12 +1195,23 @@ def migrate_review_lanes(loaded: Mapping[str, Any]) -> Optional[MigrationOutcome
     executions = effective_executions(document, lanes, authored=authored)
     pool = _Pool(document, catalog)
     if not authored and factory_review_rows is not None:
+        claimed: set = set()
         for template in factory_review_rows(document):
-            pool.adopt(template)
+            existing = pool.unmarked_existing_engine(_row_engine(document, template), excluding=claimed)
+            if existing is not None:
+                # F6: a catalog row already runs this engine — its seat below marks
+                # it (merge) instead of a twin row; the remaining templates keep
+                # the first free ``review-<n>`` ids.
+                claimed.add(existing)
+                continue
+            pool.adopt({**template, "subagent_id": ""})
         for seat in executions["triad"]:
-            match = pool.produced_match(seat)
-            if match is not None:
-                pool.attach(match, seat)
+            # One frozen seat lands on one row: an existing row of its engine first
+            # (F6), else a template of its engine that no seat has landed on yet
+            # (twins stay twins, F5), else the ordinary placement.
+            vacant = None if pool.unmarked_existing_match(seat) is not None else pool.vacant_template(seat)
+            if vacant is not None:
+                pool.attach(vacant, seat)
             else:
                 _place_triad(pool, seat, minted_from)
     else:
