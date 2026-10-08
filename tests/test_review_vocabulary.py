@@ -2,7 +2,7 @@
 
 Commit, plan, skill and task-acceptance review all run on one review pool, so "triad + scope", a
 "reviewer-slot configuration" or a "configured triad row" describes lanes that no longer exist.
-Comments are out of scope; the remaining owners of the old wording are named below.
+Comments are out of scope.
 """
 
 from __future__ import annotations
@@ -15,8 +15,9 @@ STALE = re.compile(
     r"triad \+ scope|reviewer-slot (?:configuration|skill review)|configured triad row|scope review runs",
     re.IGNORECASE,
 )
-# Protected: its three phrases change only with the owner's approval.
-RESIDUAL = {"ouroboros/runtime_mode_policy.py"}
+# No residual owner is left: the protected ``runtime_mode_policy`` changed its three phrases
+# with the owner's approval of 2026-10-08.
+RESIDUAL: set = set()
 SURFACES = ("ouroboros/**/*.py", "supervisor/**/*.py", "web/modules/**/*.js", "prompts/*.md",
             "docs/CREATING_SKILLS.md")
 

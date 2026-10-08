@@ -369,6 +369,24 @@ def test_phase4_ui_copy_matches_shipped_runtime():
     assert "Phase 6+:" not in onboarding_html
 
 
+def test_the_protected_path_messages_name_the_review_panel_and_the_review_gate(monkeypatch):
+    """V-D4-07, the owner's approval of 2026-10-08 for exactly three phrases of the protected
+    ``runtime_mode_policy``: the module docstring, the advanced-mode refusal and the pro-mode
+    notice say «the normal review gate» / «the normal review panel» (the words
+    ``settings_setup_contract`` already uses) — the lanes they used to name no longer exist."""
+    from ouroboros import runtime_mode_policy as policy
+
+    assert "commits still flow through the normal\nreview gate." in (policy.__doc__ or "")
+    refusal = policy.protected_write_block_message(path="BIBLE.md", runtime_mode="advanced", action="run tool 'write_file' against")
+    assert refusal.endswith("Switch to runtime_mode='pro' and let the normal review panel "
+                            "cover the protected core/contract/release change before commit.")
+    monkeypatch.setattr("ouroboros.config.get_runtime_mode", lambda: "pro")
+    notice = policy.core_patch_notice(["BIBLE.md"])
+    assert notice.endswith("These changes can be committed only through the normal review gate.")
+    for text in (policy.__doc__ or "", refusal, notice):
+        assert "triad" not in text and "scope review" not in text
+
+
 def test_skills_ui_reads_live_extension_state_fields():
     renderer = (REPO / "web" / "modules" / "skill_card_renderer.js").read_text(encoding="utf-8")
     orchestration = (REPO / "web" / "modules" / "skills.js").read_text(encoding="utf-8")
