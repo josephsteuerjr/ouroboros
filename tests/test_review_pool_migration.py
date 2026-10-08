@@ -1223,6 +1223,22 @@ def test_the_input_digest_reads_credentials_by_presence_only():
     assert m.input_sha256(doc) != m.input_sha256(dict(doc, OUROBOROS_EFFORT_REVIEW="high"))
 
 
+def test_the_input_digest_covers_the_legacy_row_materialization_keys():
+    """VD3-04 (P6): a legacy harness singleton materializes catalog rows from
+    OUROBOROS_MODEL_HEAVY / USE_LOCAL_HEAVY / USE_LOCAL_LIGHT, so two documents that differ
+    only there are two migration subjects — the per-digest cache must not replay the
+    first document's catalog onto the second."""
+    base = {SLOTS: "", "OUROBOROS_SUBAGENT_HARNESS": "codex", "OPENROUTER_API_KEY": "present",
+            "OUROBOROS_MODEL": "x/main", "OUROBOROS_MODEL_HEAVY": "a/one"}
+    for change in ({"OUROBOROS_MODEL_HEAVY": "b/two"}, {"USE_LOCAL_HEAVY": True}, {"USE_LOCAL_LIGHT": True}):
+        assert m.input_sha256(base) != m.input_sha256({**base, **change}), change
+    first = cfg.normalize_settings_raw(dict(base))
+    second = cfg.normalize_settings_raw({**base, "OUROBOROS_MODEL_HEAVY": "b/two"})
+    heavy = lambda loaded: [r["route"]["target_id"] for r in json.loads(loaded[SUBAGENTS])["items"]  # noqa: E731
+                            if r["subagent_id"] == "legacy-heavy"]
+    assert heavy(first) == ["a/one"] and heavy(second) == ["b/two"], (heavy(first), heavy(second))
+
+
 # --- 6. the supervisor boot: snapshot once, owner told once -------------------------------
 
 

@@ -825,11 +825,17 @@ _SHA_PRESENCE_KEYS = (
 _SHA_VALUE_KEYS = REVIEW_POOL_MIGRATED_SETTING_KEYS + (
     SUBAGENTS_KEY, "OUROBOROS_SUBAGENT_HARNESS", "OUROBOROS_SUBAGENT_PROFILE", "OUROBOROS_PROCESSING_PREFERENCE",
     "OUROBOROS_MODEL_PROCESSING_PREFERENCES", "OUROBOROS_MODEL", "OUROBOROS_MODEL_LIGHT", "USE_LOCAL_MAIN",
+    # The legacy singleton's row materialization (configured_subagents._append_legacy_model_rows:
+    # the Heavy row from OUROBOROS_MODEL_HEAVY / USE_LOCAL_HEAVY, the scout from Light's local
+    # flag) shapes the catalog view, so these decide the outcome too (VD3-04).
+    "OUROBOROS_MODEL_HEAVY", "USE_LOCAL_HEAVY", "USE_LOCAL_LIGHT",
 )
 
 
 def input_sha256(document: Mapping[str, Any]) -> str:
-    """Digest of every document fact the migration reads (credentials by presence only)."""
+    """Digest of every document fact the migration reads (credentials by presence only):
+    the per-process cache (``_MIGRATIONS_SEEN``) and the receipts are keyed by it, so a
+    fact left out would replay another document's outcome."""
     facts = {key: document.get(key) for key in _SHA_VALUE_KEYS if key in document}
     facts["_present"] = sorted(key for key in _SHA_PRESENCE_KEYS if _text(document, key))
     return hashlib.sha256(json.dumps(facts, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")).hexdigest()
