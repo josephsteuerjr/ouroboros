@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import pathlib
 import re
 import subprocess
@@ -539,6 +540,26 @@ def _write_json(path: pathlib.Path, value) -> None:
     path.write_text(_json_text(value) + "\n", encoding="utf-8")
 
 
+_NATIVE_SEPARATORS = tuple(sep for sep in (os.sep, os.altsep) if sep)
+
+
+def _public_text(text: str, replacements: list[tuple[str, str]]) -> str:
+    """Machine-local roots become their placeholders. A value that IS a path under
+    one of them (one line, the root then a separator) also gets posix separators,
+    so the packet reads the same on every OS; other text keeps its characters."""
+    is_path = "\n" not in text and any(
+        raw and text.startswith(raw) and text[len(raw):len(raw) + 1] in ("", *_NATIVE_SEPARATORS)
+        for raw, _replacement in replacements
+    )
+    for raw, replacement in replacements:
+        if raw:
+            text = text.replace(raw, replacement)
+    if is_path:
+        for sep in _NATIVE_SEPARATORS:
+            text = text.replace(sep, "/")
+    return text
+
+
 def replace_public_paths(value, replacements: list[tuple[str, str]]):
     if isinstance(value, dict):
         return {
@@ -548,11 +569,7 @@ def replace_public_paths(value, replacements: list[tuple[str, str]]):
     if isinstance(value, (list, tuple)):
         return [replace_public_paths(item, replacements) for item in value]
     if isinstance(value, str):
-        result = value
-        for raw, replacement in replacements:
-            if raw:
-                result = result.replace(raw, replacement)
-        return result
+        return _public_text(value, replacements)
     return value
 
 
