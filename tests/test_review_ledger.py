@@ -602,6 +602,31 @@ def test_free_refusal_before_dispatch_is_a_not_dispatched_record(candidate, monk
     assert _attempt_rows(ctx)[-1].block_reason == "review_cycles_exhausted"
 
 
+def test_w2_an_empty_pool_record_names_pool_empty_as_its_dispatch_refusal(candidate, monkeypatch):  # noqa: F811
+    """The wave exits at assembly on an empty pool (``_prepare_unified_review`` →
+    ``pool_empty``, nothing dispatched); the record is NOT_DISPATCHED and names that
+    cause itself, so a reader of the ledger sees the configured fact, not a bare
+    "nothing dispatched" (under blocking the gate's block is recorded beside it)."""
+    from ouroboros.tools.review_helpers import REVIEW_POOL_EMPTY_SENTENCE
+
+    ctx = candidate
+
+    def reviewer(_ctx, message, **kw):
+        ctx._last_review_block_reason = "pool_empty"
+        ctx._last_review_structured = {"rows": [], "started_ts": "2026-10-08T00:00:00+00:00"}
+        return f"⚠️ REVIEW_BLOCKED: review NOT_PERFORMED — {REVIEW_POOL_EMPTY_SENTENCE}", CouplingOutcome(), "pool_empty", []
+
+    _wire(ctx, monkeypatch, reviewer)
+    result = _cycle(ctx)
+    assert result["status"] == "blocked" and result["block_reason"] == "pool_empty" and result["review_record_id"]
+    record = rl.load_record(rl.ledger_root(ctx), result["review_record_id"])
+    assert record["verdict"]["aggregate"] == "NOT_DISPATCHED" and record["verdict"]["reason"] == "dispatch_refusal"
+    assert record["dispatch_refusal"] == {"kind": "pool_empty", "message": REVIEW_POOL_EMPTY_SENTENCE}
+    assert record["rows"] == [] and record["panel"]["seats"] == 0 and record["cost"] == {"usd": 0.0, "unknown": False}
+    assert "gate_block:pool_empty" in record["verdict"]["degraded_reasons"]
+    assert _attempt_rows(ctx)[-1].block_reason == "pool_empty"
+
+
 def _advisory_push_setup(ctx, monkeypatch):
     """The Advisory/pro commit surface of ``test_commit_finish_requires_received_outcome``."""
     from ouroboros.mutation_attribution import capture_mutation_baseline

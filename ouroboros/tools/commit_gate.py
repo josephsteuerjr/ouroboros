@@ -19,7 +19,11 @@ from ouroboros.review_state import (
     infer_review_phase,
 )
 from ouroboros.tools.registry import ToolContext
-from ouroboros.tools.review_helpers import review_enforcement_blocks
+from ouroboros.tools.review_helpers import (
+    REVIEW_POOL_EMPTY_REASON,
+    REVIEW_POOL_EMPTY_SENTENCE,
+    review_enforcement_blocks,
+)
 from ouroboros.utils import (
     truncate_review_artifact as _truncate_review_reason,
 )
@@ -1268,6 +1272,10 @@ def settle_commit_review_ledger(ctx: ToolContext, commit_message: str, *, goal: 
                        "message": str(advisory_replay.get("advisory_replay") or "")}
         elif str(getattr(ctx, "_last_review_block_reason", "") or "") == "review_wave_budget_insufficient":
             refusal = {"kind": "review_wave_budget_insufficient", "message": str(structured.get("wave_refusal") or "")}
+        elif str(getattr(ctx, "_last_review_block_reason", "") or "") == REVIEW_POOL_EMPTY_REASON:
+            # An empty pool dispatches nothing under either enforcement: the record
+            # names that cause itself, not only the gate's block.
+            refusal = {"kind": REVIEW_POOL_EMPTY_REASON, "message": REVIEW_POOL_EMPTY_SENTENCE}
         pending = advisory_replay is None and bool(git_mod._review_custody_pending(ctx))
         facts = _review_ledger_facts(
             ctx, commit_message, goal=goal, scope=scope, pre_fingerprint=pre_fingerprint or {},

@@ -56,6 +56,8 @@ from ouroboros.tools.review_helpers import (
     format_name_status_for_preflight,
     format_review_history_entry as _format_review_entry,
     REVIEW_PROMPT_TOKEN_BUDGET,  # noqa: F401 — patchable seam (see note above)
+    REVIEW_POOL_EMPTY_REASON,
+    REVIEW_POOL_EMPTY_SENTENCE,
     review_enforcement_blocks,
     single_line as _single_line,
 )
@@ -1141,6 +1143,16 @@ def _prepare_unified_review(ctx: ToolContext, commit_message: str,
             "Review enforcement=Advisory: invalid reviewer-slot configuration did not block commit. ",
         ), True
     models, row_routes = row_plan["models"], row_plan["routes"]
+    if not models:
+        # A configured fact (the ``## Review`` block's ``pool_empty``), stated as such
+        # before anything is assembled: nothing to dispatch, no provider to blame.
+        ctx._last_review_block_reason = REVIEW_POOL_EMPTY_REASON
+        return None, _handle_review_block_or_warning(
+            ctx, blocking_review,
+            f"⚠️ REVIEW_BLOCKED: review NOT_PERFORMED — {REVIEW_POOL_EMPTY_SENTENCE}",
+            "Review enforcement=Advisory: the review pool is empty, so no review ran; "
+            "an explicit author decision is required. ",
+        ), True
     ctx._last_triad_models = list(models)  # forensic: actual resolved model IDs
     # Packet rows only: a retrieving api row (native delivery or a configured
     # subagent) neither constrains the fit ladder nor counts as an api seat for
@@ -1458,13 +1470,18 @@ def _dispatch_unified_review(ctx: ToolContext, commit_message: str, prepared: di
         )
 
     if verdict["aggregate"] == "NOT_PERFORMED":
-        # Quorum stands but the gate has no answer to count: nobody answered the
-        # coupling question, or no seat answered the change at all.
-        ctx._last_review_block_reason = str(verdict["reason"] or "review_not_performed")
+        # Quorum stands but the gate has no answer to count; the sentence names the
+        # branch that decided (``verdict["reason"]``), never a guessed one.
+        reason = str(verdict["reason"] or "review_not_performed")
+        ctx._last_review_block_reason = reason
         asked = [str(s.get("seat_id") or "") for s in rows if "coupling" in (s.get("parts") or [])]
-        what = ("the coupling question (Part 2) was answered by no seat"
-                f" — asked of: {', '.join(asked) or 'no seat'}" if verdict["reason"] == "coupling_not_performed"
-                else "no seat answered the change (Part 1)")
+        what = {
+            "coupling_not_performed": ("the coupling question (Part 2) was answered by no seat"
+                                       f" — asked of: {', '.join(asked) or 'no seat'}"),
+            "change_unanswered": "no seat answered the change (Part 1) with a PASS/FAIL verdict",
+            "review_late_result_pending": ("physical review operation(s) remain unresolved"
+                                           f" ({', '.join(pending_models) or 'custody open'}); no verdict is counted yet"),
+        }.get(reason, f"the wave reduced to no countable answer ({reason})")
         blocked_msg = (
             f"⚠️ REVIEW_BLOCKED: review NOT_PERFORMED — {what}.\n"
             "The commit gate counts only a PASS/FAIL answer; retry the commit or configure a "

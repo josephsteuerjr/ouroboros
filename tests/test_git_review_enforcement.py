@@ -242,6 +242,61 @@ class TestReviewEnforcementModes:
         assert saved.count("prior deterministic/preflight warning") == 1
         assert saved.count("Note: 1 of 4 review models") == 1  # three seated answers + the failed row
 
+    @pytest.mark.parametrize("enforcement", ["blocking", "advisory"])
+    def test_w2_an_empty_pool_is_a_typed_pool_empty_not_performed_never_a_key_problem(
+        self, review_ctx, monkeypatch, enforcement
+    ):
+        """The owner saved a catalog with no row marked Reviewer (the settings panel
+        promised: reviews will not run and report "not performed"). The gate states
+        exactly that, typed ``pool_empty``, dispatches nothing, and never blames
+        OPENROUTER_API_KEY (the old path sent ``models=[]`` to the executor and
+        reported its "models list is required" as an infrastructure failure)."""
+        from ouroboros.tools.review_helpers import REVIEW_POOL_EMPTY_SENTENCE
+        from tests.review_pool_rosters import FACTORY_MODELS, pool_roster, pool_seat, set_review_pool
+
+        review, ctx = review_ctx
+        self._mock_staged(monkeypatch, review, changed_files="x.py")
+        monkeypatch.setenv("OUROBOROS_REVIEW_ENFORCEMENT", enforcement)
+        set_review_pool(monkeypatch, pool_roster(pool_seat("helper", FACTORY_MODELS[0], marked=False)))
+        dispatched = []
+
+        def executor(*args, **kwargs):  # the executor's own answer to an empty model list
+            dispatched.append(kwargs.get("models"))
+            return json.dumps({"error": "models list is required"})
+
+        monkeypatch.setattr(review, "_handle_multi_model_review", executor)
+        result = review._run_unified_review(ctx, "test commit", repo_dir=ctx.repo_dir)
+        assert dispatched == [], "nothing is dispatched for an empty pool"
+        assert ctx._last_review_block_reason == "pool_empty"
+        said = result if enforcement == "blocking" else " ".join(w for w in ctx._review_advisory if isinstance(w, str))
+        if enforcement == "blocking":
+            assert result is not None and "REVIEW_BLOCKED: review NOT_PERFORMED" in result
+        else:
+            assert result is None
+        assert REVIEW_POOL_EMPTY_SENTENCE in said and "pool_empty" in said
+        assert "OPENROUTER_API_KEY" not in said and "models list is required" not in said
+
+    def test_w2_the_not_performed_sentence_names_the_reason_that_decided(self, review_ctx, monkeypatch):
+        """Under advisory enforcement an unresolved physical operation reduces to
+        NOT_PERFORMED ``review_late_result_pending``; the gate's sentence says so,
+        and does not claim that no seat answered the change."""
+        review, ctx = review_ctx
+        self._mock_staged(monkeypatch, review, changed_files="x.py")
+        monkeypatch.setenv("OUROBOROS_REVIEW_ENFORCEMENT", "advisory")
+        response = json.loads(self._fake_result(
+            '[{"item":"code_quality","verdict":"PASS","severity":"critical","reason":"ok"}]',
+            '[{"item":"code_quality","verdict":"PASS","severity":"critical","reason":"ok"}]'))
+        response["results"][0].update({"verdict": "ERROR", "text": "", "operation_state": "in_flight",
+                                       "late_result_pending": True})
+        monkeypatch.setattr(review, "_handle_multi_model_review", lambda *a, **kw: json.dumps(response))
+        assert review._run_unified_review(ctx, "candidate", repo_dir=ctx.repo_dir) is None
+        assert ctx._last_review_verdict["reason"] == "review_late_result_pending"
+        assert ctx._last_review_block_reason == "review_late_result_pending"
+        not_performed = [w for w in ctx._review_advisory if isinstance(w, str) and "review NOT_PERFORMED" in w]
+        assert len(not_performed) == 1, ctx._review_advisory
+        assert "remain unresolved" in not_performed[0] and "model-1" in not_performed[0]
+        assert "no seat answered the change" not in not_performed[0]
+
     @pytest.mark.parametrize("failure", ["nonzero_rc", "non_utf8_rc"])
     def test_uncapturable_staged_diff_blocks_instead_of_reviewing_a_placeholder(
         self, review_ctx, monkeypatch, failure
