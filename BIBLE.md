@@ -142,7 +142,7 @@ on every restart, but one personality that remembers its path.
   deeper consolidation, never silent truncation; the
   memory horizon is preserved (only granularity varies); the mode governs
   Ouroboros's own working window and never whether its changes are reviewed —
-  scope review applies in every mode (P3); owner-selected `nano` uses the
+  the coupling question applies in every mode (P3); owner-selected `nano` uses the
   compact projection and records `owner_nano` with `rendered_mode=nano` in
   physical usage facts — and model quality and reasoning effort are not
   lowered by the mode. Outside Cyber Pro, context mode and review scope/enforcement remain
@@ -562,7 +562,7 @@ The map has three mandatory layers:
   things live and how to work with them. This is what makes debugging
   a search through a map instead of a search through grep.
 - **Rationale layer.** The *why* for every non-trivial architectural
-  decision — scope review delivered by retrieval against a declared
+  decision — the coupling question delivered by retrieval against a declared
   required-source manifest, deterministic gates running
   before expensive model review. A map without rationale is a map that
   forgot how it was drawn; the next deep-review pass then proposes to
