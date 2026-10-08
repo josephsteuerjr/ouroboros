@@ -103,6 +103,9 @@ test('a known failed outcome remains static beside the actual late phase', () =>
     assert.equal(summarizeProjectActivities([base]).label, flattened(shared));
     assert.equal(summarizeProjectActivities([base]).motion, true);
     setInertCardPresentation(full, true);
+    assert.equal(full.phaseEl.hidden, true);
+    assert.equal(full.phaseEl.getAttribute('aria-label'), 'Task status: Failed, Finalizing…');
+    assert.equal(full.phaseSecondaryEl.textContent, 'Finalizing…');
     assert.equal(full.phaseSecondaryEl.hidden, true);
     assert.equal(full.phaseSecondaryEl.dataset.motion, '0');
     setInertCardPresentation(full, false);

@@ -265,8 +265,7 @@ export function setInertCardPresentation(record, enabled) {
     paintTaskPhase(record.phaseEl, { ...view,
         phase: record.phaseEl.dataset.phase || view.phase,
         text: record.phaseEl.textContent || view.text,
-        className: record.phaseEl.className || view.className,
-        ...(enabled ? { secondary: '' } : {}) },
+        className: record.phaseEl.className || view.className },
         phaseSecondaryElement(record), record.isSubagent);
     if (record.root?.dataset) record.root.dataset.inert = enabled ? '1' : '0';
     setLiveCardTypingVisible(record, !enabled && !record.finished);

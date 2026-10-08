@@ -579,7 +579,8 @@ export function createChatInstance({
             if (!response.ok) return;
             const { queue } = await response.json();
             if (destroyed || !Array.isArray(queue?.pending) || !Array.isArray(queue?.running)) return;
-            const tasks = new Map([...queue.pending, ...queue.running].map(row => [row.id, row.task]));
+            const tasks = new Map([[queue.pending, 'queued'], [queue.running, 'working']]
+                .flatMap(([rows, phase]) => rows.map(row => [row.id, { ...row.task, phase }])));
             withStableViewport(() => {
                 for (const record of children) {
                     if (record.finished || !record.root?.isConnected || record.lastLiveObservedAt > started) continue;
@@ -587,6 +588,7 @@ export function createChatInstance({
                     if (task && 'project_admission_hold' in task) {
                         missingManagedTaskIds.delete(record.groupId);
                         restoreCardActivity(record, task.project_admission_hold);
+                        syncParkedPhase(record, ws.isConnected?.() === false ? 'unknown' : task.phase, task);
                         record.projectHoldQueued = Boolean(record.projectHold);
                     } else if (!task && record.projectHoldQueued) {
                         record.projectHoldQueued = false;
@@ -1069,8 +1071,7 @@ export function createChatInstance({
             delete record.root.dataset.projectCreating;
             record.root.dataset.projectCreated = '1';
             record.root.dataset.projectId = project.id || '';
-            // Atomic detach-and-reparent (C4.5): replaceChildren swaps the whole live
-            // timeline (subagent cards, working bubble) for the chip in one paint.
+            // Replace the live timeline with its Project pointer in one paint.
             handoffs?.mount(record.root, { taskId: record.groupId, projectId: project.id, projectName: project.name,
                 title: record.titleEl?.textContent, handoffId: handoff_id, receipt: handoff_receipt, kind: 'card' });
             record.turnProjectBtn = null;
@@ -1512,8 +1513,7 @@ export function createChatInstance({
         // collapsed timelines defer DOM building; the flag says
         // the rendered timeline DOM is stale relative to record.items.
         record._timelineDirty = false;
-        // last frame's summary meta strings — meta renders from
-        // record state (renderLiveCardMeta), once per card in a batch.
+        // Render metadata once per card in a batch.
         record._lastFrameMeta = [];
         // P1: last bounded activity projection (remembered even while
         // the collapsed line is suppressed on unnamed root cards) + sticky cost.

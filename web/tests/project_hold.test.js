@@ -187,7 +187,8 @@ test('actual child queue hydration refreshes room status once and reconciles dep
     const { createChatInstance } = await import('../modules/chat.js');
     const { installDom, restoreDom, walkCard } = await import('./chat_dom_fixture.js');
     const settle = () => new Promise(resolve => setImmediate(resolve));
-    let queue = { pending: [{ id: 'child', task: { project_admission_hold: {} } }], running: [] };
+    let queue = { pending: [], running: [{ id: 'child', task: { project_admission_hold: {} } }] };
+    let connected = true;
     let detailStatus = 'running';
     const reads = [];
     const { prior, mount } = installDom(async url => {
@@ -202,7 +203,7 @@ test('actual child queue hydration refreshes room status once and reconciles dep
     });
     const handlers = new Map();
     const ws = { on(type, fn) { handlers.set(type, fn); return () => handlers.delete(type); },
-        isConnected: () => true, send() {} };
+        isConnected: () => connected, send() {} };
     let instance;
     try {
         instance = createChatInstance({ ws, state: { activePage: 'chat', projectChatIds: new Set(), unreadCount: 0 },
@@ -220,6 +221,7 @@ test('actual child queue hydration refreshes room status once and reconciles dep
         const status = () => globalThis.document.byId.get('chat-status').textContent;
         snapshot(); await settle();
         assert.equal(status(), 'Working...', 'the child has not entered its hold yet');
+        queue.pending = queue.running.splice(0);
         queue.pending[0].task.project_admission_hold = hold;
         snapshot();
         assert.equal(status(), 'Working...', 'the snapshot finishes before its queue read');
@@ -228,6 +230,21 @@ test('actual child queue hydration refreshes room status once and reconciles dep
         const messages = globalThis.document.byId.get('chat-messages');
         const child = walkCard(messages, 'child');
         assert.equal(child.querySelector('[data-live-phase]').textContent, hold.label);
+        connected = false; handlers.get('close')();
+        snapshot(); await settle();
+        assert.equal(child.querySelector('[data-live-phase]').textContent, 'Activity unconfirmed');
+        assert.equal(child.querySelector('[data-live-phase]').dataset.motion, '0');
+        connected = true;
+        snapshot(); await settle();
+        assert.equal(child.querySelector('[data-live-phase]').textContent, hold.label,
+            'a fresh child queue read restores its own hold after reconnect');
+        assert.equal(child.querySelector('[data-live-phase]').dataset.motion, '0');
+        queue.pending[0].task.project_admission_hold = {};
+        snapshot(); await settle();
+        assert.equal(child.querySelector('[data-live-phase]').textContent, 'Queued');
+        assert.equal(child.querySelector('[data-live-phase]').dataset.motion, '0');
+        queue.pending[0].task.project_admission_hold = hold;
+        snapshot(); await settle();
         frame('working-sibling');
         assert.equal(status(), 'Working...', 'independent working card keeps room activity');
         handlers.get('log')({ chat_id: 7, data: { type: 'task_done', task_id: 'working-sibling', status: 'cancelled' } });
