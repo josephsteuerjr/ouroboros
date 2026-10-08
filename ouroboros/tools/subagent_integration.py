@@ -25,7 +25,7 @@ import shutil
 import subprocess
 import tempfile
 import zipfile
-from typing import Any, Dict, List, Tuple, Union
+from typing import Any, Dict, Iterator, List, Tuple, Union
 
 from ouroboros.tools.registry import ToolContext, ToolEntry
 from ouroboros.tools.tool_result import completed_local_read
@@ -151,6 +151,27 @@ def _child_write_root(child_result: Dict[str, Any]) -> str:
     return ""
 
 
+def _granted_root_bindings(ctx: ToolContext, ceiling: Any, binding: Any) -> Iterator[Any]:
+    """Other ceiling-granted roots whose ordinary binding reaches this same physical file.
+
+    Overlapping roots (Deliverables inside user_files) give one file several ordinary
+    labels; the deepest containing one must not discard a grant on another. Each
+    candidate passes the ordinary resolver and its confinement; nothing is aliased.
+    """
+    from ouroboros.tool_access import build_resolved_resource_binding
+
+    physical = pathlib.Path(binding.target_path).resolve(strict=False)
+    for root in dict.fromkeys(g.root for g in ceiling.resource_grants if "read" in g.operations):
+        if root == binding.root:
+            continue
+        try:
+            other = build_resolved_resource_binding(ctx, root=root, operation="read", path=str(physical))
+        except (OSError, RuntimeError, TypeError, ValueError):
+            continue
+        if pathlib.Path(other.target_path).resolve(strict=False) == physical:
+            yield other
+
+
 def _shared_read_refusal(ctx: ToolContext, target: pathlib.Path, operation: str = "") -> str:
     """Use current read authority; selecting a child's folder adds no grant."""
     from ouroboros.tool_access import build_resolved_resource_binding
@@ -163,7 +184,9 @@ def _shared_read_refusal(ctx: ToolContext, target: pathlib.Path, operation: str 
         binding = build_resolved_resource_binding(
             ctx, root=root or "user_files", operation="read", path=str(target))
         ceiling = presence_ceiling_from_context(ctx)
-        if ceiling is not None and not presence_ceiling_allows_binding(ceiling, binding):
+        if ceiling is not None and not presence_ceiling_allows_binding(ceiling, binding) and not any(
+                presence_ceiling_allows_binding(ceiling, other)
+                for other in _granted_root_bindings(ctx, ceiling, binding)):
             return "Presence resource ceiling does not allow reading this child target"
         # Policy paths keep their caller-relative meaning, not the child's base.
         if operation and (refusal := block_reason_for_path(ctx, target, operation)):
@@ -226,13 +249,17 @@ def _verify_shared_external_workspace(
         return False, [], str(exc)
     if not patch_path.is_file() or not patch_path.stat().st_size:
         return (True, [], "") if file_rows else (False, [], "workspace patch and file outputs are absent")
-    from ouroboros.subagent_worktrees import isolated_git_env
+    from ouroboros.repo_diff_capture import _GIT_RETARGET_ENV
+    # Capture diffed B under the ambient Git configuration (CRLF conversion, filters);
+    # the read-only reverse check must convert the same way, so it strips only the
+    # variables that would redirect Git to another repository or index.
     proc = subprocess.run(
         ["git", "apply", "--check", "--reverse", str(patch_path)],
         cwd=str(target),
         capture_output=True,
         text=True,
-        env={**isolated_git_env(), "GIT_CEILING_DIRECTORIES": str(resolved_target.parent)},
+        env={**{k: v for k, v in os.environ.items() if k not in _GIT_RETARGET_ENV},
+             "GIT_CEILING_DIRECTORIES": str(resolved_target.parent)},
     )
     if proc.returncode != 0:
         detail = (proc.stderr or proc.stdout or "").strip()
@@ -442,6 +469,10 @@ def _verify_directory_direct_result(
         outputs = manifest.get("registered_outputs")
         if not isinstance(outputs, list):
             raise ValueError("registered output records are unavailable")
+        # A directory registers a member ledger (`<kind>_manifest`) plus its `<kind>`
+        # zip package; every other record names one file. Each takes its own check.
+        directories = {(str(item.get("kind") or "").removesuffix("_manifest"), str(item.get("source_path") or ""))
+                       for item in outputs if str(item.get("kind") or "").endswith("_manifest")}
         for item in outputs:
             source = pathlib.Path(item["source_path"]).resolve(strict=False)
             source.relative_to(target)
@@ -452,7 +483,13 @@ def _verify_directory_direct_result(
             if refusal := _shared_read_refusal(ctx, source, "read_bytes"):
                 raise ValueError(refusal)
             stream_artifact_file(artifact, expected=item)
-            if str(item.get("kind") or "").endswith("_manifest") and source.is_dir():
+            kind = str(item.get("kind") or "")
+            directory = kind.endswith("_manifest") or (kind, str(item.get("source_path") or "")) in directories
+            if directory and not source.is_dir():
+                raise ValueError(f"registered directory output is no longer a directory: {source}")
+            if not directory and source.is_dir():
+                raise ValueError(f"registered file output is now a directory: {source}")
+            if kind.endswith("_manifest"):
                 ledger = json.loads(artifact.read_text(encoding="utf-8"))
                 if pathlib.Path(str(ledger.get("source_path") or "")).resolve(strict=False) != source:
                     raise ValueError("directory output ledger source does not match registration")
@@ -466,7 +503,7 @@ def _verify_directory_direct_result(
                             raise ValueError(refusal)
                     stream_artifact_file(path, expected=member)
                     verified.add(path.relative_to(target).as_posix())
-            elif not source.is_dir():
+            elif not directory:
                 if refusal := _shared_read_refusal(ctx, source, "hash"):
                     raise ValueError(refusal)
                 stream_artifact_file(source, expected=item)
@@ -501,37 +538,61 @@ def _handle_external_workspace_integration(
     touched: List[str],
     file_rows: List[Dict[str, Any]] = (),
 ) -> str:
+    def refused(code: str, outcome: str, detail: str, target: Any = "",
+                files: List[str] = touched, conflicts: List[str] = ()) -> str:
+        """An early refusal keeps its audit verdict and custody row; no disposition."""
+        verdict = _write_verdict(
+            ctx, child_task_id, outcome=outcome, reason=reason or detail, files=files, manifest=manifest,
+            applied=False, conflicts=list(conflicts) or [detail], protected=[], target=str(target or ""))
+        from ouroboros.tools.tool_result import ToolResult, _publish_tool_result
+        text = (f"⚠️ {code}: {detail}. Verdict: {verdict or '(unwritten)'}. "
+                "Captured result retained; nothing was transferred or marked integrated.")
+        return _publish_tool_result(ctx, ToolResult(
+            status="blocked", code="INTEGRATION_BLOCKED", text=text, meta={"identifier": code}))
+
+    def forbidden(refusal: str) -> str:
+        return (f"{refusal.rstrip('. ')}. Verification reads the child's folder under your current read, Presence "
+                "and task-policy authority; the assignment grants none. Inspect or reject the result")
+
+    assigned = _child_write_root(child_result)
     try:
         target = _shared_target(child_result, manifest, requested_target)
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
-        return f"⚠️ INTEGRATE_EXTERNAL_WORKSPACE_TARGET_MISMATCH: {exc}. Captured result retained; nothing transferred."
+        if not assigned:  # Nothing names a target; never substitute the parent's folder.
+            return refused("INTEGRATE_EXTERNAL_WORKSPACE_TARGET_MISSING", "shared_workspace_missing_target",
+                           f"child {child_task_id} did not record its assigned write_root/workspace_root")
+        return refused("INTEGRATE_EXTERNAL_WORKSPACE_TARGET_MISMATCH", "shared_workspace_target_mismatch",
+                       f"{exc}; verification runs only at the recorded assignment {assigned}", target=assigned)
     if refusal := _shared_read_refusal(ctx, target):
-        return f"⚠️ INTEGRATE_TARGET_FORBIDDEN: {refusal}. Captured result retained."
+        return refused("INTEGRATE_TARGET_FORBIDDEN", "shared_workspace_read_refused", forbidden(refusal), target)
 
     if manifest.get("capture_kind") == "directory_direct":
         return _verify_directory_direct_result(
             ctx, child_task_id, reason, target, manifest, patch_path.parent,
         )
-    # Parse all captured paths without an ancestor repo's subdirectory prefix.
-    # Git searches the ceiling itself, so stop at the artifact folder's parent.
+    # Parse all captured paths without an ancestor repo's subdirectory prefix. Git
+    # ignores a ceiling equal to its cwd and never searches the ceiling itself, so the
+    # artifact folder's parent stops discovery right above the artifact folder.
     from ouroboros.subagent_worktrees import isolated_git_env
     parse_env = {**isolated_git_env(), "GIT_CEILING_DIRECTORIES": str(patch_path.parent.resolve().parent)}
     patch_touched, parse_error = (_patch_touched_paths(patch_path, patch_path.parent, env=parse_env)
                                   if patch_path.is_file() and patch_path.stat().st_size else (set(), ""))
     if parse_error:
-        return f"⚠️ INTEGRATE_PATCH_UNREADABLE: cannot parse {child_task_id} workspace.patch: {parse_error[:300]}"
+        return refused("INTEGRATE_PATCH_UNREADABLE", "shared_workspace_patch_unreadable",
+                       f"cannot parse {child_task_id} workspace.patch: {parse_error[:300]}", target)
     authoritative_touched = sorted(patch_touched | {row["path"] for row in file_rows} or set(touched))
     hashed = {row["path"] for row in file_rows}
-    for rel in authoritative_touched:
-        path = (target / rel).resolve(strict=False)
-        try:
-            path.relative_to(target)
-        except ValueError:
-            return f"⚠️ INTEGRATE_EXTERNAL_WORKSPACE_MISSING: path escapes the child target: {rel!r}. Capture retained."
-        operations = ("read_bytes", "hash") if rel in hashed else ("read_bytes",)
-        for operation in operations:
+    paths = {rel: (target / rel).resolve(strict=False) for rel in authoritative_touched}
+    if escaped := [rel for rel, path in paths.items() if not path.is_relative_to(target)]:
+        return refused("INTEGRATE_EXTERNAL_WORKSPACE_MISSING", "shared_workspace_missing",
+                       f"child {child_task_id} result names {len(escaped)} path(s) outside {target}; "
+                       f"first 20: {escaped[:20]}; omitted: {max(0, len(escaped) - 20)}",
+                       target, authoritative_touched, escaped)
+    for rel, path in paths.items():
+        for operation in (("read_bytes", "hash") if rel in hashed else ("read_bytes",)):
             if refusal := _shared_read_refusal(ctx, path, operation):
-                return f"⚠️ INTEGRATE_TARGET_FORBIDDEN: {refusal}. Captured result retained."
+                return refused("INTEGRATE_TARGET_FORBIDDEN", "shared_workspace_read_refused",
+                               forbidden(refusal), target, authoritative_touched)
     verified, missing, detail = _verify_shared_external_workspace(
         target, patch_path, authoritative_touched, file_rows)
     coop = _is_host_minted_projects_tree(target)
@@ -547,7 +608,7 @@ def _handle_external_workspace_integration(
             "verified child result at its recorded shared target; no transfer to parent")
         prefix = ("OK: cooperative no-op — work is ALREADY in the shared coop tree. " if coop else
                   f"✅ Verified external_workspace child {child_task_id}: ")
-        checkpoint = " The tree is checkpoint-committed by the host when this task tree finalizes." if coop else ""
+        checkpoint = " The host attempts a best-effort checkpoint commit of this tree when the root task finalizes." if coop else ""
         return (f"{prefix}{len(authoritative_touched)} file(s) verified in {target}. "
                 f"No patch was re-applied or transferred to the parent's folder.{checkpoint} "
                 f"Verdict: {verdict or '(unwritten)'}.{_format_patch_exclusions(manifest)}{warning}")

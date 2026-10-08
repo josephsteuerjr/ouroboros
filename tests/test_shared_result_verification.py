@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from ouroboros.artifacts import task_artifact_dir_path, copy_directory_to_task_artifacts
+from ouroboros.artifacts import task_artifact_dir_path, copy_directory_to_task_artifacts, copy_file_to_task_artifacts
 from ouroboros.headless import finalize_task_artifacts
 from ouroboros.task_results import write_task_result
 from ouroboros.task_status import load_effective_task_result
@@ -47,7 +47,7 @@ def env(tmp_path, monkeypatch):
     return parent, a, b, drive
 
 
-def capture(parent, b, drive, *, direct=False, edit=None):
+def capture(parent, b, drive, *, direct=False, edit=None, outputs=("rendered",)):
     constraint, root, mode, error = _resolve_subagent_constraint(
         SimpleNamespace(REPO_DIR=parent.repo_dir, DRIVE_ROOT=drive), tid="child",
         requested_constraint={"mode": "acting_subagent", "surface": "external_workspace", "write_root": str(b)},
@@ -65,7 +65,9 @@ def capture(parent, b, drive, *, direct=False, edit=None):
     if direct:
         child = ToolContext(repo_dir=parent.repo_dir, drive_root=drive, task_id="child",
                             workspace_root=b, workspace_mode="external")
-        copy_directory_to_task_artifacts(child, b / "rendered")
+        for name in outputs:
+            register = copy_directory_to_task_artifacts if (b / name).is_dir() else copy_file_to_task_artifacts
+            register(child, b / name)
         finalize_task_artifacts(drive, task)
     else:
         _, manifest = write_workspace_patch_artifacts(b, art, task=task)
@@ -73,10 +75,14 @@ def capture(parent, b, drive, *, direct=False, edit=None):
     return art
 
 
-def invoke(parent, **args):
+def invoke_result(parent, **args):
     registry = ToolRegistry(repo_dir=parent.repo_dir, drive_root=parent.drive_root)
     registry.set_context(parent)
-    return registry.execute_result("integrate_subagent_patch", {"task_id": "child", **args}).text
+    return registry.execute_result("integrate_subagent_patch", {"task_id": "child", **args})
+
+
+def invoke(parent, **args):
+    return invoke_result(parent, **args).text
 
 
 def snapshot(root):
@@ -149,7 +155,8 @@ def test_identity_refusals_precede_b_verification(env, monkeypatch, change):
     monkeypatch.setattr("ouroboros.tools.subagent_integration._verify_shared_external_workspace",
                         lambda *a, **k: pytest.fail("B was verified before identity admission"))
     before = snapshot(a), snapshot(b), (art / "workspace.patch").read_bytes()
-    assert "TARGET_MISMATCH" in invoke(parent, **args)
+    # A missing assignment is not a conflicting one: nothing names a target.
+    assert ("TARGET_MISSING" if change == "missing_assignment" else "TARGET_MISMATCH") in invoke(parent, **args)
     assert (snapshot(a), snapshot(b), (art / "workspace.patch").read_bytes()) == before
     assert_unabsorbed(drive)
 
@@ -366,3 +373,212 @@ def test_ambient_git_locations_cannot_redirect_b_verification(env, monkeypatch):
     for key in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
         monkeypatch.delenv(key)
     assert (snapshot(a), snapshot(b)) == before
+
+
+def dispositions(drive):
+    from ouroboros.delegate_evidence import acceptance_patch_dispositions
+    return acceptance_patch_dispositions(drive, "parent").get("rows", [])
+
+
+@pytest.mark.parametrize("refusal", ["missing_assignment", "conflicting_assignment", "presence_root",
+                                     "path_policy", "path_escape", "unparseable_patch"])
+def test_early_refusals_keep_verdict_and_custody_without_absorption(env, refusal):
+    parent, a, b, drive = env
+    art = capture(parent, b, drive)
+    args = {}
+    if refusal == "missing_assignment":
+        row_path = drive / "task_results" / "child.json"
+        row = json.loads(row_path.read_text())
+        row.pop("workspace_root")
+        row["task_constraint"].pop("write_root")
+        row_path.write_text(json.dumps(row))
+    elif refusal == "conflicting_assignment":
+        args["target_root"] = str(a)
+    elif refusal == "presence_root":
+        ceiling(parent, "active_workspace", ".")
+    elif refusal == "path_policy":
+        parent.task_contract = {"resource_policy": {"protected_artifacts": [{
+            "id": "black-box", "paths": [str(b / "a.txt")], "deny": ["read_bytes"]}]}}
+    elif refusal == "path_escape":
+        (b.parent / "outside.txt").write_bytes(b"private sentinel\n")
+        (b / "a.txt").unlink()
+        (b / "a.txt").symlink_to(b.parent / "outside.txt")
+    else:
+        from hashlib import sha256
+        (art / "workspace.patch").write_bytes(b"not a patch\n")
+        manifest = json.loads((art / "workspace_patch.json").read_text())
+        manifest["sha256"] = sha256(b"not a patch\n").hexdigest()
+        (art / "workspace_patch.json").write_text(json.dumps(manifest))
+    code, outcome = {
+        "missing_assignment": ("TARGET_MISSING", "shared_workspace_missing_target"),
+        "conflicting_assignment": ("TARGET_MISMATCH", "shared_workspace_target_mismatch"),
+        "presence_root": ("INTEGRATE_TARGET_FORBIDDEN", "shared_workspace_read_refused"),
+        "path_policy": ("INTEGRATE_TARGET_FORBIDDEN", "shared_workspace_read_refused"),
+        "path_escape": ("WORKSPACE_MISSING", "shared_workspace_missing"),
+        "unparseable_patch": ("INTEGRATE_PATCH_UNREADABLE", "shared_workspace_patch_unreadable"),
+    }[refusal]
+    before = snapshot(a), snapshot(b), (art / "workspace.patch").read_bytes()
+    result = invoke_result(parent, **args)
+    out = result.text
+    assert result.status == "blocked" and result.code == "INTEGRATION_BLOCKED"
+    assert result.meta["identifier"].endswith(code)
+    assert code in out and "Captured result retained" in out, out
+    recorded = verdict(drive)
+    assert recorded["outcome"] == outcome and recorded["applied"] is False
+    custody = dispositions(drive)[-1]
+    assert custody["disposition"] == outcome and custody["applied"] is False
+    if refusal == "missing_assignment":
+        # No known target is manufactured, least of all the parent's folder.
+        assert recorded["target_root"] == "" and "target_root" not in custody
+    else:
+        assert Path(recorded["target_root"]).resolve() == b.resolve()
+        assert custody["target_root"] == recorded["target_root"]
+    assert (snapshot(a), snapshot(b), (art / "workspace.patch").read_bytes()) == before
+    assert_unabsorbed(drive)
+
+
+def presence(parent, root, prefix):
+    """Real Presence assembly: the profile selects this tool and one read resource."""
+    from ouroboros.presence_authority import build_presence_capability_ceiling, presence_ceiling_payload
+    from ouroboros.presence_capabilities import PresenceResourceTarget, PresenceToolTarget
+    from tests.test_presence_authority import _resolution
+    assembled = build_presence_capability_ceiling(
+        skill_name="fixture", skill_content_hash="c" * 64, state_fingerprint="d" * 64,
+        resolution=_resolution(PresenceToolTarget("builtin", "integrate_subagent_patch"),
+                               PresenceResourceTarget(root, ("read",), prefix)))
+    parent.task_contract = {"capability_ceiling": presence_ceiling_payload(assembled)}
+
+
+@pytest.mark.parametrize("root, prefix, allowed", [
+    ("user_files", "Deliverables/b", True),  # B's deepest containing root is deliverables
+    ("deliverables", "b", True),
+    ("user_files", "Deliverables/other", False),
+    ("active_workspace", ".", False),
+])
+def test_presence_grant_on_overlapping_root_reads_the_same_b(env, monkeypatch, root, prefix, allowed):
+    parent, a, _, drive = env
+    deliverables = a.parent / "Deliverables"
+    monkeypatch.setenv("OUROBOROS_DELIVERABLES_ROOT", str(deliverables))
+    deliverables.mkdir()
+    b = deliverables / "b"
+    init(b)
+    art = capture(parent, b, drive)
+    presence(parent, root, prefix)
+    before = snapshot(a), snapshot(b), (art / "workspace.patch").read_bytes()
+    out = invoke(parent)
+    assert (snapshot(a), snapshot(b), (art / "workspace.patch").read_bytes()) == before
+    if allowed:
+        assert "Verified external_workspace child" in out, out
+        assert verdict(drive)["target_root"] == str(b.resolve())
+        assert load_effective_task_result(drive, "child")["child_result_disposition"] == "integrated"
+    else:
+        assert "INTEGRATE_TARGET_FORBIDDEN" in out and "Presence" in out, out
+        assert_unabsorbed(drive)
+
+
+@pytest.mark.parametrize("change", ["file_unchanged", "file_to_directory", "directory_to_file"])
+def test_registered_output_must_keep_its_recorded_type(env, change):
+    parent, a, b, drive = env
+    b = b.parent / "plain"
+    b.mkdir()
+    name = "rendered" if change == "directory_to_file" else "report.txt"
+    def edit():
+        if change == "directory_to_file":
+            (b / name).mkdir()
+            (b / name / "frame.bin").write_bytes(b"image\x00")
+        else:
+            (b / name).write_bytes(b"report\n")
+    art = capture(parent, b, drive, direct=True, edit=edit, outputs=(name,))
+    if change == "file_to_directory":
+        (b / name).unlink()
+        (b / name).mkdir()
+        (b / name / "inner.txt").write_bytes(b"report\n")
+    elif change == "directory_to_file":
+        (b / name / "frame.bin").unlink()
+        (b / name).rmdir()
+        (b / name).write_bytes(b"image\x00")
+    before = snapshot(a), snapshot(b)
+    out = invoke(parent)
+    assert (snapshot(a), snapshot(b)) == before
+    assert (art / "workspace_patch.json").is_file()
+    if change == "file_unchanged":
+        assert "Verified 1 registered file postimage(s)" in out, out
+        assert verdict(drive)["outcome"] == "verified_registered_outputs"
+        return
+    assert "INTEGRATE_DIRECTORY_OUTPUT_MISMATCH" in out, out
+    assert verdict(drive)["outcome"] == "direct_output_mismatch"
+    assert_unabsorbed(drive)
+
+
+def test_verdict_target_reaches_acceptance_dispositions_and_absence_stays_absent(env):
+    from ouroboros import delegate_custody
+    parent, _, b, drive = env
+    capture(parent, b, drive)
+    assert "Verified external_workspace child" in invoke(parent)
+    assert delegate_custody.emit(drive, "delegate_run_patch_verdict", {
+        "run_id": "", "task_id": "parent", "child_task_id": "legacy", "pipeline": "subagent",
+        "disposition": "verified_shared_workspace", "applied": False, "reason": "",
+        "patch_sha256": "", "verdict_artifact_write_failed": False})
+    assert "Rejected" in invoke(parent, decision="reject")
+    rows = {(row["child"], row["disposition"]): row for row in dispositions(drive)}
+    assert rows[("child", "verified_shared_workspace")]["target_root"] == str(b.resolve())
+    assert "target_root" not in rows[("legacy", "verified_shared_workspace")]
+    assert "target_root" not in rows[("child", "rejected")]
+
+
+def test_capture_compatible_git_conversion_verifies_crlf_at_b(env, monkeypatch, tmp_path):
+    parent, a, b, drive = env
+    config = tmp_path / "global.gitconfig"
+    config.write_text("[core]\n\tautocrlf = true\n")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(config))
+    (b / "crlf.txt").write_bytes(b"one\r\ntwo\r\nthree\r\n")
+    git(b, "add", "crlf.txt")
+    git(b, "commit", "-qm", "crlf base")
+    art = capture(parent, b, drive, edit=lambda: (b / "crlf.txt").write_bytes(b"one\r\nchanged\r\nthree\r\n"))
+    # Capture diffed B through the configured conversion: the patch carries LF lines.
+    assert b"+changed\n" in (art / "workspace.patch").read_bytes()
+    before = snapshot(a), snapshot(b)
+    locations = {"GIT_DIR": a / ".git", "GIT_WORK_TREE": a, "GIT_INDEX_FILE": a / ".git" / "index"}
+    for key, value in locations.items():
+        monkeypatch.setenv(key, str(value))
+    out = invoke(parent)
+    for key in locations:
+        monkeypatch.delenv(key)
+    assert "Verified external_workspace child" in out, out
+    assert (snapshot(a), snapshot(b)) == before
+    assert (b / "crlf.txt").read_bytes() == b"one\r\nchanged\r\nthree\r\n"
+
+
+@pytest.mark.parametrize("b_is_room", [False, True])
+def test_direct_chat_project_room_parent_verifies_child_folder(env, b_is_room):
+    parent, a, b, drive = env
+    parent.workspace_root, parent.workspace_mode = None, ""
+    parent.is_direct_chat = True
+    parent.task_metadata = {"_project_room_dir": str(a)}
+    assert parent.active_repo_dir() == a.resolve()
+    b = a if b_is_room else b
+    art = capture(parent, b, drive)
+    before = snapshot(a), snapshot(b), (art / "workspace.patch").read_bytes()
+    out = invoke(parent)
+    assert "Verified external_workspace child" in out, out
+    assert verdict(drive)["target_root"] == str(b.resolve())
+    assert (snapshot(a), snapshot(b), (art / "workspace.patch").read_bytes()) == before
+    assert load_effective_task_result(drive, "child")["child_result_disposition"] == "integrated"
+
+
+def test_inherited_acting_parent_verifies_its_child_at_b(env):
+    from ouroboros.contracts.task_constraint import normalize_task_constraint
+    parent, a, b, drive = env
+    constraint, root, mode, error = _resolve_subagent_constraint(
+        SimpleNamespace(REPO_DIR=parent.repo_dir, DRIVE_ROOT=drive), tid="parent",
+        requested_constraint={"mode": "acting_subagent", "surface": "external_workspace", "write_root": str(a)},
+        workspace_root=str(a), workspace_mode="external", base_sha="", parent_task_id="root")
+    assert not error
+    parent.task_constraint = normalize_task_constraint(constraint)
+    parent.workspace_root, parent.workspace_mode = Path(root), mode
+    art = capture(parent, b, drive)
+    before = snapshot(a), snapshot(b), (art / "workspace.patch").read_bytes()
+    out = invoke(parent)
+    assert "Verified external_workspace child" in out, out
+    assert verdict(drive)["target_root"] == str(b.resolve())
+    assert (snapshot(a), snapshot(b), (art / "workspace.patch").read_bytes()) == before
