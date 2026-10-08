@@ -82,6 +82,37 @@ pytest.register_assert_rewrite("tests.ui_media_delivery_smoke")
 pytest_plugins = ["tests.browser_lane", "tests.ci_evidence"]
 
 
+# A retrieving work order measures whether the native row's first send fits its
+# window (`acceptance_retrieving_work_order` -> `_first_send_fits` ->
+# `reviewer_context_window` -> `capability_evidence.probe`), and that probe asks
+# OpenRouter's live `/models` catalog through
+# `LLMClient.openrouter_context_length(allow_fetch=True)`. The answer lands in
+# these CLASS caches for the rest of the process, so a later unrelated send
+# already strips a field the catalog lists as unsupported (the `test_llm_no_proxy`
+# parameter-rejection retry then has nothing left to drop).
+_PROVIDER_CATALOG_CLASS_STATE = (
+    "_SUPPORTED_PARAMS_CACHE", "_SUPPORTED_PARAMS_FETCHED",
+    "_CONTEXT_LENGTH_CACHE", "_CAPABILITIES_FETCH_OK",
+)
+
+
+@pytest.fixture
+def provider_catalog_offline(monkeypatch):
+    """Keep the window probe local and hand the process capability caches back as found.
+
+    Yields the saved state keyed by `LLMClient` attribute name, so a test can pin
+    that a preparation leaves exactly these caches untouched.
+    """
+    import copy
+    from ouroboros.llm import LLMClient
+
+    saved = {name: copy.copy(getattr(LLMClient, name)) for name in _PROVIDER_CATALOG_CLASS_STATE}
+    monkeypatch.setattr(LLMClient, "_fetch_openrouter_capabilities", classmethod(lambda cls: None))
+    yield saved
+    for name, value in saved.items():
+        setattr(LLMClient, name, value)
+
+
 @pytest.fixture
 def preflight_timeout_diagnostics(request, monkeypatch, tmp_path):
     """Observe the Windows nested-pytest timeout without changing its gate."""

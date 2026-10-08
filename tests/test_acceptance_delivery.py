@@ -45,6 +45,11 @@ _POOL_ROWS = (
 _ROSTER = _roster(*_POOL_ROWS)
 
 
+@pytest.fixture(autouse=True)
+def _provider_catalog_stays_off_the_wire(provider_catalog_offline):
+    """The work orders here measure the native row's window; see `provider_catalog_offline`."""
+
+
 @pytest.fixture()
 def structured_env(monkeypatch):
     monkeypatch.setenv("OUROBOROS_SUBAGENTS", json.dumps(_ROSTER))
