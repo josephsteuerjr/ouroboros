@@ -477,23 +477,21 @@ def test_scope_history_section_labels_blocked_as_blocked():
 # coverage is redundant.
 
 
-def test_last_triad_raw_results_reset_at_start_of_run_unified_review(tmp_path):
-    """ctx._last_triad_raw_results must be reset at start of each _run_unified_review call.
-
-    We verify by pre-seeding stale data then running a review that completes
-    with mocked LLM output (no findings). The stale data from the previous
-    attempt must be gone — replaced by fresh actor records from this run.
-    """
+def _run_unified_review_with_one_fresh_seat(tmp_path, monkeypatch, *, pool: bool):
+    """One ``_run_unified_review`` over a ctx that still carries a prior attempt's actor
+    record. ``pool=True`` puts one marked api seat (``fresh-model``) in the environment catalog
+    so the wave is dispatched to the mocked fan-out; ``pool=False`` leaves the pool empty."""
     from ouroboros.tools import review as review_mod
+    from tests.review_pool_rosters import pool_roster, pool_seat, set_review_pool
 
+    if pool:
+        set_review_pool(monkeypatch, pool_roster(pool_seat("fresh-seat", "fresh-model")))
     ctx = _make_ctx(tmp_path)
     # Pre-seed stale data simulating a prior attempt
     ctx._last_triad_raw_results = [
         {"model_id": "stale-model", "status": "responded", "raw_text": "stale data",
          "parsed_items": [], "tokens_in": 0, "tokens_out": 0, "cost_usd": 0.0}
     ]
-
-    # Return a staged diff so function proceeds past the empty-diff guard
     pass_items = json.dumps([
         {"item": "bible_compliance", "verdict": "PASS", "severity": "critical", "reason": "OK"}
     ])
@@ -503,24 +501,52 @@ def test_last_triad_raw_results_reset_at_start_of_run_unified_review(tmp_path):
              "tokens_in": 10, "tokens_out": 5, "cost_estimate": 0.001}
         ]
     })
-
+    fan_out = MagicMock(return_value=mock_review_output)
+    # Return a staged diff so function proceeds past the empty-diff guard
     with patch.object(review_mod, "run_cmd", return_value="some diff content"), \
          patch("ouroboros.tools.review_binary_context.capture_staged_diff",
                return_value="some diff content"), \
-         patch.object(review_mod, "_handle_multi_model_review", return_value=mock_review_output), \
+         patch.object(review_mod, "_handle_multi_model_review", fan_out), \
          patch.object(review_mod, "_load_checklist_section", return_value="## checklist"), \
          patch.object(review_mod, "_preflight_check", return_value=None), \
          patch.object(review_mod, "load_governance_doc", return_value=""), \
          patch("ouroboros.tools.review_helpers.build_touched_file_pack",
                return_value=("(files)", [])):
         review_mod._run_unified_review(ctx, "test commit")
+    return ctx, fan_out
 
+
+def test_last_triad_raw_results_reset_at_start_of_run_unified_review(tmp_path, monkeypatch):
+    """ctx._last_triad_raw_results must be reset at start of each _run_unified_review call.
+
+    We verify by pre-seeding stale data then running a review over a pool with one
+    seat that completes with mocked LLM output (no findings). The stale data from
+    the previous attempt must be gone — replaced by fresh actor records from this run.
+    (The pool is the environment catalog's marked rows; with no seat the wave is not
+    dispatched at all — the case below.)
+    """
+    ctx, fan_out = _run_unified_review_with_one_fresh_seat(tmp_path, monkeypatch, pool=True)
+
+    assert fan_out.called, "the one-seat pool must reach the fan-out"
     # After the run, stale model_id must not appear
     model_ids = [r["model_id"] for r in ctx._last_triad_raw_results]
     assert "stale-model" not in model_ids, (
         "Stale triad_raw_results from prior attempt must be cleared at function entry"
     )
     assert "fresh-model" in model_ids, "Fresh actor record from this run must be present"
+
+
+def test_last_triad_raw_results_reset_precedes_the_empty_pool_exit(tmp_path, monkeypatch):
+    """The reset is at function ENTRY, before the pool is even assembled: an empty pool
+    ends the run as the typed ``pool_empty`` block without a wave (PR-3 W2), and a prior
+    attempt's actor records must not survive into that record either."""
+    from ouroboros.tools.review_helpers import REVIEW_POOL_EMPTY_REASON
+
+    ctx, fan_out = _run_unified_review_with_one_fresh_seat(tmp_path, monkeypatch, pool=False)
+
+    assert not fan_out.called, "an empty pool dispatches no wave"
+    assert ctx._last_review_block_reason == REVIEW_POOL_EMPTY_REASON
+    assert ctx._last_triad_raw_results == [], "stale actor records must not outlive the attempt that made them"
 
 
 # ── Test 10: parse_failure actors do NOT count toward quorum ──────────────────
