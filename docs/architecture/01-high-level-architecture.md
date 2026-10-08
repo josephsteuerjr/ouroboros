@@ -354,7 +354,7 @@ server.py (Starlette+uvicorn) ← HTTP + WebSocket on configurable host:port (de
       ├── semantic_dedup.py    ← LLM-first semantic dedup, fail-open None; consumed by improvement_backlog + review_state
       ├── betterleaks_runtime.py ← Pinned Betterleaks runtime resolver (six platform artifacts, packaged-resource-first)
       ├── skill_loader.py      ← Skill discovery over `data/skills/{native,clawhub,ouroboroshub,external}` + `OUROBOROS_SKILLS_REPO_PATH`; `.self_authored.json` marker; per-skill state under `data/state/skills/<name>/` (§13)
-      ├── skill_catalogue.py   ← Model-facing compact pages, named detail and existing actor-readable oversized sources (§13)
+      ├── skill_catalogue.py   ← `list_skills`: compact pages; named full diagnostics and manifest read_file call (§13)
       ├── skill_readiness.py   ← Execution readiness and phase-specific next actions from review, hash, enablement, grants, dependencies and peer conflicts
       ├── skill_peer_inventory.py, skill_conflicts.py ← Execution-time peers WITHOUT payload reads: the immutable non-executable `SkillPeer` projection (canonical location, enablement, declared conflicts, collision/malformed facts) over the unchanged canonical inventory, and the ONE duck-typed conflict verdict the full loaded skill and the cheap peer descriptor share (re-exported by `skill_loader.py`), so only the SELECTED payload is hashed per request and next-request freshness of disable/revoke/edit is unchanged (§13)
       ├── skill_dependencies.py ← Shared dependency-spec resolution and installed-readiness probe for skills

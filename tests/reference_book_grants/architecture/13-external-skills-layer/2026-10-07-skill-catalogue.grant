@@ -1,2 +1,2 @@
-1167
-Describe compact index/named details, record-boundary paging, source gaps, inventory drift and migration from the diagnostic default without changing lifecycle/UI consumers.
+952
+Describe the list_skills projection: compact name-sorted pages with previews and omissions, a membership-only snapshot, and per name the full summary row plus the read_file call of the parsed manifest, with its failure and generic-oversize behaviour.

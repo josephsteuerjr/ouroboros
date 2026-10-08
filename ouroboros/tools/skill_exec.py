@@ -30,11 +30,11 @@ from ouroboros.skill_loader import (
     skill_state_dir,
     summarize_skills,
 )
-from ouroboros.skill_catalogue import LIST_SKILLS_SCHEMA as _LIST_SCHEMA
+from ouroboros.skill_catalogue import LIST_SKILLS_SCHEMA as _LIST_SCHEMA, list_skills_payload
 from ouroboros.skill_review import review_skill as _review_skill_impl
 from ouroboros.skill_review_status import normalize_skill_review_status
 from ouroboros.tools.registry import ToolContext, ToolEntry
-from ouroboros.tools.tool_result import completed_local_read
+from ouroboros.tools.tool_result import ToolResult, _publish_tool_result, completed_local_read
 from ouroboros.tool_access import (
     ResolvedResourceBinding,
     build_resolved_resource_binding,
@@ -565,17 +565,17 @@ def _skill_tool_preflight(
 
 
 @completed_local_read
-def _handle_list_skills(ctx: ToolContext, *, name: str = "", detail: bool = False,
-                        offset: int = 0, limit: int = 100, inventory: str = "") -> str:
-    from ouroboros.skill_catalogue import render_skill_catalogue
-
-    drive_root = canonical_data_root(ctx)
+def _handle_list_skills(ctx: ToolContext, *, name: str = "", offset: int = 0,
+                        snapshot: str = "") -> str:
     try:
-        return render_skill_catalogue(ctx, summarize_skills(drive_root), drive_root,
-                                      name=name, detail=detail, offset=offset,
-                                      limit=limit, inventory=inventory)
+        payload = list_skills_payload(summarize_skills(canonical_data_root(ctx)),
+                                      name=name, offset=offset, snapshot=snapshot)
     except ValueError as exc:
         return f"⚠️ TOOL_ARG_ERROR (list_skills): {exc}"
+    text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    if payload.get("found") is False:  # a completed lookup, not a failed read
+        return _publish_tool_result(ctx, ToolResult(status="ok", code="LEGACY_WARNING", text=text))
+    return text
 
 
 def _author_finish_existing_skill_review(

@@ -692,8 +692,7 @@ def scan_data_paths(root: pathlib.Path = REPO) -> frozenset[str]:
 # 345 -> 347 (2026-10-07): the isolated review checkout of a frozen review subject,
 # ``state/review_checkouts/<token>`` and its ``repo`` worktree
 # (``ouroboros/tools/review_subject.py`` ``isolated_checkout``; one section-4 row).
-# 347 -> 348: the catalogue's existing-owner exact skill-detail source path.
-EXPECTED_SCAN_PATHS = 348
+EXPECTED_SCAN_PATHS = 347
 
 # Scanned paths that must always be present — guards the scanner itself
 # against a silent regression that would shrink coverage while keeping counts

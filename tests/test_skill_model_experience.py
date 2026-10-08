@@ -1,8 +1,8 @@
 """CPL-7 Model Experience: manifest section + model-visible rendering + teaching refusals.
 
 Pins (plan §7 item 7): a manifest WITH the section parses and reaches the
-model-visible detail (summarize_skills → named list_skills detail) and the
-installed-skills context; a manifest WITHOUT it keeps the exact prior behavior; a
+model-visible surfaces (summarize_skills → list_skills JSON, installed-skills
+context section); a manifest WITHOUT it keeps the exact prior behavior; a
 registration refusal explains how to fix the manifest (typed ``fix_hint``).
 """
 
