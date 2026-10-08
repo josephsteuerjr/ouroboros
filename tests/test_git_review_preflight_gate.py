@@ -654,6 +654,20 @@ def _look(monkeypatch, calls):
     monkeypatch.setattr(commit_gate, "run_commit_preflight", look)
 
 
+def test_the_system_prompt_says_which_look_the_commit_record_counts():
+    """The model's own prompt states the record rule the tests below pin: only the row
+    named in the ``commit_reviewed`` call itself is the commit's preflight; a separate
+    ``preflight_review`` is an early look of its own; no name records not performed."""
+    import pathlib
+
+    text = (pathlib.Path(__file__).resolve().parents[1] / "prompts" / "SYSTEM.md").read_text(encoding="utf-8")
+    phrase = " ".join(text.split())
+    assert ("the commit's record counts an early look only when that call itself names the row "
+            "(`commit_reviewed(preflight_reviewer=…)`)") in phrase
+    assert "a separate `preflight_review` is an early look of its own" in phrase
+    assert "a commit that names no row records its preflight as not performed" in phrase
+
+
 @pytest.mark.parametrize("skip, status", [(False, "not_performed"), (True, "skipped")])
 def test_without_a_named_row_the_record_states_the_fact_and_nothing_looks(candidate, monkeypatch, skip, status):
     calls = []
