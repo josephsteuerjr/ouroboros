@@ -64,7 +64,7 @@ def brief_env(tmp_path, monkeypatch):
     ctx = ToolContext(repo_dir=repo, drive_root=drive)
     ctx.task_id = "brief-task"
     ctx.pending_events = []
-    ctx._review_history, ctx._review_advisory, ctx._scope_review_history = [], [], {}
+    ctx._review_history, ctx._review_advisory, ctx._coupling_review_history = [], [], {}
     monkeypatch.setenv("OUROBOROS_REVIEW_ENFORCEMENT", "blocking")
     monkeypatch.setattr(brief_mod, "first_send_bound", lambda _brief: 900_000)
     monkeypatch.setattr(slot_cfg, "commit_triad_delivery", lambda: _plan("api_chat"))

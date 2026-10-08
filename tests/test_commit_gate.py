@@ -308,12 +308,16 @@ def test_non_committing_review_cycle_runtime_unstages_on_success(monkeypatch, tm
         lambda cmd, cwd=None: reset_calls.append((tuple(cmd), cwd)) or "",
     )
 
-    ctx = types.SimpleNamespace(repo_dir="/tmp/repo", drive_root=tmp_path)
+    ctx = types.SimpleNamespace(
+        repo_dir="/tmp/repo", drive_root=tmp_path,
+        _coupling_review_history={"snap": [{"round": 1, "status": "FAIL"}]},
+    )
     outcome = git_mod._run_non_committing_review_cycle(ctx, "test commit")
 
     assert outcome["status"] == "passed"
     assert "Commit was not created" in outcome["message"]
-    assert ctx._scope_review_history == {}
+    # A completed cycle closes the subject's coupling rounds; the next starts fresh.
+    assert ctx._coupling_review_history == {}
     assert recorded == [{"status": "reviewed", "phase": "review_only"}]
     assert released == ["lock-token"]
     assert reset_calls == [(("git", "reset", "HEAD"), "/tmp/repo")]

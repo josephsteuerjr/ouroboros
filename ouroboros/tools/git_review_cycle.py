@@ -945,7 +945,7 @@ def _run_non_committing_review_cycle(
                 scope_raw_result=getattr(ctx, "_last_scope_raw_result", {}),
                 degraded_reasons=list(getattr(ctx, "_review_degraded_reasons", []) or []),
             )
-            ctx._scope_review_history = {}
+            ctx._coupling_review_history = {}
             outcome["message"] = (
                 "Cyber Pro: review-only operation completed; independent failures and pending work remain recorded. "
                 if not review_enforcement_blocks("blocking") else

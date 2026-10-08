@@ -1377,7 +1377,9 @@ def _repo_commit_push(ctx: ToolContext, commit_message: str,
             except Exception:
                 log.warning("mutation baseline advance failed after commit", exc_info=True)
         record_bound_commit_success(ctx, commit_message, _commit_start, pre_fingerprint, post_fingerprint)
-        ctx._scope_review_history = {}  # Clear on success — next commit starts fresh
+        # The subject's coupling rounds end with its commit: the next change
+        # starts its own history (the attempt rows keep the record).
+        ctx._coupling_review_history = {}
     finally:
         _release_git_lock(lock)
     if _managed_tx:

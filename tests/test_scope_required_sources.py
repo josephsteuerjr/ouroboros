@@ -338,7 +338,7 @@ def test_the_required_source_manifest_reaches_both_retrieving_deliveries(
     (tmp_path / "data").mkdir(exist_ok=True)
     ctx = ToolContext(repo_dir=repo, drive_root=tmp_path / "data")
     ctx.task_id = "required-sources"
-    ctx._review_history, ctx._review_advisory, ctx._scope_review_history = [], [], {}
+    ctx._review_history, ctx._review_advisory, ctx._coupling_review_history = [], [], {}
 
     prepared, _early, exited = review_mod._prepare_unified_review(ctx, "amend the system prompt")
     assert not exited

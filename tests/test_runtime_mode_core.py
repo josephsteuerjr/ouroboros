@@ -532,7 +532,7 @@ class _CommitCtx:
         self._last_scope_raw_result = {}
         self._review_degraded_reasons = []
         self._current_review_tool_name = "commit_reviewed"
-        self._scope_review_history = {}
+        self._coupling_review_history = {}
         self._review_history = []
 
     def emit_progress_fn(self, *_args, **_kwargs):
