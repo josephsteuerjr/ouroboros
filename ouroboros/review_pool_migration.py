@@ -63,7 +63,7 @@ import hashlib
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from ouroboros.model_slots import normalize_processing_preference, resolve_processing_preference
 from ouroboros.review_dispatch import slot_id_for_row
@@ -1347,8 +1347,12 @@ def _seat_label(row: Mapping[str, Any]) -> str:
     return _row_label(row)
 
 
-def owner_message(outcome: MigrationOutcome, snapshot_path: str) -> str:
-    """The ONE English owner-chat message for a migration (contract §1.5 template)."""
+def owner_message(outcome: MigrationOutcome, snapshot_path: str, *,
+                  environment_retired_keys: Sequence[str] = ()) -> str:
+    """The ONE English owner-chat message for a migration (contract §1.5 template).
+    ``environment_retired_keys``: the retired review keys the boot found set in the process
+    environment (``server_maintenance.environment_retired_review_keys``) — a never-configured
+    document is then not told it had no review settings; those keys are named as not read."""
     where = f"Snapshot: {snapshot_path}." if snapshot_path else "No snapshot could be written."
     if outcome.error:
         return (
@@ -1367,10 +1371,18 @@ def owner_message(outcome: MigrationOutcome, snapshot_path: str) -> str:
         # Nothing of the owner's was migrated: the install had no review settings at
         # all, so the message says what RUNS, not what changed.
         rows = [f"{rid} ({_seat_label(row)})" for rid, row in after_rows.items() if row.get("review_eligible")]
+        if environment_retired_keys:
+            head = ("⚙️ Review pool initialized. This install's settings document had no review settings (no review "
+                    f"lanes, no subagent catalog); the {', '.join(environment_retired_keys)} set in the process "
+                    "environment " + ("are" if len(environment_retired_keys) != 1 else "is") + " no longer read, "
+                    "so the factory reviewer rows run as its review pool: the rows of the subagent catalog marked "
+                    "“Reviewer”.")
+        else:
+            head = ("⚙️ Review pool initialized. This install had no review settings (no review lanes, no subagent "
+                    "catalog), so the factory reviewer rows run as its review pool: the rows of the subagent "
+                    "catalog marked “Reviewer”.")
         return "\n".join([
-            "⚙️ Review pool initialized. This install had no review settings (no review lanes, no subagent "
-            "catalog), so the factory reviewer rows run as its review pool: the rows of the subagent catalog "
-            "marked “Reviewer”.",
+            head,
             f"{summary.get('rows_marked_after', 0)} reviewer rows, {summary.get('distinct_models', 0)} distinct models: "
             + "; ".join(rows) + ".",
             f"{where} Adjust in Settings → Agents.",

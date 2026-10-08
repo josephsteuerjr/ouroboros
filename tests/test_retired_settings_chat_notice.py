@@ -213,12 +213,103 @@ def test_a_malformed_reviewer_slots_setting_is_kept_for_the_owner_not_dropped(bo
 
 
 def test_the_supervisor_boot_calls_the_notices_after_the_queue_restore():
-    """The wiring pin: both notices run in ``server._run_supervisor`` once the message bus
+    """The wiring pin: the notices run in ``server._run_supervisor`` once the message bus
     and the state file are initialised, next to the other boot-time owner notices; the
-    review-pool report follows the retired-keys notice."""
+    environment fact and then the review-pool report follow the retired-keys notice."""
     source = (pathlib.Path(__file__).resolve().parents[1] / "server.py").read_text(encoding="utf-8")
     body = source.split("def _run_supervisor(settings: dict) -> None:", 1)[1].split("\ndef ", 1)[0]
     assert "_startup_retired_settings_notice(settings)" in body
     assert "_startup_review_pool_notice(settings)" in body
     assert body.index("restore_pending_from_snapshot(") < body.index("_startup_retired_settings_notice(settings)")
-    assert body.index("_startup_retired_settings_notice(settings)") < body.index("_startup_review_pool_notice(settings)")
+    assert body.index("_startup_retired_settings_notice(settings)") < body.index("_startup_environment_review_notice()")
+    assert body.index("_startup_environment_review_notice()") < body.index("_startup_review_pool_notice(settings)")
+
+
+# --- review keys set in the PROCESS ENVIRONMENT (D1-V03 / VD3-03) ---------------------------
+
+
+ENV_REVIEW_KEYS = ("OUROBOROS_REVIEWER_SLOTS", "OUROBOROS_EFFORT_REVIEW", "OUROBOROS_EFFORT_SCOPE_REVIEW",
+                   "OUROBOROS_EFFORT_DEEP_SELF_REVIEW", "OUROBOROS_MODEL_DEEP_SELF_REVIEW",
+                   "OUROBOROS_REVIEW_MODELS", "OUROBOROS_SCOPE_REVIEW_MODELS", "OUROBOROS_SCOPE_REVIEW_MODEL")
+
+
+@pytest.fixture
+def no_document(boot_state, monkeypatch):
+    """No settings document: the never-configured install whose process environment is the
+    only place an operator could have put review keys (a Docker unit, a Colab cell)."""
+    for key in ENV_REVIEW_KEYS + ("OUROBOROS_SUBAGENTS", "OPENAI_API_KEY", "OPENROUTER_API_KEY"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(cfg, "SETTINGS_PATH", boot_state / "absent" / "settings.json")
+    monkeypatch.setattr(server_maintenance, "DATA_DIR", boot_state)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "present")
+    return boot_state
+
+
+def test_review_keys_in_the_environment_are_one_loud_fact_not_a_configuration(no_document, monkeypatch, sent, caplog):
+    """The lanes exported in the environment are NOT read (no env lanes reader comes back):
+    the install runs the factory rows — and the boot says so, as a WARNING on the server log
+    at every boot and ONCE in the owner chat (durable marker), naming the keys and the
+    successor (``OUROBOROS_SUBAGENTS``)."""
+    import logging
+
+    monkeypatch.setenv("OUROBOROS_REVIEWER_SLOTS", AUTHORED_SLOTS)
+    monkeypatch.setenv("OUROBOROS_EFFORT_REVIEW", "low")
+    _bind_owner(1)
+    loaded = cfg.load_settings_lock_held(_settings_lock_held=False)
+    items = json.loads(loaded["OUROBOROS_SUBAGENTS"])["items"]
+    assert "x/y" not in [row["route"]["target_id"] for row in items], "env lanes are not read"
+    assert "OUROBOROS_REVIEWER_SLOTS" not in loaded and all(row["minted_from"] == "factory_default" for row in items)
+
+    assert server_maintenance.environment_retired_review_keys() == ("OUROBOROS_REVIEWER_SLOTS", "OUROBOROS_EFFORT_REVIEW")
+    with caplog.at_level(logging.WARNING, logger="server"):
+        server_maintenance._startup_environment_review_notice()
+        server_maintenance._startup_environment_review_notice()  # a supervisor revival
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING and "no longer read" in r.getMessage()]
+    assert len(warnings) == 2, "the log line is loud at every boot"
+    assert len(sent) == 1, sent
+    chat_id, text, kwargs = sent[0]
+    assert chat_id == 1 and kwargs == {"role": "system", "system_type": "retired_settings_notice"}
+    assert text == warnings[0]
+    assert "OUROBOROS_REVIEWER_SLOTS, OUROBOROS_EFFORT_REVIEW" in text and "are no longer read" in text
+    assert "OUROBOROS_SUBAGENTS" in text and "Settings → Agents" in text and "not applied" in text
+    assert list(state.load_state()["retired_settings_notified"]) == [
+        "environment:OUROBOROS_REVIEWER_SLOTS,OUROBOROS_EFFORT_REVIEW"]
+
+    # The migration's own report does not call this install settings-less: it names the keys.
+    sent.clear()
+    server_maintenance._startup_review_pool_notice(loaded)
+    (pool_notice,) = [row[1] for row in sent if row[2].get("system_type") == "review_pool_migration_notice"]
+    assert pool_notice.startswith("⚙️ Review pool initialized.") and "3 reviewer rows" in pool_notice
+    assert "This install had no review settings" not in pool_notice
+    assert ("settings document had no review settings" in pool_notice
+            and "OUROBOROS_REVIEWER_SLOTS, OUROBOROS_EFFORT_REVIEW set in the process environment are no longer read"
+            in pool_notice)
+
+
+def test_no_environment_notice_and_the_plain_never_configured_report_without_env_review_keys(no_document, sent, caplog):
+    """The other direction: an environment without review keys yields no log line, no chat
+    message, no marker — and the never-configured report keeps its plain head."""
+    import logging
+
+    _bind_owner(1)
+    loaded = cfg.load_settings_lock_held(_settings_lock_held=False)
+    assert server_maintenance.environment_retired_review_keys() == ()
+    with caplog.at_level(logging.WARNING, logger="server"):
+        server_maintenance._startup_environment_review_notice()
+    assert not [r for r in caplog.records if "no longer read" in r.getMessage()]
+    assert sent == [] and "retired_settings_notified" not in state.load_state()
+
+    server_maintenance._startup_review_pool_notice(loaded)
+    (pool_notice,) = [row[1] for row in sent if row[2].get("system_type") == "review_pool_migration_notice"]
+    assert pool_notice.startswith("⚙️ Review pool initialized. This install had no review settings (no review lanes, "
+                                  "no subagent catalog)")
+    assert "process environment" not in pool_notice
+
+
+def test_the_environment_notice_names_the_retired_comma_lists_too(no_document):
+    """An N-2 unit still exporting the reviewer comma-lists hits the same fact, one sentence."""
+    environ = {"OUROBOROS_REVIEW_MODELS": "a/one,b/two", "OUROBOROS_REVIEWER_SLOTS": "   "}
+    keys = server_maintenance.environment_retired_review_keys(environ)
+    assert keys == ("OUROBOROS_REVIEW_MODELS",), "a blank value configures nothing and is not announced"
+    text = server_maintenance.environment_review_notice(keys)
+    assert "OUROBOROS_REVIEW_MODELS, which is no longer read" in text and "That value was not applied" in text

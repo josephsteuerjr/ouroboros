@@ -417,6 +417,69 @@ def _startup_retired_settings_notice(settings: dict) -> None:
         log.debug("retired settings owner notice failed", exc_info=True)
 
 
+def environment_retired_review_keys(environ: Dict[str, str] | None = None) -> tuple[str, ...]:
+    """The retired review keys the PROCESS ENVIRONMENT carries with a value: the review lanes
+    (``OUROBOROS_REVIEWER_SLOTS``), the per-surface review efforts / deep-review model and the
+    older reviewer comma-lists. No release reads them from the environment any more — the
+    environment merge (``config.load_settings``) walks ``SETTINGS_DEFAULTS``, which retired
+    them, and the pool migration reads the DOCUMENT — so an operator who still exports them
+    (a Docker/Linux unit, a Colab cell) configures nothing (D1-V03): the install runs its own
+    pool (the catalog in the document, else the factory rows)."""
+    from ouroboros.settings_defaults import RETIRED_COMMA_LIST_SETTING_KEYS, REVIEW_POOL_MIGRATED_SETTING_KEYS
+
+    env = os.environ if environ is None else environ
+    return tuple(key for key in REVIEW_POOL_MIGRATED_SETTING_KEYS + RETIRED_COMMA_LIST_SETTING_KEYS
+                 if str(env.get(key) or "").strip())
+
+
+def environment_review_notice(keys: tuple[str, ...]) -> str:
+    """The ONE sentence (log line and owner chat alike) for review keys found in the environment."""
+    plural = len(keys) != 1
+    return (
+        f"⚙️ Settings: the process environment sets {', '.join(keys)}, which {'are' if plural else 'is'} no longer "
+        "read: the review lanes and the reviewer lists became the review pool — the rows of the subagent "
+        "catalog marked “Reviewer” (OUROBOROS_SUBAGENTS, Settings → Agents). "
+        f"{'Those values were' if plural else 'That value was'} not applied; the install's own pool runs. "
+        "To configure the pool from the environment, set OUROBOROS_SUBAGENTS to a catalog with marked rows."
+    )
+
+
+def _startup_environment_review_notice() -> None:
+    """Say ONCE, loudly, that review keys set in the environment are not read (D1-V03 / VD3-03):
+    a WARNING on the server log at every boot, and the same sentence in the owner chat once per
+    exact key set (durable: ``state.json:retired_settings_notified`` under an ``environment:``
+    marker, the retired-settings notice's own ledger). Nothing is read from the environment
+    into the pool here or anywhere: the fact is loud, the behaviour unchanged."""
+    keys = environment_retired_review_keys()
+    if not keys:
+        return
+    text = environment_review_notice(keys)
+    log.warning(text)
+    try:
+        from supervisor.message_bus import send_with_budget
+        from supervisor.state import load_state, update_state
+
+        state = load_state()
+        owner_chat = int(state.get("owner_chat_id") or 0)
+        if not owner_chat:
+            return
+        marker = "environment:" + ",".join(keys)
+        notified = state.get("retired_settings_notified")
+        if marker in (notified if isinstance(notified, dict) else {}):
+            return
+        send_with_budget(owner_chat, text, role="system", system_type="retired_settings_notice")
+
+        def _mark(st: dict) -> None:
+            seen = st.get("retired_settings_notified")
+            seen = dict(seen) if isinstance(seen, dict) else {}
+            seen[marker] = utc_now_iso()
+            st["retired_settings_notified"] = seen
+
+        update_state(_mark)
+    except Exception:
+        log.debug("environment review keys owner notice failed", exc_info=True)
+
+
 REVIEW_POOL_MIGRATION_STATE_KEY = "review_pool_migrations"  # ``review_pool_receipts.STATE_KEY``
 REVIEW_POOL_NOTICE_TYPE = "review_pool_migration_notice"
 
@@ -460,7 +523,9 @@ def _startup_review_pool_notice(settings: dict) -> None:
     seam minted for a document without review settings of its own were overridden by the
     catalog the environment carries (``review_pool_migration.environment_overridable_keys``),
     the message says so and names THAT pool — loudly empty when none of its rows is marked —
-    instead of the minted rows.
+    instead of the minted rows. A never-configured document whose process environment still
+    carries the retired review keys is not told it had "no review settings": the message names
+    those keys as no longer read (``environment_retired_review_keys``).
     """
     try:
         from ouroboros import review_pool_receipts as receipts
@@ -485,7 +550,8 @@ def _startup_review_pool_notice(settings: dict) -> None:
             snapshot_path = str(record.get("snapshot") or "")
             in_force = receipts.environment_catalog_in_force(outcome, settings)
             text = (_environment_pool_message(snapshot_path, in_force) if in_force is not None
-                    else owner_message(outcome, snapshot_path))
+                    else owner_message(outcome, snapshot_path,
+                                       environment_retired_keys=environment_retired_review_keys()))
             if not text:
                 continue
             send_with_budget(owner_chat, text, role="system", system_type=REVIEW_POOL_NOTICE_TYPE)

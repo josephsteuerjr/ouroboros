@@ -92,7 +92,13 @@ Add the field to the active frozen owner — `ouroboros/contracts/` for the pack
     its write (`review_pool_receipts.persist_receipts`, from the persistence prologue and the Colab writer; the
     boot writes them when it read the document first), and the first boot with an owner chat posts one message
     per unreported record, from the durable snapshot (`server_maintenance._startup_review_pool_notice`). Who
-    reviews is thereafter one list: the Reviewer-marked catalog rows (`GET /api/review-pool`).
+    reviews is thereafter one list: the Reviewer-marked catalog rows (`GET /api/review-pool`). The DOCUMENT is
+    the only subject: these keys set in the process environment are not read by any release (the environment
+    merge walks `SETTINGS_DEFAULTS`, which retired them) and no environment lane reader comes back — instead the
+    boot states the fact once, loudly (`server_maintenance._startup_environment_review_notice`: a WARNING every
+    boot, one owner-chat row per key set under `state.json:retired_settings_notified` `environment:` markers,
+    naming the keys and the successor `OUROBOROS_SUBAGENTS`), and the never-configured report then names those
+    keys as not read instead of calling the install settings-less.
   - *Plugin ABI.* `PLUGIN_API_VERSION` is `"2.0"` with manifest negotiation checked before plugin import or
     out-of-process cataloging; an absent field means legacy `1.3` by construction, and a hash-bound PASS is
     grandfathered.
