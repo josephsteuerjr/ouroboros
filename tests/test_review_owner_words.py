@@ -105,6 +105,7 @@ def _triad_prompt(tmp_path, monkeypatch, kind: str) -> tuple[str, int, str]:
         return ""
 
     def capture_review(*_args, **kwargs):
+        assert kwargs["row_plan"]["models"] == ["test/reviewer"]
         plan = kwargs.get("row_plan") or {}
         briefs = [task for task, parts in zip(plan.get("session_tasks") or [], plan.get("parts") or [])
                   if "coupling" in tuple(parts)]
@@ -118,7 +119,6 @@ def _triad_prompt(tmp_path, monkeypatch, kind: str) -> tuple[str, int, str]:
     monkeypatch.setattr(review, "_load_checklist_section", lambda *_a, **_k: "checklist")
     monkeypatch.setattr(review, "load_governance_doc", lambda *_args, **_kwargs: "governance")
     monkeypatch.setattr(review, "build_touched_file_pack", lambda *_args, **_kwargs: ("files", []))
-    monkeypatch.setattr(review._cfg, "get_review_models", lambda: ["test/reviewer"])
     monkeypatch.setattr(review._cfg, "get_review_enforcement", lambda: "blocking")
     monkeypatch.setattr(review, "_handle_multi_model_review", capture_review)
     ctx = SimpleNamespace(
@@ -131,7 +131,7 @@ def _triad_prompt(tmp_path, monkeypatch, kind: str) -> tuple[str, int, str]:
 
 @pytest.mark.parametrize("kind", ["root", "child"])
 def test_the_triad_packet_reads_the_words_in_its_dynamic_half(tmp_path, monkeypatch, kind):
-    set_review_pool(monkeypatch)  # pin the packet seats
+    set_review_pool(monkeypatch, ["test/reviewer"])  # pin the packet seat
     prompt, stable, _task = _triad_prompt(tmp_path, monkeypatch, kind)
     conscious, conscious_stable, _task = _triad_prompt(tmp_path, monkeypatch, "conscious")
     words = _section(kind)
@@ -145,7 +145,7 @@ def test_the_triad_packet_reads_the_words_in_its_dynamic_half(tmp_path, monkeypa
 
 def test_the_retrieving_triad_reads_the_words_in_its_session_task(tmp_path, monkeypatch):
     """A natively retrieving pool reads the work itself: its two-part brief carries the same section."""
-    set_review_pool(monkeypatch, delivery="native")
+    set_review_pool(monkeypatch, ["test/reviewer"], delivery="native")
     prompt, _stable, task = _triad_prompt(tmp_path, monkeypatch, "root")
     assert not prompt and _section("root") in task and task.index("GOAL_SENTINEL") < task.index(OWNER)
     _prompt, _stable, conscious = _triad_prompt(tmp_path, monkeypatch, "conscious")
@@ -208,7 +208,7 @@ def test_reviewers_get_no_memory_or_story(tmp_path, monkeypatch):
     mind_root.mkdir()
     headings = ("## Identity", "## My story", "## This room", "## Working sources", "## Dialogue History")
     for delivery in ("native", "packet"):  # the retrieving rows' session task, then the packet seat
-        set_review_pool(monkeypatch, delivery=delivery)
+        set_review_pool(monkeypatch, ["test/reviewer"], delivery=delivery)
         prompt, _stable, task = _triad_prompt(review_root, monkeypatch, "root")
         assert OWNER in prompt + task
         for heading in headings:

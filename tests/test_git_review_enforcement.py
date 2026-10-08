@@ -11,6 +11,8 @@ import sys
 
 import pytest
 
+from tests.review_pool_rosters import pool_roster, pool_seat, set_review_pool
+
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
@@ -407,6 +409,9 @@ class TestReviewEnforcementModes:
                 return huge_diff
             return ""
 
+        windows = {"openai/gpt-5.5": 128_000, "google/gemini-3.5-flash": 256_000,
+                   "anthropic/claude-fable-5": 1_000_000}
+        monkeypatch.setattr(review, "reviewer_context_window", lambda model, **_kw: windows[model])
         captured = {}
         monkeypatch.setattr(review, "run_cmd", fake_run_cmd)
         import ouroboros.tools.review_binary_context as _rbc
@@ -418,12 +423,16 @@ class TestReviewEnforcementModes:
             review, "build_touched_file_pack",
             lambda *_a, **_k: ("FULL SNAPSHOT\n" + ("x = 1\n" * 400_000), []),
         )
-        monkeypatch.setattr(review._cfg, "get_review_models", lambda: [
-            "openai/gpt-5.5", "google/gemini-3.5-flash", "anthropic/claude-fable-5",
-        ])
+        models = ["openai/gpt-5.5", "google/gemini-3.5-flash", "anthropic/claude-fable-5"]
+        set_review_pool(monkeypatch, pool_roster(
+            pool_seat("review-1", models[0]),
+            pool_seat("review-2", models[1]),
+            pool_seat("review-3", models[2], delivery="native"),
+        ))
 
         def fake_review(*_args, **kwargs):
             captured["prompt"] = kwargs["prompt"]
+            captured["models"] = kwargs["row_plan"]["models"]
             return self._fake_result(
                 '[{"item":"code_quality","verdict":"PASS","severity":"advisory","reason":"ok"}]',
                 '[{"item":"code_quality","verdict":"PASS","severity":"advisory","reason":"ok"}]',
@@ -432,18 +441,22 @@ class TestReviewEnforcementModes:
         monkeypatch.setattr(review, "_handle_multi_model_review", fake_review)
 
         assert review._run_unified_review(ctx, "test commit", repo_dir=ctx.repo_dir) is None
+        assert captured["models"] == models
         prompt = captured["prompt"]
         assert "TRIAD FIT NOTE" in prompt
         assert "FULL SNAPSHOT" not in prompt
         assert compact_diff in prompt
         assert huge_diff not in prompt
-        assert review.estimate_tokens(prompt) <= review.calibrated_input_token_limit(
-            "anthropic/claude-fable-5",
-            context_window=1_000_000,
-            output_reserve=review._review_output_budget(),
-            tokenizer_margin=50_000,
-            budget_cap=review.REVIEW_PROMPT_TOKEN_BUDGET,
-        )
+        # Both packet seats are needed for their quorum; the native seat reads
+        # its own brief and must not lend its larger window to this packet.
+        for model in captured["models"][:2]:
+            output, margin = review.window_scaled_reserves(
+                windows[model], output_reserve=review._review_output_budget(), tokenizer_margin=50_000,
+            )
+            assert review.estimate_tokens(prompt) <= review.calibrated_input_token_limit(
+                model, context_window=windows[model], output_reserve=output,
+                tokenizer_margin=margin, budget_cap=review.REVIEW_PROMPT_TOKEN_BUDGET,
+            )
 
     def test_triad_compact_rung_uses_hardened_capture_not_raw_run_cmd(self, review_ctx, monkeypatch):
         """The oversized ladder's compact rung called a RAW ``run_cmd(git diff
@@ -479,13 +492,21 @@ class TestReviewEnforcementModes:
         monkeypatch.setattr(
             review, "build_touched_file_pack",
             lambda *_a, **_k: ("FULL SNAPSHOT\n" + ("x = 1\n" * 400_000), []))
-        monkeypatch.setattr(review._cfg, "get_review_models", lambda: [
-            "openai/gpt-5.5", "google/gemini-3.5-flash", "anthropic/claude-fable-5"])
+        models = ["openai/gpt-5.5", "google/gemini-3.5-flash", "anthropic/claude-fable-5"]
+        set_review_pool(monkeypatch, pool_roster(
+            pool_seat("review-1", models[0]),
+            pool_seat("review-2", models[1]),
+            pool_seat("review-3", models[2], delivery="native"),
+        ))
 
+        windows = {"openai/gpt-5.5": 128_000, "google/gemini-3.5-flash": 256_000,
+                   "anthropic/claude-fable-5": 1_000_000}
+        monkeypatch.setattr(review, "reviewer_context_window", lambda model, **_kw: windows[model])
         captured = {}
 
         def fake_review(*_args, **kwargs):
             captured["prompt"] = kwargs["prompt"]
+            captured["models"] = kwargs["row_plan"]["models"]
             return self._fake_result(
                 '[{"item":"code_quality","verdict":"PASS","severity":"advisory","reason":"ok"}]',
                 '[{"item":"code_quality","verdict":"PASS","severity":"advisory","reason":"ok"}]')
@@ -493,6 +514,7 @@ class TestReviewEnforcementModes:
         monkeypatch.setattr(review, "_handle_multi_model_review", fake_review)
 
         assert review._run_unified_review(ctx, "test commit", repo_dir=ctx.repo_dir) is None
+        assert captured["models"] == models
         assert 0 in capture_calls, "compact rung must call capture_staged_diff(unified=0)"
         assert ["git", "diff", "--cached", "-U0"] not in run_cmd_calls, run_cmd_calls
         assert compact_diff in captured["prompt"]
