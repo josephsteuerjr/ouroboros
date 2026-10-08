@@ -211,6 +211,7 @@ BAND_PATHS = {
     "tests/test_nested_rights_depth.py": "Nested-rights depth suite shrank into the band when the semantic duplicate-gate stubs left (#884); one contract, one file; shrink next touch.",
     "tests/test_observability_outcomes_v2.py": None,
     "tests/test_onboarding_wizard.py": None,
+    "tests/test_owner_settings_write_seam.py": "PR-3 FIX6b (review pool): the GET /api/review-pool payload tests \u2014 the migration receipt that decides the shown document (converted / factory / error with the retained lane key's reason) and the pool_without_credentials fact \u2014 live beside the endpoint's existing pool tests and the owner save that pops the lane key, in the one file that exercises gateway/settings.py against a real settings root; the file crosses 1000 (1105) rather than splitting the endpoint's read and write seams across two files.",
     "tests/test_owner_stop_s3.py": "Entered the band from 821 lines: the S3 contract suite now covers retry-root aliasing, graceful-to-immediate hardening, stale-control drain races, hard deadline preservation, descendant settlement failure, and late resweep exactly-once root finalization.",
     "tests/test_packaged_runtime_and_lifecycle.py": None,
     "tests/test_persistence_inventory.py": "Persistence inventory resolver and writer-output regressions share the same source-path contract; #1536 adds literal source-handle and transport-queue coverage beside the existing scanner fixtures. Keep this cohesive inventory suite in the 1001-1500 band without adding giant, function or byte debt.",

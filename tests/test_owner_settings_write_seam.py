@@ -593,7 +593,112 @@ def test_review_pool_endpoint_types_a_bad_catalog_and_names_the_migration_snapsh
     assert expected and "delivery" in expected and body["config_error"] == expected
     assert body["pool"] == [] and body["excluded"] == [] and body["row_costs"] == {}
     assert body["catalog"]["eligible"] == 4
-    assert body["migration"] == {"snapshot": records["newer"]["snapshot"], "reported": False}
+    # Records without their snapshot files decide no document: the newest is reported as history.
+    assert body["migration"] == {"snapshot": records["newer"]["snapshot"], "reported": False,
+                                 "trigger": "", "outcome": "", "error": "", "source": "history"}
+
+
+# --- the migration outcome and the credential fact in the payload (VD3-06, VD3-08) ----------
+
+
+@pytest.fixture
+def pool_root(tmp_path, monkeypatch):
+    """A data root with supervisor state bound: the receipts' home (``persist_receipts`` writes
+    the snapshot and the ``state.json`` record there, as the saving process does)."""
+    from ouroboros import config as cfg
+    from ouroboros import review_pool_migration as rpm
+    from ouroboros import server_maintenance
+    from supervisor import state
+
+    state.init(tmp_path)
+    (tmp_path / "state").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "locks").mkdir(parents=True, exist_ok=True)
+    state.save_state({})
+    monkeypatch.setattr(server_maintenance, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(cfg, "DATA_DIR", tmp_path)
+    rpm._MIGRATIONS_SEEN.clear()
+    yield tmp_path
+    rpm._MIGRATIONS_SEEN.clear()
+
+
+_AUTHORED_LANES = json.dumps({"triad": [{"slot_id": "t1", "route": {"kind": "api_chat", "target_id": "openai/gpt-5.6-luna"}}],
+                              "scope": [{"slot_id": "s1", "route": {"kind": "api_chat", "target_id": "openai/gpt-5.6-luna"}}]})
+_BROKEN_LANES = json.dumps({"triad": [{"model": "openai/gpt-5.6-luna"}]})  # no slot_id/route: the strict parser refuses
+
+
+def _served(settings_mod, document):
+    """What ``GET /api/review-pool`` shows for ``document`` once the saving process wrote the receipts."""
+    from ouroboros import config as cfg
+    from ouroboros import review_pool_receipts, server_maintenance
+
+    loaded = cfg.normalize_settings_raw(dict(document))
+    review_pool_receipts.persist_receipts(server_maintenance.DATA_DIR)
+    return loaded, settings_mod.review_pool_payload(loaded)
+
+
+def test_review_pool_payload_carries_the_migration_outcome_that_decides_the_document(pool_root, monkeypatch):
+    """VD3-06: ``migration`` is the full receipt — ``{snapshot, reported, trigger, outcome, error,
+    source}`` — for the document the payload shows: authored lanes converted (source ``document``),
+    a never-configured document's factory rows (``factory``)."""
+    from ouroboros import reviewer_slot_config
+    from ouroboros.gateway import settings as settings_mod
+
+    monkeypatch.setattr(reviewer_slot_config, "reviewer_slot_last_executions", lambda: {})
+    monkeypatch.setattr(settings_mod, "_review_pool_costs", lambda items, env: {})
+
+    loaded, body = _served(settings_mod, {"OUROBOROS_REVIEWER_SLOTS": _AUTHORED_LANES, "OPENROUTER_API_KEY": "present"})
+    (snapshot,) = sorted((pool_root / "state" / "review_migrations").glob("*-slots-to-pool.json"))
+    assert body["config_error"] == "" and [row["subagent_id"] for row in body["pool"]] == ["review-1", "review-2"]
+    assert body["migration"] == {"snapshot": f"state/review_migrations/{snapshot.name}", "reported": False,
+                                 "trigger": "lanes_key", "outcome": "converted", "error": "", "source": "document"}
+
+    _loaded, factory = _served(settings_mod, {"OPENROUTER_API_KEY": "present"})
+    assert len(factory["pool"]) == 3
+    assert (factory["migration"]["trigger"], factory["migration"]["outcome"], factory["migration"]["source"]) == (
+        "never_configured", "factory", "document")
+    assert factory["migration"]["snapshot"] != body["migration"]["snapshot"], "each document its own receipt"
+
+
+def test_review_pool_payload_names_the_reason_a_broken_lanes_key_was_retained(pool_root, monkeypatch):
+    """VD3-06: a lane value the migration refused stays in the document (no partial migration)
+    and the payload says WHY — ``outcome: error`` with the reason and ``source: error`` — while
+    the catalog, untouched, still serves whatever pool it had (none here)."""
+    from ouroboros import reviewer_slot_config
+    from ouroboros.gateway import settings as settings_mod
+
+    monkeypatch.setattr(reviewer_slot_config, "reviewer_slot_last_executions", lambda: {})
+    monkeypatch.setattr(settings_mod, "_review_pool_costs", lambda items, env: {})
+
+    loaded, body = _served(settings_mod, {"OUROBOROS_REVIEWER_SLOTS": _BROKEN_LANES, "OPENROUTER_API_KEY": "present"})
+    assert loaded["OUROBOROS_REVIEWER_SLOTS"] == _BROKEN_LANES, "retained for the owner's catalog save"
+    (snapshot,) = sorted((pool_root / "state" / "review_migrations").glob("*-slots-to-pool.json"))
+    migration = body["migration"]
+    assert (migration["snapshot"], migration["reported"]) == (f"state/review_migrations/{snapshot.name}", False)
+    assert (migration["trigger"], migration["outcome"], migration["source"]) == ("lanes_key", "error", "error")
+    assert migration["error"].startswith("OUROBOROS_REVIEWER_SLOTS: ") and "unknown keys" in migration["error"]
+    assert body["pool"] == [] and body["config_error"] == ""
+
+
+def test_review_pool_payload_states_which_pool_rows_have_no_credentials(monkeypatch):
+    """VD3-08: ``pool_without_credentials`` lists every pool row whose model this install holds
+    no credentials for — all of them is the loud fact the Settings note needs; a subscription
+    seat logs in itself and is never listed. The pool (the pinning) is unchanged either way."""
+    settings_mod = _pool_world(monkeypatch)
+    for key in ("OPENROUTER_API_KEY", "OPENAI_API_KEY", "DEEPSEEK_API_KEY"):
+        monkeypatch.delenv(key, raising=False)
+    catalog = json.dumps(_POOL_CATALOG)
+
+    bare = settings_mod.review_pool_payload({"OUROBOROS_SUBAGENTS": catalog})
+    assert [row["subagent_id"] for row in bare["pool"]] == ["api-critic", "session-critic", "bare-critic"]
+    assert bare["pool_without_credentials"] == ["api-critic", "bare-critic"]
+
+    funded = settings_mod.review_pool_payload({"OUROBOROS_SUBAGENTS": catalog, "OPENROUTER_API_KEY": "present"})
+    assert [row["subagent_id"] for row in funded["pool"]] == [row["subagent_id"] for row in bare["pool"]]
+    assert funded["pool_without_credentials"] == []
+
+    unreadable = {**_POOL_CATALOG, "items": [{**_POOL_CATALOG["items"][0], "delivery": "x"}, *_POOL_CATALOG["items"][1:]]}
+    broken = settings_mod.review_pool_payload({"OUROBOROS_SUBAGENTS": json.dumps(unreadable)})
+    assert broken["config_error"] and broken["pool_without_credentials"] == []
 
 
 def test_generic_settings_save_projects_model_role_objects_as_json(

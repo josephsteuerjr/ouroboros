@@ -716,8 +716,7 @@ def _review_pool_costs(items: list, snapshot: Dict[str, Any]) -> Dict[str, Dict[
 
 def review_pool_rows(items: list, slots: list, handles: Dict[str, str],
                      last_executions: Dict[str, Any], costs: Dict[str, Dict[str, Any]]) -> tuple:
-    """(pool, excluded) of ``GET /api/review-pool``: package A's pool slots in catalog
-    order, each joined with its catalog row's stored facts."""
+    """(pool, excluded) of ``GET /api/review-pool``: pool slots in catalog order, each joined with its row's facts."""
     from ouroboros.route_spec import ROUTE_KIND_AGENT_SESSION, RouteSpec, compound_session_effort
 
     by_id = {str(item.get("subagent_id") or ""): item for item in items}
@@ -749,28 +748,26 @@ def review_pool_rows(items: list, slots: list, handles: Dict[str, str],
 
 
 def review_pool_payload(snapshot: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """The body of ``GET /api/review-pool`` (contract §1.4) for one settings snapshot;
-    ``row_costs`` prices every catalog row so an unmarked row shows its price too, and
-    ``migration`` is the newest lanes-to-pool record the supervisor boot wrote."""
+    """The body of ``GET /api/review-pool`` (contract §1.4) for one settings snapshot; ``row_costs`` prices
+    every catalog row (an unmarked row shows its price too); ``migration`` is the lanes-to-pool receipt deciding
+    THIS document: ``{snapshot, reported, trigger, outcome: converted|factory|error, error, source: document|
+    environment|error|history}``; ``pool_without_credentials``: pool rows whose model has no credentials here."""
     from ouroboros.configured_subagents import MAX_CONFIGURED_SUBAGENTS, SUBAGENTS_SETTING, parse_configured_subagents, roster_handles
+    from ouroboros.provider_models import model_has_credentials_in_settings
     from ouroboros.reviewer_slot_config import review_pool_slots, review_pool_state, reviewer_slot_last_executions
-    from ouroboros.server_maintenance import review_pool_migration_records
+    from ouroboros.server_maintenance import review_pool_migration_payload
     from ouroboros.settings_integrity import runtime_environ
 
     env = dict(runtime_environ() if snapshot is None else snapshot)
     raw = str(env.get(SUBAGENTS_SETTING) or "")
     document = _catalog_document(raw)
     items = document["items"]
-    migration = max((record for record in (review_pool_migration_records() or {}).values() if isinstance(record, dict)),
-                    key=lambda record: str(record.get("ts") or ""), default=None)
     payload: Dict[str, Any] = {
         "limits": {"rows": MAX_CONFIGURED_SUBAGENTS},
         "catalog": {"present": bool(raw.strip()), "enabled": bool(raw.strip()) and document.get("enabled") is not False,
                     "rows": len(items), "eligible": sum(1 for item in items if item.get("review_eligible") is True)},
         "pool": [], "excluded": [], "last_executions": reviewer_slot_last_executions(), "row_costs": {},
-        "config_error": "",
-        "migration": None if migration is None else {
-            "snapshot": str(migration.get("snapshot") or ""), "reported": bool(migration.get("reported"))},
+        "config_error": "", "migration": review_pool_migration_payload(env), "pool_without_credentials": [],
     }
     state = review_pool_state(raw)
     try:
@@ -784,6 +781,9 @@ def review_pool_payload(snapshot: Optional[Dict[str, Any]] = None) -> Dict[str, 
     payload["row_costs"] = _review_pool_costs(items, env)
     payload["pool"], payload["excluded"] = review_pool_rows(
         items, slots, handles, payload["last_executions"], payload["row_costs"])
+    payload["pool_without_credentials"] = [row["subagent_id"] for row in payload["pool"]  # seats log in themselves
+                                           if row["cost"]["basis"] != "subscription_seat"
+                                           and not model_has_credentials_in_settings(row["route"]["target_id"], env)]
     return payload
 
 
