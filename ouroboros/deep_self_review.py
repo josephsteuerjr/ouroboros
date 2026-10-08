@@ -665,7 +665,7 @@ def _run_retrieving_review(
     from ouroboros.review_substrate import ReviewSlot
 
     slot = ReviewSlot(
-        slot_id=row.slot_id, model=sendable, effort=row_effort(row, "deep_self_review"),
+        slot_id=row.slot_id, model=sendable, effort=row_effort(row),
         timeout_sec=window, max_tokens=_DEEP_MAX_OUTPUT_TOKENS,
         role_hint="deep self-reviewer",
         use_local=row.use_local if row.use_local is not None else review_model_uses_local(sendable),

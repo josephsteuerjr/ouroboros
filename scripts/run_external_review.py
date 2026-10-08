@@ -838,7 +838,7 @@ def _resolved_review_config(*, profile: str = "production_commit_gate") -> dict:
                  **({"profile_id": row.profile_id} if row.profile_id else {})}
         # An api row states its delivery explicitly (F8: the fact, never the actor id).
         delivery = row.delivery or ("native" if row.native_retrieval else "")
-        return {"slot_id": row.slot_id, "route": route, "effort": row_effort(row, "review"),
+        return {"slot_id": row.slot_id, "route": route, "effort": row_effort(row),
                 **({"delivery": delivery} if delivery else {})}
 
     pool_slots = [_project(row) for row in rows]

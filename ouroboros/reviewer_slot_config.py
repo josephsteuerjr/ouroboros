@@ -333,7 +333,7 @@ def reviewer_slot_config_error() -> str:
 
 
 def _delivery_slot(
-    row: ConfiguredReviewerSlot, *, effort_surface: str, role_hint: str,
+    row: ConfiguredReviewerSlot, *, role_hint: str,
     default_effort: str = "", effort_fallback: str = "", **slot_fields: Any,
 ) -> Any:
     """ONE configured row as the substrate's ``ReviewSlot``, carrying its own
@@ -348,7 +348,7 @@ def _delivery_slot(
     return ReviewSlot(
         slot_id=row.slot_id,
         model=row.target_id,
-        effort=row_effort(row, effort_surface, default=default_effort, fallback=effort_fallback),
+        effort=row_effort(row, default=default_effort, fallback=effort_fallback),
         # "this row runs at the caller's order": every row but a compound route slug.
         declared_effort=default_effort if default_effort and not _compound_effort(row) else "",
         role_hint=role_hint,
@@ -369,7 +369,6 @@ def _delivery_slot(
 def review_pool_slots(
     snapshot: Any = None,
     *,
-    effort_surface: str = "review",
     role_hint: str = "",
     default_effort: str = "",
     **slot_fields: Any,
@@ -400,7 +399,7 @@ def review_pool_slots(
         return [replace(seat.slot, **extra) if extra else seat.slot for seat in composed]
     return [
         _delivery_slot(
-            row, effort_surface=effort_surface, role_hint=role_hint,
+            row, role_hint=role_hint,
             default_effort=default_effort, effort_fallback=REVIEW_POOL_DEFAULT_EFFORT, **slot_fields,
         )
         for row in _pool_rows(_catalog_settings(snapshot))
@@ -534,7 +533,6 @@ def _row_own_effort(row: ConfiguredReviewerSlot) -> str:
 
 def row_effort(
     row: ConfiguredReviewerSlot,
-    surface: str,
     *,
     default: str = "",
     fallback: str = "",
@@ -544,11 +542,12 @@ def row_effort(
     A caller's ``default`` is an ORDER for this run (a plan envelope's
     ``reviewer_effort``): it outranks the owner's per-row pin on every row except
     a Cursor/Agy compound slug, whose encoded effort is the route's identity and
-    stays. Only plan review passes an order; commit, scope, skill, acceptance and
-    deep review call without one, and for them an explicit row field wins, then
-    a compound slug's encoded effort, then ``fallback`` — the pool's
-    ``REVIEW_POOL_DEFAULT_EFFORT`` — else the surface setting (a caller-built row
-    that passes no fallback, e.g. the deep review's Main row).
+    stays. Only plan review passes an order; commit, skill, acceptance and deep
+    review call without one, and for them an explicit row field wins, then a
+    compound slug's encoded effort, then ``fallback`` — by default the pool's
+    ``REVIEW_POOL_DEFAULT_EFFORT``, also for a caller-built row such as the deep
+    review's Main row. No surface setting is read: the lane-era effort keys are
+    retired and an exported one is inert.
     """
     if default and not _compound_effort(row):
         return default
@@ -557,9 +556,9 @@ def row_effort(
         return own
     if fallback:
         return fallback
-    from ouroboros.config import resolve_effort
+    from ouroboros.config import REVIEW_POOL_DEFAULT_EFFORT
 
-    return resolve_effort(surface)
+    return REVIEW_POOL_DEFAULT_EFFORT
 
 
 # ---------------------------------------------------------------------------

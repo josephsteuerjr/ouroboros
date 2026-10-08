@@ -70,16 +70,34 @@ def test_review_effort_default_carriers_stay_in_sync():
     # row); the read seam migrates them, so they are no shipped default any more.
     assert "OUROBOROS_EFFORT_REVIEW" not in SETTINGS_DEFAULTS
     assert "OUROBOROS_EFFORT_SCOPE_REVIEW" not in SETTINGS_DEFAULTS
-    assert resolve_effort("review") == "high" and resolve_effort("scope_review") == "high"
+    from ouroboros.config import REVIEW_POOL_DEFAULT_EFFORT
+    from ouroboros.reviewer_slot_config import ConfiguredReviewerSlot, row_effort
+
+    bare = ConfiguredReviewerSlot(slot_id="r", kind="api", target_id="openai/gpt-5.6-terra")
+    assert row_effort(bare) == REVIEW_POOL_DEFAULT_EFFORT == "high"
 
 
-def test_deep_self_review_effort_slot(monkeypatch):
-    monkeypatch.delenv("OUROBOROS_EFFORT_DEEP_SELF_REVIEW", raising=False)
-    assert resolve_effort("deep_self_review") == "high"
-    monkeypatch.setenv("OUROBOROS_EFFORT_DEEP_SELF_REVIEW", "medium")
-    assert resolve_effort("deep_self_review") == "medium"
-    monkeypatch.setenv("OUROBOROS_EFFORT_DEEP_SELF_REVIEW", "extreme")
-    assert resolve_effort("deep_self_review") == "high"
+_RETIRED_EFFORT_KEYS = ("OUROBOROS_EFFORT_REVIEW", "OUROBOROS_EFFORT_SCOPE_REVIEW", "OUROBOROS_EFFORT_DEEP_SELF_REVIEW")
+
+
+def test_an_exported_retired_review_effort_key_is_inert_for_the_deep_review(monkeypatch):
+    """The deep review's Main row carries no effort of its own, so it reviews at the
+    pool default; the lane-era surface keys are retired, and one exported in the
+    process environment (a benchmark container, an operator shell) changes nothing —
+    ``resolve_effort`` no longer has a branch that reads them."""
+    import inspect
+
+    from ouroboros import settings_scales
+    from ouroboros.config import REVIEW_POOL_DEFAULT_EFFORT
+    from ouroboros.deep_self_review import main_review_row
+    from ouroboros.reviewer_slot_config import row_effort
+
+    for key in _RETIRED_EFFORT_KEYS:
+        monkeypatch.setenv(key, "low")
+    assert row_effort(main_review_row()) == REVIEW_POOL_DEFAULT_EFFORT
+    source = inspect.getsource(settings_scales.resolve_effort)
+    assert not any(key in source for key in _RETIRED_EFFORT_KEYS)
+    assert "deep_self_review" not in source and "scope_review" not in source
 
 
 def test_review_models_default_in_config():

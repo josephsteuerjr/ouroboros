@@ -113,13 +113,16 @@ def skill_review_contract_fingerprint(
     # API/global-effort panel. Structured identity and explicit session routes
     # use the canonical per-row contract, sorted by stable owner slot id so a
     # reorder alone does not lapse replay.
-    from ouroboros.config import resolve_effort
+    from ouroboros.config import REVIEW_POOL_DEFAULT_EFFORT
 
     identity: Dict[str, Any]
     if not delivery or delivery.get("legacy_skill_fingerprint"):
+        # The lane-era panel ran every slot at the (retired) global review effort;
+        # its only remaining value is the pool default, so unchanged legacy bytes
+        # keep their fingerprint.
         identity = {
             "models": [str(model) for model in (models or [])],
-            "effort": str(resolve_effort("review") or ""),
+            "effort": REVIEW_POOL_DEFAULT_EFFORT,
         }
     else:
         rows = [

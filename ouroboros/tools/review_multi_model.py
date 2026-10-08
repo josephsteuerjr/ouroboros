@@ -242,7 +242,7 @@ async def _query_model(
             slot = ReviewSlot(
                 slot_id=slot_id,
                 model=model,
-                effort=effort or _rev()._cfg.resolve_effort("review"),
+                effort=effort or _rev()._cfg.REVIEW_POOL_DEFAULT_EFFORT,
                 max_tokens=_out_budget,
                 default_temperature=0.2,
                 role_hint=TRIAD_ROLE_HINT,

@@ -59,20 +59,17 @@ def requested_effort(value: Any) -> str:
 
 
 def resolve_effort(task_type: str) -> str:
-    """Return the configured reasoning effort for the given task type."""
+    """Return the configured reasoning effort for the given task type.
+
+    Review is not a task type here: a reviewer's effort is a field of its pool
+    row (``reviewer_slot_config.row_effort``, falling back to
+    ``REVIEW_POOL_DEFAULT_EFFORT``); the lane-era surface keys are retired and
+    an exported one is not read.
+    """
     t = (task_type or "").lower().strip()
 
     if t == "evolution":
         key = "OUROBOROS_EFFORT_EVOLUTION"
-        default = "high"
-    elif t == "review":
-        key = "OUROBOROS_EFFORT_REVIEW"
-        default = "high"
-    elif t == "deep_self_review":
-        key = "OUROBOROS_EFFORT_DEEP_SELF_REVIEW"
-        default = "high"
-    elif t in ("scope_review", "scope-review"):
-        key = "OUROBOROS_EFFORT_SCOPE_REVIEW"
         default = "high"
     elif t == "consciousness":
         # An empty slot is Main's effort (owner decision 16.09, 1=A): a wake-up is an

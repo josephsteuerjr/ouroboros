@@ -308,8 +308,8 @@ def compose_panel(request: ReviewChangeRequest, *, adds_only: bool) -> ComposedP
             raise ReviewChangeArgumentError(f"reviewer {name!r} is not an enabled catalog row ({exc})") from exc
         if row.subagent_id in in_pool:
             return in_pool[row.subagent_id]
-        own.setdefault(row.subagent_id, slots._delivery_slot(row, effort_surface="review", role_hint="").effort)
-        return slots._delivery_slot(row, effort_surface="review", role_hint="", default_effort=order)
+        own.setdefault(row.subagent_id, slots._delivery_slot(row, role_hint="").effort)
+        return slots._delivery_slot(row, role_hint="", default_effort=order)
 
     def placed(slot: Any, *, additional: bool = False, coupling_only: bool = False) -> Any:
         return slots.PoolSeat(slot, tuple(ledger.seat_parts(slot, coupling_only=coupling_only)), additional)
@@ -802,7 +802,7 @@ def system_seat_plan(row: Any) -> Dict[str, Any]:
     from ouroboros.reviewer_slot_config import row_effort
 
     return {"slot_id": row.slot_id, "model": row.target_id, "route": row.kind,
-            "effort": row_effort(row, "deep_self_review"), "session_target": row.session_target,
+            "effort": row_effort(row), "session_target": row.session_target,
             "session_profile": row.profile_id, "subagent_id": row.subagent_id,
             "retrieves": True, "parts": [PART_CHANGE], "additional": False, "brief_sha": ""}
 

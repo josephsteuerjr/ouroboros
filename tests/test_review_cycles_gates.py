@@ -390,11 +390,11 @@ def test_skill_review_contract_fingerprint_tracks_roster_items_and_profile(monke
     # aggregates blockers differently, so a profile change lapses replay.
     assert base != skill_review_contract_fingerprint(
         ["m1", "m2"], required_items=("a", "b"), review_profile="official_hub")
-    # Synthesis F4: the RESOLVED review effort is contract identity — the panel
-    # dispatches every slot at resolve_effort("review"), so an effort change is
-    # a different reviewer contract and must lapse free replay.
+    # The legacy identity's effort is the pool default; the lane-era global
+    # OUROBOROS_EFFORT_REVIEW is retired, and an exported one is inert here too
+    # (a structured panel carries each row's own effort in its row identity).
     monkeypatch.setenv("OUROBOROS_EFFORT_REVIEW", "low")
-    assert base != skill_review_contract_fingerprint(["m1", "m2"], required_items=("a", "b"))
+    assert base == skill_review_contract_fingerprint(["m1", "m2"], required_items=("a", "b"))
 
 
 def test_skill_review_contract_fingerprint_preserves_legacy_and_tracks_rows(monkeypatch):
