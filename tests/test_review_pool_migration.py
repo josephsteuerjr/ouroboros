@@ -443,6 +443,41 @@ def test_m2_repeated_identical_effort_overrides_mint_one_row_per_seat():
     assert outcome.snapshot["summary"]["rows_marked_after"] == 4, "three overridden runs plus the scope seat's own row"
 
 
+@pytest.mark.parametrize("enabled", [False, True], ids=["disabled-helper", "enabled-helper"])
+def test_m3_a_disabled_row_never_takes_the_mark_the_seat_mints_an_enabled_row(enabled):
+    """A direct seat whose engine coincides with a helper row: the helper is marked only when
+    it is ON. A helper switched off stays as it was and the seat mints its own enabled row —
+    the runtime pool (enabled marked rows) is never emptied by the migration."""
+    from ouroboros import reviewer_slot_config as rs
+
+    helper = api_row("helper", "openai/gpt-5.6-terra", "high", **({} if enabled else {"enabled": False}))
+    doc = {SUBAGENTS: catalog(dict(helper)), "OUROBOROS_MODEL": "openai/gpt-5.6-sol", "OPENROUTER_API_KEY": "present",
+           SLOTS: lanes(triad=[direct("t", "openai/gpt-5.6-terra", "high", delivery="native")],
+                        scope=[direct("s", "openai/gpt-5.6-terra", "high")])}
+    outcome, after = _migrated(doc)
+    rows = {entry["subagent_id"]: entry for entry in outcome.snapshot["rows"]}
+    if enabled:
+        assert after["items"] == [{**helper, "review_eligible": True}] and rows["helper"]["from_seats"] == ["t", "s"]
+    else:
+        assert after["items"][0] == helper, "the disabled helper is untouched: no mark, still off"
+        assert _marked(after["items"]) == ["review-1"] and after["items"][1]["minted_from"] == "review_lane"
+        assert "enabled" not in after["items"][1] and rows["review-1"]["from_seats"] == ["t", "s"]
+    pool = rs.review_pool_rows(cfg.normalize_settings_raw(dict(doc)))
+    assert [(row.target_id, row.effort) for row in pool] == [("openai/gpt-5.6-terra", "high")]
+    assert outcome.snapshot["summary"]["rows_marked_after"] == 1
+
+
+def test_m3_a_disabled_row_of_a_factory_engine_does_not_claim_the_factory_seat():
+    from ouroboros import reviewer_slot_config as rs
+
+    off = api_row("helper", OPENROUTER_REVIEW_DEFAULTS["triad"][1], "high", enabled=False)
+    doc = {SUBAGENTS: catalog(off), "OUROBOROS_MODEL": "openai/gpt-5.6-sol", "OPENROUTER_API_KEY": "present", SLOTS: ""}
+    _outcome, after = _migrated(doc)
+    assert after["items"][0] == off and _marked(after["items"]) == ["review-1", "review-2", "review-3"]
+    pool = rs.review_pool_rows(cfg.normalize_settings_raw(dict(doc)))
+    assert [row.target_id for row in pool] == list(OPENROUTER_REVIEW_DEFAULTS["triad"])
+
+
 def test_f5a_the_pool_ceiling_is_the_catalog_ceiling():
     rows = [api_row(f"h{i}", f"vendor/model-{i}", "low") for i in range(10)]
     triad = [direct(f"t{i}", f"vendor/triad-{i}", "high", delivery="native") for i in range(10)]

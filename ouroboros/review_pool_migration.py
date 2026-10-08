@@ -28,8 +28,9 @@ Rules (contract §1.5, counter-examples §2 F4-F8):
    harness three times, and three seats stay three runs (quorum 2 of 3);
 2. a reference whose seat ran a DIFFERENT effort mints ``review-<n>`` from the
    row (``minted_from: review_lane``), the helper itself untouched;
-3. a direct seat mints ``review-<n>``; an existing row with the identical
-   engine AND delivery is marked instead;
+3. a direct seat mints ``review-<n>``; an existing ENABLED row with the
+   identical engine AND delivery is marked instead (a row switched off never
+   takes the mark — the pool reads enabled rows only — and stays as it was);
 4. a scope seat merges into a row of the same engine and delivery produced by
    this run ("scope seat coincided with seat N — merged"); otherwise 1-3; the
    engine merge is the scope seat's alone — triad seats never fold;
@@ -944,9 +945,15 @@ class _Pool:
         return self.unmarked_existing_engine(seat.engine())
 
     def unmarked_existing_engine(self, engine: tuple, *, excluding: Any = ()) -> Optional[str]:
-        """An existing catalog row this run has not marked yet that runs ``engine``."""
+        """An ENABLED existing catalog row this run has not marked yet that runs ``engine``.
+
+        A row switched off never takes the mark: the pool reads enabled rows only, so a
+        mark on it would silently empty the pool a live seat ran in — the seat mints its
+        own enabled row beside the disabled helper instead."""
         for row in self.items:
             row_id = str(row.get("subagent_id") or "")
+            if row.get("enabled", True) is False:
+                continue
             if row_id not in self.marked and row_id not in excluding and self.engines[row_id] == engine:
                 return row_id
         return None
