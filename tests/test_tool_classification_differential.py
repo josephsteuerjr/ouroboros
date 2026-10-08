@@ -340,6 +340,13 @@ def _golden() -> dict[str, dict]:
 # unavailable. Keep the historical corpus intact and assert the new observed
 # outcome explicitly rather than manufacture old evidence (04-AGENCY S1/S3).
 CURRENT_PRODUCER_CONTRACTS = {
+    # Body-candidate admission adds these two markers after the retired golden
+    # source. Pin what the live classifier actually answers; do not backfill a
+    # historical answer from a checkout that never emitted these strings.
+    "CANDIDATE_ALREADY_BOUND": (False, "ok"),
+    "IN_PLACE_REQUIRES_CYBER_PRO": (False, "ok"),
+    "native:ACCESS_BLOCKED:CANDIDATE_ALREADY_BOUND": (True, "blocked"),
+    "native:ACCESS_BLOCKED:IN_PLACE_REQUIRES_CYBER_PRO": (True, "blocked"),
     # Declared-source admission is a new native argument refusal. The retired
     # text adapter never recognized this marker; do not fabricate its golden.
     "INPUT_SOURCE_SELECTION_UNSUPPORTED": (False, "ok"),
@@ -374,6 +381,11 @@ CURRENT_PRODUCER_CONTRACTS = {
     # acknowledge these requested apply/discard operations as completed.
     "INTEGRATE_DELEGATED_APPLY_UNCONFIRMED": (True, "integration_blocked"),
     "INTEGRATE_DELEGATED_DISCARD_UNCONFIRMED": (True, "integration_blocked"),
+    # delegate_continuation.disposition_refusal: a captured result whose snapshot a
+    # continuation took over, or may be taking over (a pending hand-over), is not
+    # applied or rejected alone; nothing changes. Its peers' answer, asserted live.
+    "INTEGRATE_DELEGATED_CONTINUATION_PENDING": (True, "integration_blocked"),
+    "INTEGRATE_DELEGATED_SUPERSEDED": (True, "integration_blocked"),
     # A reject request cannot undo direct effects already in the folder.
     # The refusal belongs to this disposition, not to the earlier write.
     "INTEGRATE_DIRECTORY_ALREADY_APPLIED": (True, "integration_blocked"),

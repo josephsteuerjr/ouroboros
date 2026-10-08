@@ -382,6 +382,35 @@ test('owner-supplied names are left alone while the chrome around them is transl
     assert.equal(input.getAttribute('placeholder'), 'Поиск');
 });
 
+test('authored content outside a transcript keeps every text and attribute and reports no miss', () => {
+    applyPayload(RU);
+    assert.ok(SKIP_ROOTS.includes('[data-i18n-authored]'));
+    const authored = (node) => { node.dataset.i18nAuthored = ''; return node; };
+    // A delivered document in the reader: a file named like a known word, an unknown size
+    // line, and Markdown whose link and image reference carry author titles.
+    const identity = authored(el('div', { class: 'document-reader-identity' },
+        el('h2', { class: 'document-reader-title' }, 'Settings'),
+        el('div', { class: 'document-reader-meta' }, 'Quarterly numbers')));
+    const link = el('a', { class: 'md-link', href: 'https://example.com/', title: 'Settings' }, 'Search');
+    const content = authored(el('div', { class: 'document-reader-markdown' },
+        el('p', {}, link, ' and the rest'),
+        el('span', { title: 'Quarterly numbers', 'aria-label': 'Main Chat' }, 'Image: chart')));
+    const body = el('div', { class: 'document-reader-body', 'aria-label': 'Search' }, content);
+    const close = el('button', { class: 'btn btn-default', title: 'Settings' }, 'Settings');
+    const root = el('dialog', { class: 'document-reader' }, identity, el('div', {}, close), body);
+    const before = [...snapshot(identity), ...snapshot(content)];
+    const translator = createTranslator();
+    translator.applyTo(root);
+    // What the observer hands over after a later write inside: the element, then its text.
+    translator.applyTo(link);
+    translator.applyTo(link.childNodes[0]);
+    assert.deepEqual([...snapshot(identity), ...snapshot(content)], before, 'known and unknown authored strings stay');
+    assert.deepEqual(pendingMisses(), [], 'and none is reported as a miss');
+    // The reader's own chrome around it is still translated.
+    assert.deepEqual([text(close), close.getAttribute('title'), body.getAttribute('aria-label')],
+        ['Настройки', 'Настройки', 'Поиск']);
+});
+
 test('a help paragraph of several sentences is an ordinary key; only the memory\'s own bound refuses', () => {
     applyPayload(RU);
     const sentence = 'Interface language for this installation: the desktop window, browsers, the Telegram app and ' +

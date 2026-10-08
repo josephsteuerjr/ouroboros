@@ -629,7 +629,11 @@ def _settings_lock_path() -> pathlib.Path:
 def _acquire_settings_lock(timeout: float = 2.0) -> Optional[int]:
     # None means the lock was NOT taken: every WRITER must abort on it (`save_settings` raises
     # TimeoutError, `gateway.owner_settings` SettingsLockUnavailable) — writing anyway makes
-    # "atomic" a claim the code does not keep. Only READS may proceed unlocked.
+    # "atomic" a claim the code does not keep. Only READS may proceed unlocked. Under the
+    # integrity pin every read is verified and every writer refuses, so nothing is taken
+    # (or created) beside a pinned file this process does not own.
+    if _settings_integrity.expected_settings_sha256():
+        return None
     start = time.time()
     lock_path = _settings_lock_path()
     while time.time() - start < timeout:

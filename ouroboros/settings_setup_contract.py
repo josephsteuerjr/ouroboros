@@ -7,6 +7,7 @@ import os
 from typing import Any, Dict, Optional, Tuple
 
 from ouroboros.config import SETTINGS_DEFAULTS, VALID_RUNTIME_MODES
+from ouroboros.review_run_isolation import run_cap_from_env
 from ouroboros.provider_models import (
     ANTHROPIC_DIRECT_DEFAULTS,
     CLOUDRU_DIRECT_DEFAULTS,
@@ -88,7 +89,16 @@ def resolve_total_budget_usd() -> Optional[float]:
     no entry at all -- so absence resolves to the product default here. A
     non-positive value IS an owner decision and keeps its historical meaning of
     no finite global budget.
+
+    A run cap a launcher set BEFORE settings load (``review_run_isolation``; its one
+    producer is the isolated contributor review lane) is that process tree's whole
+    global limit and the saved document is not consulted: the isolated ledger
+    starts empty, so a saved lifetime budget would otherwise become a fresh
+    allowance there. An unreadable cap is a zero allowance, never "no limit".
     """
+    run_cap = run_cap_from_env()
+    if run_cap is not None:
+        return run_cap
     raw = _saved_total_budget() or str(os.environ.get("TOTAL_BUDGET", "") or "").strip()
     default = float(SETTINGS_DEFAULTS["TOTAL_BUDGET"])
     if not raw:

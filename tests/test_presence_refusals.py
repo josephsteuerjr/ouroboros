@@ -103,6 +103,7 @@ def test_receipt_write_retry_and_conflict_do_not_share_disposition(tmp_path, mon
 def test_missing_work_is_rejected_without_losing_original_error(tmp_path):
     app, binding, _ctx = _presence_app(tmp_path, _answer)
     request = _request(app)
+    request.method = "GET"
     request.path_params = {"work_ref": "missing-work"}
     request.query_params = {"binding_id": binding}
     response = asyncio.run(host_service._api_presence_work(request))

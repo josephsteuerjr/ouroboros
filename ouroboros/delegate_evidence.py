@@ -146,8 +146,11 @@ def task_execution_evidence(drive_root: Any, task_id: str) -> Dict[str, Any]:
         kind = str(row.get("type") or "")
         if kind == custody.STARTED:
             started.add(run_id)
+            source_request = row.get("work_order_source_request")
             partial_work_order_seen = partial_work_order_seen or (
                 str(row.get("work_order_coverage") or "") == "partial"
+                # a continuation that adopted a snapshot carries its predecessor's sources
+                or bool(isinstance(source_request, dict) and source_request.get("inherited_sources"))
             )
         elif kind == custody.CLOSED_ABSENT and run_id not in settled:
             # Closed-without-settlement is still TERMINAL: leaving it in the

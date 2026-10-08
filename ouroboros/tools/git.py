@@ -52,6 +52,7 @@ from ouroboros.tools.commit_gate import (
     _invalidate_advisory,  # noqa: F401
     _record_commit_attempt,
     record_bound_commit_success, prepare_author_commit_request,
+    record_commit_gate_refusal, name_review_record,
     check_identical_verdict_refusal,
     check_review_cycles_ceiling,
     classify_review_block,  # noqa: F401
@@ -202,6 +203,9 @@ def _free_cycle_gate(
         pass
     if _authorized_managed_update_resolver(ctx):
         _repair_managed_merge_head(ctx)
+    # A free refusal is still a review outcome: its NOT_DISPATCHED ledger record names why nothing was reviewed.
+    record_id = record_commit_gate_refusal(ctx, commit_message, goal=goal, scope=scope, pre_fingerprint=pre_fingerprint,
+                                           kind=reason, message=message)
     _record_commit_attempt(
         ctx,
         commit_message,
@@ -213,11 +217,13 @@ def _free_cycle_gate(
         pre_review_fingerprint=str(fp),
         rebuttal_sha256=rebuttal_sha,
         review_contract_fingerprint=contract_fp,
+        review_record_id=record_id,
     )
     return {
         "status": "blocked",
         "message": message,
         "block_reason": reason,
+        "review_record_id": record_id,
     }
 
 
@@ -1086,6 +1092,8 @@ def _task_attributed_commit_paths(
     )
 
     task_id = str(getattr(ctx, "task_id", "") or "").strip()
+    # A bound body candidate is attributed like the serving checkout: ``body_candidate.bind``
+    # appends it to the lineage's baseline, so its candidates resolve on ``ctx.repo_dir`` below.
     if not task_id:
         return paths, None, "", None
     metadata = getattr(ctx, "task_metadata", {})
@@ -1153,6 +1161,17 @@ def _publish_reviewed_commit(
     return _publish_post_commit_test_fact(ctx, result + ci_note, test_warning)
 
 
+def _commit_reviewed(ctx: ToolContext, commit_message: str, *args: Any, **kwargs: Any) -> str:
+    """The public commit handler: an outcome of a call that wrote a review record names it."""
+    return name_review_record(ctx, _repo_commit_push(ctx, commit_message, *args, **kwargs))
+
+
+_COMMIT_ROOT_REFUSAL = (
+    "⚠️ TOOL_ARG_ERROR: commit_reviewed lands in the system repository; review a project copy "
+    "with review_change and commit it with ordinary git."
+)
+
+
 def _repo_commit_push(ctx: ToolContext, commit_message: str,
                        paths: Optional[List[str]] = None,
                        skip_tests: bool = False,
@@ -1161,10 +1180,13 @@ def _repo_commit_push(ctx: ToolContext, commit_message: str,
                        skip_advisory_pre_review: bool = False,
                        goal: str = "",
                        scope: str = "", review_reference: Optional[dict] = None,
-                       author_disposition: Optional[dict] = None) -> str:
+                       author_disposition: Optional[dict] = None, root: str = "") -> str:
     """Stage, review, and commit files with unified pre-commit review."""
+    from ouroboros import body_candidate  # lazy: the Git tools reach the candidate owner only when committing
     skip_advisory_pre_review = bool(skip_advisory_review or skip_advisory_pre_review)
     _reset_commit_review_state(ctx)
+    if str(root or "system_repo") != "system_repo":  # before any staging, review or record: no id to name
+        return _publish_tool_result(ctx, ToolResult(status="error", code="TOOL_ARG_ERROR", text=_COMMIT_ROOT_REFUSAL))
     error = prepare_author_commit_request(ctx, review_reference, author_disposition, review_rebuttal)
     if error:
         return error
@@ -1404,8 +1426,9 @@ def _repo_commit_push(ctx: ToolContext, commit_message: str,
             )
             if publication_error:
                 return publication_error
-            push_status = _auto_push(ctx.repo_dir)
+            push_status = _auto_push(ctx.repo_dir) if not body_candidate.is_bound(ctx) else body_candidate.publication_note(ctx)
         ctx.last_reviewed_commit_sha = commit_sha
+        body_candidate.record_reviewed_commit(ctx, commit_sha)
         if attribution_binding is not None:
             # The task's own commit moved HEAD: open the next attributed-staging
             # epoch so a follow-up commit does not read as ``baseline_stale``.
@@ -1443,7 +1466,7 @@ def _repo_commit_push(ctx: ToolContext, commit_message: str,
             test_warning_ref[0],
         )
     if not evolution_claim:
-        push_status = _auto_push(ctx.repo_dir)
+        push_status = _auto_push(ctx.repo_dir) if not body_candidate.is_bound(ctx) else body_candidate.publication_note(ctx)
     return _publish_reviewed_commit(
         ctx, commit_message, commit_sha, tag_info, test_warning_ref[0], paths, push_status,
     )
@@ -1478,6 +1501,7 @@ def get_tools() -> List[ToolEntry]:
         f"{ADVISORY_REVIEW_CHOICE_GUIDANCE}"
     )
     commit_properties = {
+        "root": {"type": "string", "enum": ["system_repo"], "default": "system_repo", "description": "The reviewed commit lands in Ouroboros's own body only; review any other root with review_change and commit it with ordinary git."},
         "commit_message": {"type": "string"},
         "paths": {"type": "array", "items": {"type": "string"}, "description": "Optional subset of task-attributed paths. Omitted computes candidates; empty never stages the whole tree."},
         "skip_tests": {"type": "boolean", "default": False, "description": "Skip pre-commit tests."},
@@ -1491,9 +1515,9 @@ def get_tools() -> List[ToolEntry]:
     }
     return [
         ToolEntry("commit_reviewed", {"name": "commit_reviewed", "description": reviewed_commit_description,
-            "parameters": {"type": "object", "properties": commit_properties, "required": ["commit_message"]}}, _repo_commit_push, is_code_tool=True),
+            "parameters": {"type": "object", "properties": commit_properties, "required": ["commit_message"]}}, _commit_reviewed, is_code_tool=True),
         ToolEntry("vcs_commit_reviewed", {"name": "vcs_commit_reviewed", "description": reviewed_commit_description,
-            "parameters": {"type": "object", "properties": commit_properties, "required": ["commit_message"]}}, _repo_commit_push, is_code_tool=True),
+            "parameters": {"type": "object", "properties": commit_properties, "required": ["commit_message"]}}, _commit_reviewed, is_code_tool=True),
         ToolEntry("vcs_status", {
             "name": "vcs_status",
             "description": "git status --porcelain for the selected repository.",

@@ -92,7 +92,7 @@ def handle_owner_wait(event: dict, ctx: Any) -> None:
                 _handle_budget_pause({"phase": "consumed", "task_id": task_id,
                     "task_attempt": attempt, "pause_id": resume.get("pause_id"),
                     "grant_id": resume.get("grant_id")}, ctx)
-                if meta["task"].get("_budget_pause_resume"):
+                if (meta["task"].get("_budget_pause_resume") or {}).get("sleep_exclusion_since"):
                     raise RuntimeError("cold sleep consumption is not yet confirmed")
             wait = set_owner_wait(ctx.DRIVE_ROOT, task_id, wait)
             meta["owner_wait"] = wait

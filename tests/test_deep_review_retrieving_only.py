@@ -37,7 +37,7 @@ def repo(tmp_path):
     (root / "BIBLE.md").write_text(_BIBLE, encoding="utf-8")
     (root / "docs" / "ARCHITECTURE.md").write_text("# Arch\n\n## Review stack\n\ntext\n", encoding="utf-8")
     (root / "docs" / "DEVELOPMENT.md").write_text("# Dev\n\n## Rules\n\nx\n", encoding="utf-8")
-    (root / "docs" / "CHECKLISTS.md").write_text("# Checks\n\n## Repo Commit Checklist\n\ny\n", encoding="utf-8")
+    (root / "docs" / "CHECKLISTS.md").write_text("# Checks\n\n## Change Review Checklist\n\ny\n", encoding="utf-8")
     (root / "ouroboros").mkdir()
     (root / "ouroboros" / "loop.py").write_text("def run():\n    return 1\n", encoding="utf-8")
     return root

@@ -32,10 +32,10 @@ P7 makes context fit a maintenance constraint, not a line-count aesthetic.
   A cap-driven bucket, a one-caller passthrough, or bytes bought by deleting
   contract-bearing comments, docstrings, messages or tests is a defect, not
   paydown — report the conflict instead (BIBLE P7 «first simplify what
-  exists»). Enforcement: Repo Commit Checklist item 31 `size_cap_paydown`,
-  advisory when applicable.
+  exists»). Enforcement: Ouroboros Body Layer item 31 `size_cap_paydown`
+  (`docs/CHECKLISTS.md`), advisory when applicable.
 - Methods above 150 lines and more than eight parameters are decomposition
-  signals (BIBLE P7, CHECKLISTS item 2(c)), not deterministic gates; existing
+  signals (BIBLE P7, CHECKLISTS item 11(c)), not deterministic gates; existing
   baseline debt is not retroactively a failing tree.
 - Runtime Python function/method totals are descriptive inventory, with no
   aggregate ceiling or remaining quota. A repository-wide count does not
@@ -78,7 +78,7 @@ minimalism finding must name the exact symbol or authority, the concrete
 duplication or coupling, and a smaller alternative that still satisfies the
 contract.
 Diff size, line count, and file count alone are not findings.
-Enforcement: review-only — CHECKLISTS item 2(d) scores these rules in commit
+Enforcement: review-only — CHECKLISTS item 11(d) scores these rules in commit
 review.
 
 ### Shared behavior and data-flow changes
@@ -145,7 +145,8 @@ the answer.
   task-event SSE v2 cursor discipline, whose rules are stated once in
   ARCHITECTURE §3 "Chat and Projects".
 
-Enforcement: Repo Commit Checklist item 24 (advisory) triggers on diffs that
+Enforcement: Change Review Checklist item 9 `perf_lifecycle` (advisory; its
+body addresses point here) triggers on diffs that
 change data readers, startup/shutdown or other batch operations, or an
 endpoint/poller/subscription/timer; the deterministic runtime tripwire is
 `agent_startup_checks.py::hot_store_growth_notes`, surfaced by
@@ -200,7 +201,7 @@ affect review authority; window sizing and reading diagnostics alone may not
 (BIBLE P3). Neither case blanks, rewrites or relabels the artifact or its
 original cause.
 
-Enforcement: CHECKLISTS item 25 `source_completeness` (critical when
+Enforcement: CHECKLISTS item 21 `source_completeness` (critical when
 applicable) scores the chain in commit review; the presentation-adapter
 contracts below are pinned by the named web tests.
 
@@ -303,10 +304,14 @@ are excluded from the settings-dirty tracker, never reach `/api/settings` or
 prompt to discard unsaved settings (`tests/test_notifications_static.py` asserts
 these causes, not just effects). Delivery degrades instead of disappearing;
 the status line identifies this client's surface. Feature-detect the optional
-desktop bridge per call at delivery: its result is capability evidence, not a
-banner/delivery claim. It may raise the existing window and request one system
-sound; no scheduler, persistence or background process. Importance adds no host
-field, text heuristic or second model call.
+desktop bridge per call at delivery: only `show_native_notification`'s `submitted`
+is a delivery and its `unknown` may still be one (the OS owns the sound, so no page
+tone or second surface follows); attention results are capability evidence, and
+delivery never asks for OS permission. Sound off skips legacy `notify_owner`
+when `show_native_notification` is absent: its balloon cannot be silenced. It
+may raise the existing window and request one system sound; no scheduler,
+persistence or background process.
+Importance adds no host field, text heuristic or second model call.
 
 ### Invariant: UI resources carry a disposer
 
@@ -334,7 +339,7 @@ disposer for its observers and pending frame.
 
 Enforcement (honest disclosure): the deterministic leak test runs in the
 release-tier `ui_browser` lane, not at commit tier; commit-tier coverage is
-the advisory Repo Commit Checklist item 24. The class is closed
+the advisory Change Review Checklist item 9 `perf_lifecycle`. The class is closed
 deterministically for the instrumented surfaces and advisorily for future
 ones.
 
@@ -366,7 +371,7 @@ where missing or malformed job status is an immediate protocol error while an
 unknown non-empty in-progress label remains a bounded pending state for
 producer compatibility.
 
-Enforcement: Repo Commit Checklist item 24 points lifecycle changes here
+Enforcement: Change Review Checklist item 9 `perf_lifecycle` points lifecycle changes here
 instead of re-deriving a second domain-specific rule; the widget
 geometry/refresh contracts are pinned in `tests/test_widgets_ui_static.py` and
 `tests/test_extension_surfaces.py`.

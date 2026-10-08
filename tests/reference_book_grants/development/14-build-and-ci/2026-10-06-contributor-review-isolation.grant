@@ -1,0 +1,3 @@
+161
+Bare pytest also drops the isolated review's run cap and engine attach selection, so no test reaches a
+host engine.

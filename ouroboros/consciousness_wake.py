@@ -203,7 +203,8 @@ class _ChatChain(JsonlChainSnapshot):
 
     Offsets count bytes across the chain; archives are never pruned, so an
     accepted boundary stays a valid position across rotations. Only complete
-    rows are returned: an unfinished live line belongs to the next wake.
+    rows are returned (``JsonlChainSnapshot.rows``): an unfinished live line
+    belongs to the next wake.
     """
 
     def first_line_sha256(self, index: int) -> str:
@@ -223,29 +224,6 @@ class _ChatChain(JsonlChainSnapshot):
                     if first:
                         return hashlib.sha256(first.encode("utf-8", errors="replace")).hexdigest()
         return ""
-
-    def rows(self, index: int, lower: int, gaps: set) -> Tuple[List[Tuple[int, Dict[str, Any]]], int]:
-        """``([(offset, row)], end of the last complete line)`` of one segment from ``lower``."""
-        base, end = self.segment(index)
-        start = max(base, lower)
-        if start >= end:
-            return [], start
-        data, rows, position = self._read(start, end), [], start
-        for raw in data.splitlines(keepends=True):
-            if not raw.endswith(b"\n"):
-                if self.entries[index][2]:
-                    break  # an unfinished live line: the next pass reads it whole
-                gaps.add("torn_archive_line")
-            position += len(raw)
-            try:
-                row = json.loads(raw)
-            except (ValueError, UnicodeDecodeError):
-                if raw.strip():
-                    gaps.add("malformed_jsonl")
-                continue
-            if isinstance(row, dict):
-                rows.append((position - len(raw), row))
-        return rows, position
 
 
 def _boundary_segment(chain: _ChatChain, boundary: Any) -> Optional[int]:

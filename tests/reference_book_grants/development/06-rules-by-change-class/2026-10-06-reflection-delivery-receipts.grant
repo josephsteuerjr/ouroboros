@@ -1,0 +1,3 @@
+316
+The completion-snapshot rule says transport receipts stay out of the frozen snapshot and are read only by a
+newly written reflection, once after admission, with the enforcing test named.

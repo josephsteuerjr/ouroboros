@@ -187,7 +187,7 @@ def _project_room_fact(task: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 def _runtime_budget_info(env: Any, task: Dict[str, Any], ctx: Any = None) -> Dict[str, Any]:
     """Start-of-task budget block: global projection + the STATIC per-task tree cap,
     written once at task start so the cached prefix stays byte-stable (DEVELOPMENT
-    cache_friendliness item 22); live tree spend rides only the cache-breaking
+    cache_friendliness item 28); live tree spend rides only the cache-breaking
     surfaces (checkpoint/pacing/milestones)."""
     try:
         from ouroboros.usage_accounting import usage_projection

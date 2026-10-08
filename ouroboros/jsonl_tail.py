@@ -1,8 +1,9 @@
 """Rotation-aware JSONL reads: captured byte ranges and bounded filtered tails.
 
 ``JsonlChainSnapshot`` shares physical capture/read/segment ownership between
-history pagination and wake observations, whose parsing and selection policies
-remain separate. The filtered-tail reader below serves context and endpoints.
+history pagination, wake observations and the reflection's transport-receipt
+evidence, whose selection policies remain separate. The filtered-tail reader
+below serves context and endpoints.
 
 Moved here from ``gateway/_helpers.py`` (v6.90.x P2) so that context assembly
 (``memory.py``, razzant/ouroboros#131) can use the same window-doubling
@@ -27,9 +28,10 @@ archives were left unopened — the fact a continuity disclosure needs.
 
 from __future__ import annotations
 
+import json
 import os
 import pathlib
-from typing import Any, Callable, Iterable, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from ouroboros.utils import JsonlChainUnreadable, iter_jsonl_objects, jsonl_chain_handles
 
@@ -38,17 +40,20 @@ ARCHIVE_BACKFILL_MAX = 3
 
 
 class JsonlChainSnapshot:
-    """One captured byte horizon shared by history pages and wake observations.
+    """One captured byte horizon shared by history pages, wake observations and receipt evidence.
 
     Reads reopen through the rotation-aware handle owner and never cross the
-    captured horizon. No descriptor survives a read. Callers own row parsing,
-    unfinished-line handling, gaps and the boundary they accept; this reader
-    imposes neither a tail quota nor a timestamp policy.
+    captured horizon. No descriptor survives a read. ``rows`` is the complete-row
+    reader of wake observations and receipt evidence; history keeps its own
+    parser. Callers own the meaning of gaps and the boundary they accept; this
+    reader imposes neither a tail quota nor a timestamp policy. ``strict=False``
+    captures only what could be listed and opened, so a caller using it must
+    disclose that degraded capture itself.
     """
 
-    def __init__(self, path: pathlib.Path, *, upper: Optional[int] = None):
+    def __init__(self, path: pathlib.Path, *, upper: Optional[int] = None, strict: bool = True):
         self.path, self.snapshot = path, {}
-        with jsonl_chain_handles(path, strict=True, start_offset=0, snapshot=self.snapshot):
+        with jsonl_chain_handles(path, strict=strict, start_offset=0, snapshot=self.snapshot):
             pass
         self.entries, self.ends = self.snapshot["entries"], self.snapshot["ends"]
         self.upper = self.snapshot["total"] if upper is None else upper
@@ -75,6 +80,33 @@ class JsonlChainSnapshot:
 
     def segment(self, index: int) -> tuple[int, int]:
         return (self.ends[index - 1] if index else 0), min(self.ends[index], self.upper)
+
+    def rows(self, index: int, lower: int, gaps: set) -> Tuple[List[Tuple[int, Dict[str, Any]]], int]:
+        """``([(offset, row)], end of the last complete line)`` of one segment from ``lower``.
+
+        An unfinished live line stops the segment (its writer owns it; the next
+        pass reads it whole); a torn archive line is named in ``gaps``.
+        """
+        base, end = self.segment(index)
+        start = max(base, lower)
+        if start >= end:
+            return [], start
+        data, rows, position = self._read(start, end), [], start
+        for raw in data.splitlines(keepends=True):
+            if not raw.endswith(b"\n"):
+                if self.entries[index][2]:
+                    break  # an unfinished live line: the next pass reads it whole
+                gaps.add("torn_archive_line")
+            position += len(raw)
+            try:
+                row = json.loads(raw)
+            except (ValueError, UnicodeDecodeError):
+                if raw.strip():
+                    gaps.add("malformed_jsonl")
+                continue
+            if isinstance(row, dict):
+                rows.append((position - len(raw), row))
+        return rows, position
 
 
 def archive_segments(archive_dir: pathlib.Path, archive_prefix: str, gaps: Optional[set] = None) -> list:

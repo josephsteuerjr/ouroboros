@@ -25,7 +25,7 @@ This chapter owns the rules that keep the body legible from outside: naming and 
   replay; never infer it from text, never promote host-selected intermediate
   output to a model final (`tests/test_terminal_provenance.py`).
 
-Enforcement: CHECKLISTS item 2 `development_compliance` (a)/(b); one CI guard
+Enforcement: CHECKLISTS item 11 `development_compliance` (a)/(b); one CI guard
 for the transport/core direction (the "Guard extracted transport imports stay out
 of core" step in `.github/workflows/ci.yml`); the rest is review-only.
 
@@ -80,7 +80,7 @@ Never lower model quality, reasoning effort, output budget or context breadth as
 an incidental latency/cost optimization (BIBLE P1). An intentional narrowing is a
 recorded decision carried in plan, docs, tests and evidence; outside Cyber Pro it
 belongs to the owner, and Cyber's own configuration authority follows BIBLE P0/P3
-without rewriting earlier call facts. Review-only: CHECKLISTS items 1 and 21,
+without rewriting earlier call facts. Review-only: CHECKLISTS items 10 and 7,
 whose named failure class is an accidental narrowing.
 
 ### LLM-first affordances
@@ -154,7 +154,7 @@ only when its text IS the string the handler returned — and a supervising wake
 acknowledged on the `supervision_wake_id` that result publishes, never on the
 tool's name (ARCHITECTURE §6 "Delegated subagents").
 
-Enforcement: CHECKLISTS item 13(b) scores the prompt-edit discipline; the
+Enforcement: CHECKLISTS item 15(b) scores the prompt-edit discipline; the
 owner-judgment and recoverable-failure boundaries are review-only;
 `tests/test_typed_tool_refusals.py` is the shrink-only source lint over returned literals in `ouroboros/tools/`,
 flagging identifier-less heads (and, growth-only, interpolated `⚠️ {code}` heads,
@@ -233,7 +233,7 @@ chapter adds one grant file holding that change's net growth and the reason,
 never an edit to a shared number; a compression pass folds the grants into the
 base. Local surfaces never block on the budget; a malformed grant file fails
 every default lane.
-Equivalent historical prose stays review-only under CHECKLISTS item 7.
+Equivalent historical prose stays review-only under CHECKLISTS item 5.
 
 ### Current state first (ARCHITECTURE invariant 10)
 
@@ -446,7 +446,7 @@ it grants no runtime authority.
 
 One configured provider must be sufficient for the agent loop, commit review,
 scope policy, safety, and context/memory flows; core capability must not acquire
-a hidden OpenRouter or second-provider dependency. (CHECKLISTS item 2(h) and
+a hidden OpenRouter or second-provider dependency. (CHECKLISTS item 11(h) and
 ARCHITECTURE both point here; this is the SSOT sentence.)
 
 Tool-schema changes are provider-contract changes: validate the full shipped

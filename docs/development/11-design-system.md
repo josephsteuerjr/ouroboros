@@ -44,6 +44,7 @@ This chapter owns the engineering rules that preserve the visual and interaction
   countdown, the reading anchor, keyboard focus, a reconnect and a reload in
   Chromium and WebKit at desktop and phone width; `test_ui_result_browser.py`
   answers from Main against a real server and replays the Project record.
+- **The delivered-document reader** (`document_reader.js`; semantics DESIGN "Document reading") reads only the delivered copy and answers a refused one (404/409/503) with its cause, never from another address; Markdown goes through `mountChatMarkdown(…, { softBreaks: true })`, so sanitizing, literal HTML and unloaded images stay one implementation. Every body, a refusal's too, is read as a stream to its bound (a body that cannot stream is refused, never read whole) within one 30 s bound that only Retry restarts. Close, `chat_media.release` (of the item, which a grouped file carries into an earlier bubble), `closeTransient` (app.js: the chat leaves the screen but is kept) and `destroy` abort the read and dispose enhancements, and a late answer paints nothing; its controls are `.btn.btn-default`; its name, size line and text carry `data-i18n-authored`, so the language overlay leaves their text and attributes alone. Enforced by `web/tests/document_reader.test.js`, `web/tests/chat_media.test.js`, `web/tests/i18n.test.js` and the `ui_browser` `tests/test_ui_document_reader_browser.py` (real `send_file` in Main and a Project room, reload, leaving a room, notification and page navigation with staged files, a translated UI, Chromium/WebKit, 1473×978/390×844).
 - **The Project completion mirror is an ordinary message, not a second renderer**: a `completion_answer` on the row goes through `addMessage` as an assistant message, and only `project_answer.js::decorateProjectRow` adds the fold class and the Project reference; the fold is CSS over the complete text. `tests/test_project_completion_mirror.py` pins the producer gate both ways and live = durable = replay; `web/tests/chat_plain_system_rows.test.js` pins both renderings.
 - **A list editor** reveals the entry it just added through `ui_helpers.revealNewRow(row, field)` — the one seam for "scrolled into view, caret in the first field" — and a freshly added entry shows no error before the owner tries to save. `tests/test_available_subagents_ui_static.py` pins the seam; the `ui_browser` acceptance in `tests/test_ui_smoke_agents_panel.py` pins the behaviour.
 - **Authorship:** follow DESIGN's chat-voice rule on backend and frontend alike (CHECKLISTS item 30). `tests/test_host_message_voice.py` pins the AST boundary/exceptions; `tests/test_progress_narration_voice.py` pins live/history parity.
@@ -73,7 +74,7 @@ select is not clipped there — so a change to a control recipe or a page
 scroll body is verified on the engine that shows the class (Playwright
 WebKit for native-control clipping, Chromium for engine-independent track
 geometry), measuring overflow on the scroll body's `scrollWidth` rather than
-on `documentElement`. Review-only: scored by CHECKLISTS items 2(i) and 30
+on `documentElement`. Review-only: scored by CHECKLISTS items 11(i) and 30
 (`web_design_system`).
 
 ### Browser dialogs

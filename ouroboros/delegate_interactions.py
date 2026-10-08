@@ -472,15 +472,17 @@ def _delegate_answer(
     verified_source = None
     if source_response is not None:
         from ouroboros.subagent_work_order import validate_work_order_source_response
+        from ouroboros.delegate_source_coverage import source_request_for_response
 
-        if str(entry.work_order_coverage or "") != "partial":
+        if (str(entry.work_order_coverage or "") != "partial"
+                and not entry.work_order_source_request.get("inherited_sources")):
             return _fail(
                 "delegate_answer", "source_response_not_required",
                 "This delegated run has no partial work-order source request; do not "
                 "send source_response metadata for it.", run_id=rid,
             )
         verified_source, source_error = validate_work_order_source_response(
-            ctx, entry.work_order_source_request, source_response,
+            ctx, source_request_for_response(entry, source_response), source_response,
         )
         if source_error or verified_source is None:
             return _fail(

@@ -114,6 +114,7 @@ async function showPage(name, options = {}) {
             const canLeave = await handler({ from: state.activePage, to: pageName });
             if (canLeave === false) return false;
         }
+        if (state.activePage === 'chat') mainChat?.closeTransient?.();
         document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
         document.getElementById(`page-${pageName}`)?.classList.add('active');
         state.activePage = pageName;
@@ -271,6 +272,10 @@ getNotifier().attach({
 getNotifier().configure({
     showToast,
     onActivate: (target) => {
+        // A notification leads to its message: no document stays open over it,
+        // in Main or in any room, whichever chat it names.
+        mainChat?.closeTransient?.();
+        for (const inst of projectInstances.values()) inst.closeTransient?.();
         const chatId = Number(target?.chatId);
         const project = Array.isArray(lastProjectRows)
             ? lastProjectRows.find((row) => Number(row?.chat_id) === chatId)
@@ -321,6 +326,8 @@ function destroyProjectInstance(pid) {
     const inst = projectInstances.get(pid);
     if (!inst) return;
     if (inst.hasPendingWork?.()) {
+        // Kept for its staged files; a reader it opened does not stay over the next view.
+        inst.closeTransient?.();
         inst.page.hidden = true;
         inst.page.dataset.pendingWork = '1';
         cancelProjectPaint(pid, inst);
@@ -340,6 +347,7 @@ function closeProjectPanel({ sync = true } = {}) {
     if (activeId) destroyProjectInstance(activeId);
     // Anything left is a hidden pending-work survivor; keep it hidden.
     for (const [pid, inst] of projectInstances) {
+        inst.closeTransient?.();
         inst.page.hidden = true;
         cancelProjectPaint(pid, inst);
     }
@@ -364,6 +372,8 @@ async function openProjectPanel(project, { closeDrawer = true, openOnly = false,
     try {
         const movedToChat = await showPage('chat', { closeProject: false, closeDrawer: false });
         if (movedToChat === false || navigation !== projectNavigationGeneration) return;
+        // The room covers Main: a document Main had open closes rather than sit over it.
+        mainChat?.closeTransient?.();
         navState.activeProjectId = project.id;
         projectPanelTitle.textContent = project.name || project.id;
         // One live panel: every OTHER project instance is destroyed (or hidden and
@@ -393,7 +403,10 @@ async function openProjectPanel(project, { closeDrawer = true, openOnly = false,
         delete inst.page.dataset.pendingWork;
         for (const [pid, other] of projectInstances) {
             other.page.hidden = pid !== project.id;
-            if (pid !== project.id) cancelProjectPaint(pid, other);
+            if (pid !== project.id) {
+                other.closeTransient?.();
+                cancelProjectPaint(pid, other);
+            }
         }
         if (closeDrawer) navState.mobileDrawerOpen = false;
         syncNavigationState();

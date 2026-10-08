@@ -356,11 +356,15 @@ def review_wave_admission(
                 remaining = round(max(0.0, limit - accounted), 6)
                 result.update(limit_usd=limit, accounted_usd=accounted, reserved_usd=holds(projection),
                               binding_axis="root")
-            bound_scope = ua.current_usage_scope() or ua.UsageScope()
-            resolved = effective_billing_fields(drive_root, bound_scope.root_task_id, {
-                key: getattr(bound_scope, key) for key in ("billing_group_id", "billing_group_limit_usd",
-                    "billing_group_limit_source", "billing_group_limit_revision")})
-            group, group_limit = scope_group(replace(bound_scope, **resolved))
+            # Resolve the same task-bound durable group and owner amendments
+            # as a seat reservation, without reserving money or pinning a binding.
+            # A raised in-memory root fence alone cannot raise the original group.
+            _, bound_scope = ua._merge_scope(ua.AttemptRequest(
+                model="", provider="", drive_root=drive_root,
+                task_id=task_id, root_task_id=root_task_id,
+                root_limit_usd=root_limit_usd,
+            ))
+            group, group_limit = scope_group(bound_scope)
             if group.startswith(UNAVAILABLE_GROUP_PREFIX):
                 return {**result, "fits": False, "binding_axis": "group", "reason": "billing_authority_unavailable"}
             if group and group_limit is not None:
@@ -460,12 +464,10 @@ def current_usage_projection(
             projection = projection_view(txn, root_task_id=root_task_id, billing_group_id=billing_group_id,
                                          degraded=usage_store.integrity_degraded(root))
         return amended_projection(root, billing_group_id or root_task_id, projection, group=bool(billing_group_id))
-    if global_limit_usd is not None:
-        configured_limit = max(0.0, float(global_limit_usd))
-    else:
+    if global_limit_usd is None:
         from ouroboros.settings_setup_contract import resolve_total_budget_usd
-        configured_limit = resolve_total_budget_usd() or 0.0
-    limit = configured_limit if (global_limit_usd is not None or configured_limit > 0) else None
+        global_limit_usd = resolve_total_budget_usd()  # None: no limit; an unreadable run cap is 0.0
+    limit = None if global_limit_usd is None else max(0.0, float(global_limit_usd))
     with usage_store.read(root, allow_stale=allow_stale) as txn:
         return projection_view(txn, limit=limit, include_roots=include_roots,
                                degraded=usage_store.integrity_degraded(root))

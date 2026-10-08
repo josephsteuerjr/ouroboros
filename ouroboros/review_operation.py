@@ -97,6 +97,8 @@ def controller_state(identity: Any) -> str:
     controller gone. A live pid is the recorded controller only with the same
     birth token (a reused pid proves the original gone); a live pid with no
     recorded or readable birth is ``unknown``.
+    For our own pid/birth, distinct nonempty custody sessions prove the old
+    controller gone after exec. Another process's session cannot prove that.
     """
     try:
         pid = int(identity.get("pid") or 0) if isinstance(identity, dict) else 0
@@ -111,7 +113,10 @@ def controller_state(identity: Any) -> str:
             return "unknown"
         if birth != own["birth"]:
             return "dead"
-        return "local" if str(identity.get("session") or "") == own["session"] else "unknown"
+        session = str(identity.get("session") or "")
+        if not session or not own["session"]:
+            return "unknown"
+        return "local" if session == own["session"] else "dead"
     from ouroboros.platform_layer import pid_is_alive, process_start_time
     from ouroboros.process_containment import pid_is_zombie
 

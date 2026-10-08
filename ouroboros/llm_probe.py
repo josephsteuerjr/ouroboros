@@ -59,6 +59,14 @@ def _accounted_send(
     )
 
 
+def accounted_one_shot(target: dict[str, Any], candidate: dict[str, Any], send, *, source: str) -> Any:
+    """One accounted provider-test send attributed to ``system:<source>``; at most one physical attempt."""
+    task_id = f"system:{source}"
+    with usage_scope(UsageScope(task_id=task_id, root_task_id=task_id, category="provider_test",
+                                non_task_operation=True, source=source)), physical_attempt_limit(1):
+        return _accounted_send(target, candidate, send, source=source)
+
+
 def probe_oversized_context(
     client,
     model: str,
@@ -381,16 +389,7 @@ def probe_provider_readiness(
         else:
             raise ValueError("unsupported provider route")
 
-        with usage_scope(UsageScope(
-            task_id="system:provider_test",
-            root_task_id="system:provider_test",
-            category="provider_test",
-            non_task_operation=True,
-            source="provider_test",
-        )), physical_attempt_limit(1):
-            response = _accounted_send(
-                target, candidate, dispatch, source="provider_test",
-            )
+        response = accounted_one_shot(target, candidate, dispatch, source="provider_test")
         if not _valid_completion_envelope(response, provider):
             raise ProbeEnvelopeError("provider returned no completion envelope")
         return {
@@ -412,6 +411,7 @@ def probe_provider_readiness(
 __all__ = [
     "PROVIDER_TEST_MAX_TOKENS",
     "PROVIDER_TEST_PROMPT",
+    "accounted_one_shot",
     "controlled_probe_error",
     "probe_oversized_context",
     "probe_provider_readiness",

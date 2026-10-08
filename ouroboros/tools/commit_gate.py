@@ -589,6 +589,7 @@ def _record_commit_attempt(
         paid = _req("paid", False)
         review_contract_fingerprint = _req("review_contract_fingerprint")
         review_retry_key = _req("review_retry_key")
+        review_record_id = str(_req("review_record_id") or getattr(ctx, "_current_review_record_id", "") or "")
         root_task_id = resolve_root_task_id(ctx)
         dr = pathlib.Path(ctx.drive_root)
         repo_key = make_repo_key(pathlib.Path(ctx.repo_dir))
@@ -769,6 +770,7 @@ def _record_commit_attempt(
                 review_owner_pid=int(
                     getattr(existing, "review_owner_pid", 0) or 0
                 ),
+                review_record_id=review_record_id or str(getattr(existing, "review_record_id", "") or ""),
             )
             if status != "reviewing" and "late_result_pending" not in legacy_kwargs and not review_enforcement_blocks("blocking"):
                 attempt.late_result_pending = bool(getattr(existing, "late_result_pending", False)) or _attempt_has_active_review_custody(attempt)
@@ -1179,7 +1181,8 @@ def _return_commit_feedback(ctx: ToolContext, message: str, started: float, befo
     state = load_state(pathlib.Path(ctx.drive_root))
     row = state.latest_attempt_for(repo_key=make_repo_key(pathlib.Path(ctx.repo_dir)),
         task_id=str(getattr(ctx, "task_id", "") or ""), tool_name="commit_reviewed", attempt=ctx._current_review_attempt_number)
-    reference = {"surface": "commit", **{key: getattr(row, key) for key in ("repo_key", "task_id", "tool_name", "attempt", "pre_review_fingerprint")}}
+    reference = {"surface": "commit", **{key: getattr(row, key) for key in ("repo_key", "task_id", "tool_name", "attempt", "pre_review_fingerprint")},
+                 "review_record_id": str(getattr(row, "review_record_id", "") or "")}
     choice = ("Inspect the outcome, then revise/request review, stop, or explicitly continue in Advisory using the same "
               "commit tool with review_reference and author_disposition {disposition: accepted|rejected|partial|deferred, "
               "rationale: ...}. Author continuation buys no reviewer cycle. ")
@@ -1276,3 +1279,201 @@ def prepare_author_commit_request(ctx: ToolContext, review_reference: Any, autho
         except (OSError, ValueError) as exc:
             return _publish_tool_result(ctx, ToolResult(status="error", code="TOOL_ARG_ERROR", text=f"ERROR: REVIEW_AUTHOR_CONTINUATION_INVALID: {exc}"))
     return None
+
+
+# ---- Review ledger hook (ARCHITECTURE §6 "Review ledger record") ------------
+
+def _review_preflight_facts(ctx: ToolContext, commit_message: str, advisory_paths: Optional[List[str]]) -> Dict[str, Any]:
+    """The advisory pre-review that admitted this candidate, keyed by its snapshot identity."""
+    from ouroboros.review_state import compute_snapshot_hash, load_state, make_repo_key
+
+    try:
+        snapshot_hash = compute_snapshot_hash(pathlib.Path(ctx.repo_dir), commit_message, paths=advisory_paths)
+        run = load_state(pathlib.Path(ctx.drive_root)).find_by_hash(snapshot_hash, repo_key=make_repo_key(pathlib.Path(ctx.repo_dir)))
+    except Exception:
+        return {"status": "not_performed", "record_id": "", "advisory_status": "unknown"}
+    status = str(getattr(run, "status", "") or "")
+    return {"status": "not_performed" if run is None else "skipped" if status == "bypassed" else "performed",
+            "record_id": snapshot_hash if run is not None else "", "advisory_status": status or "missing"}
+
+
+def _review_body_facts(ctx: ToolContext) -> Dict[str, Any]:
+    """The gate reviews the system repository (``_repo_commit_push`` refuses any other
+    root), so its wave runs the body layer; the record states that through the same
+    predicate ``review_change`` uses (``review_body_fact.body_fact``), never by assertion.
+    An unanswerable predicate leaves the layer facts out (the ledger says ``unknown``)."""
+    try:
+        from ouroboros.review_body_fact import body_fact, layer_for
+        from ouroboros.review_ledger import ledger_root
+        from ouroboros.tools.tool_resolution import system_repo_dir_for
+
+        system = str(system_repo_dir_for(ctx))
+        fact = body_fact(ctx.repo_dir, system_repo=system, data_dir=ledger_root(ctx))
+        return {"governance_root": system, "layer": layer_for(fact), "body_fact": str(fact.body),
+                "body_how": str(fact.how)}
+    except Exception:
+        log.warning("review body fact unavailable for the commit gate record", exc_info=True)
+        return {}
+
+
+def _review_ledger_facts(ctx: ToolContext, commit_message: str, *, goal: str, scope: str, pre_fingerprint: dict,
+                         advisory_paths: Optional[List[str]], blocked: bool, block_reason: str,
+                         combined_findings: Optional[list], dispatch_refusal: Optional[dict], pending: bool) -> Dict[str, Any]:
+    """Everything the ledger record states about THIS attempt, read from the gate's own
+    forensic fields (no second reading of any reviewer output)."""
+    from ouroboros.config import get_review_enforcement
+    from ouroboros.review_records import ReviewRequest, resolve_review_wave
+    from ouroboros.tools import git as git_mod
+
+    task_id = str(getattr(ctx, "task_id", "") or "")
+    enforcement = str(get_review_enforcement() or "")
+    # THIS wave's own execution rows (stashed by the substrate as it recorded them), never the
+    # shared last-execution projection another surface may have overwritten meanwhile.
+    executions = dict(getattr(ctx, "_last_review_slot_executions", {}) or {})
+    try:
+        mode = str(git_mod._current_runtime_mode() or "")
+    except Exception:
+        mode = ""
+    tests_passed = getattr(ctx, "_preflight_tests_passed", None)
+    pre_fingerprint = pre_fingerprint or {}
+    return {
+        **_review_body_facts(ctx),
+        "task_id": task_id, "root_task_id": resolve_root_task_id(ctx),
+        "review_wave_id": resolve_review_wave(ReviewRequest(
+            surface="commit_gate", goal=goal or commit_message, task_id=task_id,
+            retry_key=str(getattr(ctx, "_current_review_retry_key", "") or "")), {}, ""),
+        "repo_dir": str(ctx.repo_dir), "goal": goal, "scope": scope, "commit_message": commit_message,
+        "binding": dict(pre_fingerprint.get("binding") or {}),
+        "binding_fingerprint": str(pre_fingerprint.get("fingerprint") or ""),
+        "review_contract_fingerprint": str(getattr(ctx, "_current_review_contract_fingerprint", "") or ""),
+        "rebuttal_sha256": str(getattr(ctx, "_current_review_rebuttal_sha256", "") or ""),
+        "enforcement": enforcement, "mode": mode, "enforcement_blocks": bool(review_enforcement_blocks(enforcement)),
+        "structured": dict(getattr(ctx, "_last_review_structured", {}) or {}), "slot_executions": executions,
+        "triad_raw": list(getattr(ctx, "_last_triad_raw_results", []) or []),
+        "scope_raw": dict(getattr(ctx, "_last_scope_raw_result", {}) or {}),
+        "blocked": bool(blocked), "block_reason": str(block_reason or ""),
+        "dispatch_refusal": dispatch_refusal, "pending": bool(pending),
+        "degraded_reasons": list(getattr(ctx, "_review_degraded_reasons", []) or []),
+        "critical_findings": list(combined_findings or getattr(ctx, "_last_review_critical_findings", []) or []),
+        "advisory_findings": list(getattr(ctx, "_last_review_advisory_findings", []) or []),
+        "tests": _review_tests_facts(ctx, tests_passed),
+        "preflight": _review_preflight_facts(ctx, commit_message, advisory_paths),
+    }
+
+
+def name_review_record(ctx: ToolContext, result: Any) -> Any:
+    """Every outcome of a commit call that wrote a review record names it (DEVELOPMENT 05):
+    passed, blocked, pending, refused after the wave, or failed at the commit itself. The id
+    is this call's own (reset at the start of every call); ID-less exits stay ID-less."""
+    record_id = str(getattr(ctx, "_current_review_record_id", "") or "")
+    if not record_id or not isinstance(result, str) or record_id in result:
+        return result
+    from ouroboros.tools.tool_result import append_published_text
+
+    return append_published_text(ctx, result, f"\nreview_record_id: {record_id}")
+
+
+def _review_tests_facts(ctx: ToolContext, tests_passed: Any) -> Dict[str, Any]:
+    """``passed`` only for THIS candidate: the runner's flag is process state that outlives
+    the checkout it tested, so it counts only when the process-held test proof still covers
+    the current tree/index/workload (``commit_admission.PreflightTestProof``); a skipped
+    or stale run is ``NOT_RUN`` with its reason, never a passed result borrowed from an
+    earlier candidate."""
+    if tests_passed is not True:
+        return {"policy": "NOT_RUN", "result": "unknown"}
+    try:
+        from ouroboros.commit_admission import preflight_test_proof_matches
+
+        bound = bool(preflight_test_proof_matches(ctx, ctx.repo_dir))
+    except Exception:
+        bound = False
+    if bound:
+        return {"policy": "run", "result": "passed", "proof": "candidate_bound"}
+    return {"policy": "NOT_RUN", "result": "unknown", "reason": "tests_proof_not_for_this_candidate"}
+
+
+def settle_commit_review_ledger(ctx: ToolContext, commit_message: str, *, goal: str = "", scope: str = "",
+                                pre_fingerprint: Optional[dict] = None, advisory_paths: Optional[List[str]] = None,
+                                blocked: bool = False, block_reason: str = "", combined_findings: Optional[list] = None,
+                                author_source: Any = None, advisory_replay: Optional[dict] = None) -> str:
+    """Write THIS attempt's review ledger record once the gate has aggregated its verdict
+    and bind the id to the attempt row and the tool result (``_current_review_record_id``).
+
+    A dispatched wave is a ``settled`` record, or ``pending`` while custody is still
+    open; settling that same attempt later raises the record's ``revision``. A free
+    replay (identical diff, exhausted cycles, pending custody) and a wave the budget
+    fence declined are ``NOT_DISPATCHED`` records naming their cause. An explicit author
+    continuation buys no record: it notes the author's decision on the record it answered.
+    Ledger failure never changes the gate's decision; it is logged and the id stays ""."""
+    from ouroboros import review_ledger as ledger
+    from ouroboros.tools import git as git_mod
+
+    ctx._current_review_record_id = ""
+    try:
+        root = ledger.ledger_root(ctx)
+        if author_source is not None:
+            prior = str(getattr(author_source, "review_record_id", "") or "")
+            if prior and ledger.load_record(root, prior) is not None:
+                ledger.note_author_decision(root, prior, dict(getattr(ctx, "_author_commit_record", None) or {}))
+                ctx._current_review_record_id = prior
+            return ctx._current_review_record_id
+        structured = dict(getattr(ctx, "_last_review_structured", {}) or {})
+        refusal = None
+        if advisory_replay is not None:
+            refusal = {"kind": str(advisory_replay.get("replay_reason") or "free_replay"),
+                       "message": str(advisory_replay.get("advisory_replay") or "")}
+        elif str(getattr(ctx, "_last_review_block_reason", "") or "") == "review_wave_budget_insufficient":
+            refusal = {"kind": "review_wave_budget_insufficient", "message": str(structured.get("wave_refusal") or "")}
+        pending = advisory_replay is None and bool(git_mod._review_custody_pending(ctx))
+        facts = _review_ledger_facts(
+            ctx, commit_message, goal=goal, scope=scope, pre_fingerprint=pre_fingerprint or {},
+            advisory_paths=advisory_paths, blocked=blocked, block_reason=block_reason,
+            combined_findings=combined_findings, dispatch_refusal=refusal, pending=pending)
+        # The exact retry of a pending attempt (same retry key, overlap check bound it)
+        # settles THAT attempt's record; the roster release already cleared the
+        # reconcile flag by the time the verdict is aggregated.
+        attempt, retry_key = getattr(ctx, "_pending_review_attempt", None), str(getattr(ctx, "_current_review_retry_key", "") or "")
+        prior = str(getattr(attempt, "review_record_id", "") or "") if attempt is not None and retry_key and str(
+            getattr(attempt, "review_retry_key", "") or "") == retry_key else ""
+        existing = ledger.load_record(root, prior) if prior else None
+        if existing is not None and existing.get("state") == ledger.STATE_PENDING:
+            fresh = ledger.build_commit_gate_record(facts, record_id=prior, drive_root=root).to_dict()
+            ledger.revise_record(root, prior, lambda payload: {**fresh, "revision": payload["revision"], "ts": payload["ts"]})
+            ctx._current_review_record_id = prior
+        else:
+            record = ledger.build_commit_gate_record(facts, drive_root=root)
+            ctx._current_review_record_id = str(ledger.write_record(root, record)["record_id"])
+        from ouroboros.reviewer_slot_config import bind_reviewer_slot_record_id
+
+        bind_reviewer_slot_record_id(facts.get("slot_executions") or {}, ctx._current_review_record_id)
+        _bind_attempt_record_id(ctx, ctx._current_review_record_id)
+    except Exception:
+        log.warning("review ledger record could not be written for this commit attempt", exc_info=True)
+    return str(ctx._current_review_record_id or "")
+
+
+def _bind_attempt_record_id(ctx: ToolContext, record_id: str) -> None:
+    """Name the record on THIS attempt's custody row as soon as it exists (the terminal
+    write repeats the id); only the id changes, no lifecycle field is touched."""
+    from ouroboros.review_state import make_repo_key, update_state
+
+    number = getattr(ctx, "_current_review_attempt_number", None)
+    if not record_id or not number:
+        return
+
+    def _mutate(state):
+        row = state.latest_attempt_for(repo_key=make_repo_key(pathlib.Path(ctx.repo_dir)), tool_name=_current_review_tool_name(ctx),
+                                       task_id=str(getattr(ctx, "task_id", "") or ""), attempt=int(number))
+        if row is not None:
+            row.review_record_id = record_id
+
+    update_state(pathlib.Path(ctx.drive_root), _mutate)
+
+
+def record_commit_gate_refusal(ctx: ToolContext, commit_message: str, *, goal: str = "", scope: str = "",
+                               pre_fingerprint: Optional[dict] = None, kind: str, message: str) -> str:
+    """A blocking free refusal before any dispatch (identical diff, exhausted cycles) is a
+    ``NOT_DISPATCHED`` ledger record: the owner sees WHY nothing was reviewed."""
+    return settle_commit_review_ledger(
+        ctx, commit_message, goal=goal, scope=scope, pre_fingerprint=pre_fingerprint,
+        blocked=True, block_reason=kind, advisory_replay={"replay_reason": kind, "advisory_replay": message})

@@ -499,3 +499,21 @@ def test_the_chronicle_journal_is_an_enrolled_hot_store_that_warns_only_past_its
     journal.write_bytes(b"x" * 11)
     [note] = hot_store_growth_notes(env)
     assert "memory/chronicle/records.jsonl" in note and "never delete records" in note
+
+
+def test_the_review_ledger_index_chain_is_an_enrolled_hot_store(tmp_path, monkeypatch):
+    """The ledger's hot index rotates itself; the rotated segments are replayed only by readers
+    that walk the chain, so the chain's total size is a tripwire like the chat archive chain."""
+    from ouroboros import context_budget
+    from ouroboros.agent_startup_checks import hot_store_growth_notes
+
+    monkeypatch.setattr(context_budget, "REVIEW_LEDGER_INDEX_WARN_BYTES", 10)
+    env = types.SimpleNamespace(drive_root=tmp_path, drive_path=lambda rel: tmp_path / rel)
+    ledger = tmp_path / "state" / "review_ledger"
+    ledger.mkdir(parents=True)
+    (ledger / "index.jsonl").write_bytes(b"x" * 10)
+    (ledger / "rl-not-an-index.json").write_bytes(b"x" * 100)
+    assert hot_store_growth_notes(env) == []
+    (ledger / "index.20261007T000000.jsonl").write_bytes(b"x")
+    [note] = hot_store_growth_notes(env)
+    assert "state/review_ledger/index*.jsonl" in note and "never delete the newest" in note
