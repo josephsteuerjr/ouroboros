@@ -136,8 +136,8 @@ from ouroboros.reviewer_slot_config import triad_delivery_slots  # noqa: F401,E4
 def review_usage_category(surface: str) -> str:
     """The usage-scope category every send of a review surface is attributed
     under — the key the ledger's cache split and the root telemetry's
-    reservation identities carry, so the commit gate's admission and its
-    scope-first hold name the same scope the substrate sends under."""
+    reservation identities carry, so the commit gate's admission names the
+    same scope the substrate sends under."""
     return f"{surface}_review"
 
 

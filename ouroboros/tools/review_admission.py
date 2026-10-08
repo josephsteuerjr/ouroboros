@@ -32,14 +32,14 @@ warm store, never retried, never on a commit whose pack fits. A probe the paid
 ledger refuses is a typed disclosure in the review events, and the existing
 refusal path proceeds unchanged.
 
-Money admission (owner decision 2026-09-05, answer 2 = A) is the last
-pre-dispatch gate: ``commit_gate_paid_seats`` prices every PAID seat of the
-wave — packet rows by their exact message pair, native episodes by their exact
-first send — each under the usage scope its substrate sends under, and
-``admit_commit_gate_wave`` admits them as ONE wave against the task's current
-root fence through the shared ``review_wave_budget_gate``; a wave that does
-not fit is a typed $0 refusal naming the shortfall, never a half-dispatched
-panel.
+Money admission (owner decision 2026-09-05, answer 2 = A, on the known-spend
+rule of #1487) is the last pre-dispatch gate: ``commit_gate_paid_seats``
+prices every PAID seat of the wave — packet rows by their exact message pair,
+native episodes by their exact first send — each under the usage scope its
+substrate sends under, and ``admit_commit_gate_wave`` admits them as ONE wave
+through the shared ``review_wave_budget_gate`` while known spend is below
+every fence. The summed bounds are disclosed; a wave declined there is a typed
+$0 refusal naming the binding fence.
 """
 
 from __future__ import annotations
@@ -813,7 +813,7 @@ def admit_commit_gate_wave(ctx, seats) -> str | None:
         "⚠️ REVIEW_BLOCKED: commit-gate review wave declined before dispatch ($0 spent). "
         f"Known spend has reached {fence}. The wave's reservation upper bound would have been {usd(wave)} ("
         + "; ".join(f"{s['surface']}:{s['slot_id']} {s['model']} {usd(bounds[i])}" for i, s in enumerate(seats))
-        + f"). No reviewer seat was dispatched (scope and triad alike): {remedy}, then retry the same commit."
+        + f"). No reviewer seat of the wave was dispatched: {remedy}, then retry the same commit."
     )
 
 

@@ -295,7 +295,7 @@ def review_wave_budget_gate(
     Returns admission data when the wave must be declined, else None. Every paid
     review wave is admitted here as a whole — skill/plan/acceptance reviewers
     and, since the owner decision of 2026-09-05, the P3 commit gate
-    (``surface="commit_gate"``: scope seats first, then the triad, each seat
+    (``surface="commit_gate"``: every paid seat of the one wave, each seat
     priced with its own pack size and output reservation — ``prompt_chars`` /
     ``max_completion_tokens`` take one value per slot, and ``categories`` /
     ``slot_ids`` name the usage scope each seat will SEND under, so its bound

@@ -316,10 +316,11 @@ def run_parallel_review(
 
     review_err = early if exited else None
     if not exited:
-        # ---- Money admission (owner decision 2026-09-05): the WHOLE wave must
-        # fit the root fence before ANY seat is dispatched; otherwise every seat
-        # is a typed $0 not_dispatched record and the gate blocks naming the
-        # shortfall, never a half-dispatched panel. ----
+        # ---- Money admission (owner decision 2026-09-05, on the known-spend
+        # rule of #1487): before ANY seat is dispatched, known spend must be
+        # below every fence; otherwise every seat is a typed $0 not_dispatched
+        # record and the gate blocks naming the fence. The wave's summed seat
+        # bounds are disclosure, never an earlier refusal. ----
         from ouroboros.tools.review_admission import admit_commit_gate_wave, commit_gate_paid_seats
 
         if not bool(getattr(ctx, "_review_reconcile_only", False)):
@@ -346,8 +347,8 @@ def run_parallel_review(
             if not hasattr(ctx, "_review_degraded_reasons"):
                 ctx._review_degraded_reasons = []
             ctx._review_degraded_reasons.append(
-                "review_not_dispatched_budget_admission: the commit-gate wave did not "
-                "fit the root budget fence, so no seat was dispatched ($0 spent)"
+                "review_not_dispatched_budget_admission: known spend has reached a budget "
+                "fence of the commit-gate wave, so no seat was dispatched ($0 spent)"
             )
             ctx._last_review_critical_findings = []
             ctx._last_review_block_reason = "review_wave_budget_insufficient"
