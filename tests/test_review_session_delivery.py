@@ -875,12 +875,10 @@ def _late_success_executor(tmp_path, fake_route, monkeypatch, *, llm, seen_by, w
 @pytest.mark.parametrize("seen_by, cancels", [("spent_read", []), ("verify_read", ["review_slot_timeout"])])
 def test_a_success_first_seen_at_the_slot_deadline_is_accepted_and_extracted_past_the_slot_deadline(
         tmp_path, fake_route, monkeypatch, seen_by, cancels, tick):
-    """The deadline discovers `succeeded`: the verdict is accepted
-    (``late_success_accepted``) and its light-model extraction runs on the
-    operation's own wait — the slot's expired execution deadline no longer says
-    ``deadline`` to the send. When the cancel's verify read is what found it,
-    the cancel was still written under ``review_slot_timeout``. Both hold on a
-    clock as coarse as Windows' too (``FakeSlotClock``)."""
+    """The deadline discovers `succeeded`: the verdict is accepted (``late_success_accepted``) and its
+    light-model extraction runs on the operation's own wait — the slot's expired execution deadline no
+    longer says ``deadline`` to the send. When the cancel's verify read is what found it, the cancel was
+    still written under ``review_slot_timeout``. Both hold on a clock as coarse as Windows' (``FakeSlotClock``)."""
     import time
 
     from ouroboros.model_wait import execution_deadline_scope
