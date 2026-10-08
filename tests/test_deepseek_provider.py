@@ -100,12 +100,12 @@ class TestSingleProviderIndependence:
                "OUROBOROS_MODEL_LIGHT": "deepseek::deepseek-v4-flash"}
         # PR-3: the provider panel is minted as catalog rows, not multiplied at read time.
         assert [row["route"]["target_id"] for row in factory_review_rows(doc)] == ["deepseek::deepseek-v4-pro"] * 3
-        _clear_provider_env(monkeypatch)
-        for key, value in doc.items():
-            monkeypatch.setenv(key, value)
-        monkeypatch.setenv("OUROBOROS_REVIEW_MODELS", "deepseek/deepseek-v4-pro,deepseek/deepseek-v4-flash")
-        from ouroboros.config import get_review_models
-        assert get_review_models() == ["deepseek::deepseek-v4-pro", "deepseek::deepseek-v4-flash"]
+        from ouroboros.reviewer_slot_config import review_pool_slots
+        from tests.review_pool_rosters import set_review_pool
+
+        models = ["deepseek::deepseek-v4-pro", "deepseek::deepseek-v4-flash"]
+        set_review_pool(monkeypatch, models)
+        assert [slot.model for slot in review_pool_slots()] == models
 
     def test_startup_gate_accepts_deepseek_only(self):
         from ouroboros.server_runtime import (

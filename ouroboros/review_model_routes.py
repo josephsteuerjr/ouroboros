@@ -1,28 +1,22 @@
-"""Ouroboros — the reviewer-quorum rule and the env-plane reviewer model list.
+"""Reviewer quorum, enforcement and typed model targets.
 
-The review POOL (marked rows of ``OUROBOROS_SUBAGENTS``, read by
-``reviewer_slot_config.review_pool_slots``) is the one configuration surface
-of every review family. The retired comma ENV key read below survives only as
-an operational env-override plane (the external review script's ordering) and
-falls back to the shipped ``OPENROUTER_REVIEW_DEFAULTS``; the
-install-class adaptations the lane era applied here — Main repeated N times for
-a local-only, compatible-only or exclusive-direct-provider install — are minted
-into the catalog once by ``subscription_install_presets.factory_review_rows``
-and are no longer a read-time multiplication. ``adaptive_quorum`` is shared by
-every review family.
+The review pool is the marked catalog rows read by
+``reviewer_slot_config.review_pool_slots``. Factory provider panels are minted
+once by ``subscription_install_presets.factory_review_rows``. This module
+owns the shared quorum and enforcement readers, the per-model typed target,
+and the direct-provider helpers re-exported by config.
 """
 
 from __future__ import annotations
 
 import dataclasses
 
-from ouroboros.model_slots import ResolvedModelTarget, _parse_model_list
+from ouroboros.model_slots import ResolvedModelTarget
 from ouroboros.provider_models import (
-    migrate_model_value,
     resolve_model_target,
     review_model_uses_local,
 )
-from ouroboros.settings_defaults import OPENROUTER_REVIEW_DEFAULTS, SETTINGS_DEFAULTS
+from ouroboros.settings_defaults import SETTINGS_DEFAULTS
 from ouroboros.settings_integrity import runtime_setting
 
 _DIRECT_PROVIDER_REVIEW_RUNS = 3
@@ -64,21 +58,6 @@ def adaptive_quorum(n_slots: int) -> int:
     return 2 if n_slots >= 3 else max(1, n_slots)
 
 
-def get_review_models() -> list[str]:
-    """The env-plane triad model list: the retired comma key (else the shipped
-    OpenRouter defaults), spelled in an exclusive direct provider's own
-    form. No multiplication: the lane-era ``[main]×N`` fallbacks for a
-    local-only, compatible-only or direct-provider install are catalog rows now
-    (``factory_review_rows``), so this reader returns the list as configured."""
-    default_str = ",".join(OPENROUTER_REVIEW_DEFAULTS["triad"])
-    models_str = runtime_setting("OUROBOROS_REVIEW_MODELS", default_str) or default_str
-    models = _parse_model_list(models_str)
-    provider = _exclusive_direct_remote_provider_env()
-    if not provider:
-        return models
-    return [migrate_model_value(provider, model) for model in models]
-
-
 def resolved_review_model_target(model: str, *, effort: str = "") -> ResolvedModelTarget:
     """Construct the ABI-4 typed target for ONE resolved reviewer model.
 
@@ -86,23 +65,12 @@ def resolved_review_model_target(model: str, *, effort: str = "") -> ResolvedMod
     local-only Main route pins EVERY review slot to the local lane), so the
     typed ``provider_route`` says ``"local"`` exactly when that predicate
     does — downstream slot builders read the dataclass instead of re-asking
-    the predicate per model string. Purely a typed view: the model list
-    itself stays ``get_review_models``.
+    the predicate per model string. The pool owns model order and membership.
     """
     target = resolve_model_target(model, effort=effort)
     if target.provider_route != "local" and review_model_uses_local(target.model_id):
         target = dataclasses.replace(target, provider_route="local")
     return target
-
-
-def get_review_targets() -> tuple[ResolvedModelTarget, ...]:
-    """The effective triad list as typed targets (ABI-4), same order/membership.
-
-    TYPED VIEW FOR FUTURE CONSUMERS — no production caller yet: today's review
-    lanes consume ``get_review_models`` plus ``resolved_review_model_target``
-    per slot (reviewer_slot_config); wiring a whole-list consumer is review-
-    surface work outside the ABI-4 sweep's byte-identical contract."""
-    return tuple(resolved_review_model_target(model) for model in get_review_models())
 
 
 def get_review_enforcement() -> str:

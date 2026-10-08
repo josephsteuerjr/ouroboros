@@ -101,12 +101,6 @@ class TestReviewHistoryBuilding:
 
 
 class TestReviewQuorumLogic:
-    # ``test_review_models_configured`` was removed in v5.8.3-rc.5 — the
-    # ``len(get_review_models()) >= 2`` quorum assertion is already covered
-    # in ``tests/test_settings_effort.py`` (3 cases). This class keeps the
-    # checklist-path / loader smoke tests below which are unique to the
-    # phase-7 pipeline contract.
-
     def test_checklist_path_exists(self):
         review = _get_review_module()
         assert review._CHECKLISTS_PATH.exists()

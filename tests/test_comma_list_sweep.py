@@ -3,10 +3,10 @@
 Grep-level checker pinning that the legacy reviewer comma-list migration read
 stays gone: no migration-read branches, the settings vocabulary carries the
 comma keys only as RETIRED, and no bench settings template configures
-reviewers through them. The comma ENV spellings legitimately survive only as
-the API-pinned getter ``get_review_models`` reads (the lane projection that
-wrote them left with the lanes, PR-3) — the sweep therefore pins SETTINGS-plane
-and migration-branch absence, not env-name absence.
+reviewers through them. Live reviews read the catalog pool; historical raw-dict
+normalizers may still name the comma keys. The sweep pins SETTINGS-plane and
+migration-branch absence, while test_comma_list_remnant_sweep owns the textual
+remnant allowlist.
 """
 
 from __future__ import annotations

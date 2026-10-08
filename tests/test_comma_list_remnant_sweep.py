@@ -58,9 +58,6 @@ _RETIRED_KEY_MENTION_ALLOWLIST = {
     ("ouroboros/settings_defaults.py", "OUROBOROS_REVIEW_ROUTES"): ("retirement SSOT", 2),
     ("ouroboros/settings_defaults.py", "OUROBOROS_SCOPE_REVIEW_ROUTES"): ("retirement SSOT", 2),
     ("ouroboros/settings_defaults.py", "OUROBOROS_ADVISORY_REVIEW_ROUTE"): ("retirement SSOT", 2),
-    # -- derived env plane: the one API-pinned reader left (the lane projection
-    #    that wrote the plane left with the lanes, PR-3).
-    ("ouroboros/review_model_routes.py", "OUROBOROS_REVIEW_MODELS"): ("derived env plane reader (get_review_models)", 1),
     # -- raw-dict tolerance: direct-provider and prior-default review/scope
     #    normalization over dicts fed directly (load_settings purges the keys
     #    first; ABI-10-commented).

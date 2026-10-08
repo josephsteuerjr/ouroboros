@@ -180,9 +180,6 @@ _MOVED_OWNERS = {
     "_exclusive_direct_remote_provider_env": review_model_routes,
     "adaptive_quorum": review_model_routes,
     "get_review_enforcement": review_model_routes,
-    "get_review_models": review_model_routes,
-    # ABI-4 (F3.2): typed views over the effective reviewer model lists.
-    "get_review_targets": review_model_routes,
     "resolved_review_model_target": review_model_routes,
     "DELEGATE_WAIT_CEILING_SEC": runtime_limits,
     "DELEGATE_WAIT_WINDOW_MAX_SEC": runtime_limits,

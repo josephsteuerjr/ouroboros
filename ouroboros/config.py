@@ -84,8 +84,6 @@ from ouroboros.review_model_routes import (
     _exclusive_direct_remote_provider_env,  # noqa: F401
     adaptive_quorum,  # noqa: F401
     get_review_enforcement,  # noqa: F401
-    get_review_models,  # noqa: F401
-    get_review_targets,  # noqa: F401
     resolved_review_model_target,  # noqa: F401
 )
 from ouroboros.runtime_limits import (

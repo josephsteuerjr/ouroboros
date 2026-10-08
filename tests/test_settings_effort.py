@@ -5,7 +5,6 @@ from ouroboros.config import (
     SETTINGS_DEFAULTS,
     apply_settings_to_env,
     resolve_effort,
-    get_review_models,
     get_review_enforcement,
     get_task_review_mode,
     get_context_mode,
@@ -142,129 +141,26 @@ def test_auto_grant_reviewed_skills_default_in_config():
 
 
 # ---------------------------------------------------------------------------
-# get_review_models() — single source of truth
+# Factory review pools
 # ---------------------------------------------------------------------------
-
-def test_get_review_models_default(monkeypatch):
-    """get_review_models() returns the config default when env is unset."""
-    monkeypatch.delenv("OUROBOROS_REVIEW_MODELS", raising=False)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
-    monkeypatch.delenv("OPENAI_COMPATIBLE_API_KEY", raising=False)
-    monkeypatch.delenv("CLOUDRU_FOUNDATION_MODELS_API_KEY", raising=False)
-    monkeypatch.delenv("GIGACHAT_CREDENTIALS", raising=False)
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.delenv("OUROBOROS_MODEL", raising=False)
-    models = get_review_models()
-    assert isinstance(models, list)
-    assert len(models) >= 2
-    assert all("/" in m for m in models)  # valid OpenRouter model IDs
-
-
-def test_get_review_models_custom(monkeypatch):
-    """get_review_models() returns custom models when env is set."""
-    monkeypatch.setenv("OUROBOROS_REVIEW_MODELS", "a/b,c/d")
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
-    monkeypatch.delenv("OPENAI_COMPATIBLE_API_KEY", raising=False)
-    monkeypatch.delenv("CLOUDRU_FOUNDATION_MODELS_API_KEY", raising=False)
-    monkeypatch.delenv("GIGACHAT_CREDENTIALS", raising=False)
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.delenv("OUROBOROS_MODEL", raising=False)
-    models = get_review_models()
-    assert models == ["a/b", "c/d"]
-
-
-def test_get_review_models_empty_env_falls_back_to_default(monkeypatch):
-    """get_review_models() falls back to default when env is empty string."""
-    monkeypatch.setenv("OUROBOROS_REVIEW_MODELS", "")
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
-    monkeypatch.delenv("OPENAI_COMPATIBLE_API_KEY", raising=False)
-    monkeypatch.delenv("CLOUDRU_FOUNDATION_MODELS_API_KEY", raising=False)
-    monkeypatch.delenv("GIGACHAT_CREDENTIALS", raising=False)
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.delenv("OUROBOROS_MODEL", raising=False)
-    models = get_review_models()
-    # Must return the default, not an empty list
-    from ouroboros.settings_defaults import OPENROUTER_REVIEW_DEFAULTS
-
-    assert len(models) >= 2
-    assert models == list(OPENROUTER_REVIEW_DEFAULTS["triad"])
 
 
 def _factory_pool_models(doc: dict) -> list:
     """The review POOL a settings document gets at the factory (PR-3): the
     exclusive-provider panel is minted into the catalog once, never multiplied
-    at read time by ``get_review_models`` (which keeps the env list as-is)."""
+    at read time by the pool reader."""
     from ouroboros.subscription_install_presets import factory_review_rows
 
     return [row["route"]["target_id"] for row in factory_review_rows(doc)]
 
 
-def test_factory_pool_repeats_main_in_openai_only_mode(monkeypatch):
-    """The OpenAI-only profile runs its Main reviewer three independent times —
-    as three catalog rows. The env list stays the owner's/shipped list, migrated
-    where it names the provider, with no read-time ``[main]×N`` substitution."""
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
-    monkeypatch.delenv("OPENAI_COMPATIBLE_API_KEY", raising=False)
-    monkeypatch.delenv("CLOUDRU_FOUNDATION_MODELS_API_KEY", raising=False)
-    monkeypatch.delenv("OUROBOROS_MODEL_LIGHT", raising=False)
-    monkeypatch.setenv("OUROBOROS_MODEL", "openai::gpt-5.6-terra")
-    monkeypatch.setenv(
-        "OUROBOROS_REVIEW_MODELS",
-        "openai/gpt-5.6-terra,google/gemini-3.6-flash,anthropic/claude-opus-4.6",
-    )
-
-    assert _factory_pool_models({"OPENAI_API_KEY": "sk-openai", "OUROBOROS_MODEL": "openai::gpt-5.6-terra"}) == [
+def test_factory_pool_repeats_main_in_openai_only_mode():
+    """The OpenAI-only profile mints three independent Main catalog rows."""
+    assert _factory_pool_models({"OPENAI_API_KEY": "configured", "OUROBOROS_MODEL": "openai::gpt-5.6-terra"}) == [
         "openai::gpt-5.6-terra",
         "openai::gpt-5.6-terra",
         "openai::gpt-5.6-terra",
     ]
-    assert get_review_models() == ["openai::gpt-5.6-terra", "google/gemini-3.6-flash", "anthropic/claude-opus-4.6"]
-
-
-def test_get_review_models_does_not_apply_openai_only_fallback_with_compatible_base_url(monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
-    monkeypatch.setenv("OPENAI_COMPATIBLE_BASE_URL", "https://compat.example/v1")
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
-    monkeypatch.delenv("OPENAI_COMPATIBLE_API_KEY", raising=False)
-    monkeypatch.delenv("CLOUDRU_FOUNDATION_MODELS_API_KEY", raising=False)
-    monkeypatch.delenv("GIGACHAT_CREDENTIALS", raising=False)
-    monkeypatch.delenv("GIGACHAT_USER", raising=False)
-    monkeypatch.delenv("GIGACHAT_PASSWORD", raising=False)
-    monkeypatch.setenv("OUROBOROS_MODEL", "openai::gpt-5.5")
-    monkeypatch.setenv(
-        "OUROBOROS_REVIEW_MODELS",
-        "openai/gpt-5.5,google/gemini-3.5-flash,anthropic/claude-opus-4.6",
-    )
-
-    models = get_review_models()
-
-    assert models == ["openai/gpt-5.5", "google/gemini-3.5-flash", "anthropic/claude-opus-4.6"]
-
-
-def test_get_review_models_preserves_explicit_official_openai_list(monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
-    monkeypatch.delenv("OPENAI_COMPATIBLE_API_KEY", raising=False)
-    monkeypatch.delenv("CLOUDRU_FOUNDATION_MODELS_API_KEY", raising=False)
-    monkeypatch.setenv("OUROBOROS_MODEL", "openai::gpt-5.5")
-    monkeypatch.setenv("OUROBOROS_REVIEW_MODELS", "openai/gpt-5.5,openai/gpt-4.1")
-
-    models = get_review_models()
-
-    assert models == ["openai::gpt-5.5", "openai::gpt-4.1"]
 
 
 def test_factory_pool_repeats_main_in_anthropic_only_mode():
@@ -430,13 +326,17 @@ def test_get_auto_grant_enabled_prefers_settings_file(monkeypatch, tmp_path):
 def test_apply_settings_ignores_the_retired_review_models_key(monkeypatch):
     """ABI-10: the retired comma key is IGNORED by apply_settings_to_env — a ghost
     value neither reaches the env plane nor is replaced by a projected floor
-    (PR-3 removed the lane projection); the reader defaults on its own."""
+    (PR-3 removed the lane projection); the catalog alone selects the pool."""
     monkeypatch.delenv("OUROBOROS_REVIEW_MODELS", raising=False)
     monkeypatch.delenv("OUROBOROS_SUBAGENTS", raising=False)
-    settings = {"OUROBOROS_REVIEW_MODELS": "ghost/value"}
+    from ouroboros.reviewer_slot_config import review_pool_slots
+    from tests.review_pool_rosters import packet_pool
+
+    settings = {"OUROBOROS_REVIEW_MODELS": "ghost/value",
+                "OUROBOROS_SUBAGENTS": packet_pool(["vendor/selected"])}
     apply_settings_to_env(settings)
     assert "OUROBOROS_REVIEW_MODELS" not in os.environ
-    assert len(get_review_models()) >= 2
+    assert [slot.model for slot in review_pool_slots()] == ["vendor/selected"]
 
 
 def test_apply_settings_clears_review_enforcement_restores_default(monkeypatch):

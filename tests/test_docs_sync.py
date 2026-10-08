@@ -294,7 +294,7 @@ def test_architecture_mentions_shared_log_grouping_and_direct_provider_review_fa
     assert "official OpenAI, Anthropic, MiniMax, DeepSeek, Z.ai, Cloud.ru, and GigaChat" in arch
     assert "_exclusive_direct_remote_provider_env" in arch
     # v4.34.0: direct-provider fallback now documents the
-    # `main_model.startswith(provider_prefix)` guard in get_review_models —
+    # provider-prefix handling in factory_review_rows —
     # previously absent, allowing OpenAI/Anthropic-only setups with a
     # cross-provider free-text main model to silently miss the fallback.
     assert "migrate_model_value" in arch

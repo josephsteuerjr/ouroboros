@@ -100,8 +100,6 @@ def test_a_pool_rows_delivery_is_native_unless_the_row_says_packet(monkeypatch, 
 
 def test_a_compatible_only_install_reviews_on_main(clean_env):
     from ouroboros.deep_self_review import deep_review_route
-    from ouroboros.review_model_routes import get_review_models
-    from ouroboros.settings_defaults import OPENROUTER_REVIEW_DEFAULTS
     from ouroboros.subscription_install_presets import factory_review_rows
 
     doc = {"OPENAI_COMPATIBLE_BASE_URL": "https://llm.example/v1", "OUROBOROS_MODEL": "openai-compatible::glm-5.3"}
@@ -109,15 +107,17 @@ def test_a_compatible_only_install_reviews_on_main(clean_env):
         clean_env.setenv(key, value)
     # The factory POOL is the shipped panel's three seats on the one reachable
     # model (three independent runs of Main, quorum 2 of 3 — what this install
-    # ran); the env plane keeps the shipped list as-is.
+    # ran); a configured catalog can select a different explicit panel.
     assert [row["route"]["target_id"] for row in factory_review_rows(doc)] == ["openai-compatible::glm-5.3"] * 3
-    assert get_review_models() == list(OPENROUTER_REVIEW_DEFAULTS["triad"])
     # The deep self-review runs on Main too (decision 3A), on that route.
     clean_env.setenv("OPENAI_COMPATIBLE_API_KEY", "test-only-key")
     assert deep_review_route() == ("", "openai-compatible::glm-5.3")
-    # An explicit compatible list is the owner's and is honoured exactly.
-    clean_env.setenv("OUROBOROS_REVIEW_MODELS", "openai-compatible::a,openai-compatible::b")
-    assert get_review_models() == ["openai-compatible::a", "openai-compatible::b"]
+    from ouroboros.reviewer_slot_config import review_pool_slots
+    from tests.review_pool_rosters import set_review_pool
+
+    models = ["openai-compatible::a", "openai-compatible::b"]
+    set_review_pool(clean_env, models)
+    assert [slot.model for slot in review_pool_slots()] == models
 
 
 @pytest.mark.parametrize("other_key", ["OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_BASE_URL"])

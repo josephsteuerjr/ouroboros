@@ -17,8 +17,6 @@ from ouroboros.config import (
     ResolvedModelTarget,
     fallback_candidate_targets,
     get_fallback_models,
-    get_review_models,
-    get_review_targets,
     resolve_model_target,
     resolved_review_model_target,
 )
@@ -271,24 +269,12 @@ def test_api_fallback_notice_omits_inapplicable_account_clause(tmp_path, monkeyp
 # ---------------------------------------------------------------------------
 
 
-def test_review_targets_match_effective_lists(monkeypatch):
-    _clear_provider_credentials(monkeypatch)
-    monkeypatch.delenv("USE_LOCAL_MAIN", raising=False)
-    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
-    monkeypatch.setenv("OUROBOROS_REVIEW_MODELS", "vendor/m1,vendor/m2")
-    triad = get_review_targets()
-    assert [t.model_id for t in triad] == get_review_models() == ["vendor/m1", "vendor/m2"]
-    assert {t.provider_route for t in triad} == {"openrouter"}
-
-
-def test_review_targets_pin_local_route_when_review_predicate_says_so(monkeypatch):
+def test_review_target_pins_local_route_when_review_predicate_says_so(monkeypatch):
     _clear_provider_credentials(monkeypatch)
     monkeypatch.setenv("USE_LOCAL_MAIN", "1")
-    monkeypatch.setenv("OUROBOROS_REVIEW_MODELS", "vendor/m1,vendor/m2")
     from ouroboros.provider_models import review_model_uses_local
 
     assert review_model_uses_local("vendor/m1") is True
-    assert all(t.provider_route == "local" for t in get_review_targets())
     assert resolved_review_model_target("vendor/m1").provider_route == "local"
 
 
