@@ -103,8 +103,8 @@ _REVIEW_SUBSTRATE_PATHS = frozenset({
     "ouroboros/tools/review_checklist.py", "ouroboros/tools/review_subject.py", "ouroboros/tools/review_change.py",
     "ouroboros/review_body_fact.py", "ouroboros/review_ledger.py",
     "ouroboros/tools/review_revalidation.py", "ouroboros/tools/review_binary_context.py", "ouroboros/tools/release_sync.py",
-    "ouroboros/tools/review_synthesis.py", "ouroboros/tools/scope_review.py", "ouroboros/tools/scope_review_contract.py",
-    "ouroboros/tools/scope_review_session.py", "ouroboros/tools/scope_required_sources.py",
+    "ouroboros/tools/review_synthesis.py", "ouroboros/tools/scope_review_contract.py",
+    "ouroboros/tools/review_brief_coupling.py", "ouroboros/tools/scope_required_sources.py", "ouroboros/tools/review_admission.py",
     "ouroboros/tools/governance_context.py", "ouroboros/review_session_reads.py",
     "ouroboros/tools/scope_window.py", "ouroboros/claudexor_daemon.py", "ouroboros/delegate_custody.py",
     "ouroboros/delegate_custody_usage.py", "ouroboros/delegate_output.py", "ouroboros/gateways/claudexor.py",
@@ -714,7 +714,9 @@ def _record_actors(record: dict | None) -> list[tuple[str, dict]]:
             continue
         refs = {ref.get("role"): ref.get("ref") for ref in row.get("source_refs") or []
                 if isinstance(ref, dict)}
-        actors.append(("scope" if "coupling" in (row.get("parts") or []) else "triad", {
+        # One wave: a seat configured under the (transitional) scope role joins
+        # as a coupling-only seat; every triad seat answers at least the change.
+        actors.append(("scope" if list(row.get("parts") or []) == ["coupling"] else "triad", {
             "slot_id": str(row.get("seat_id") or ""), "status": str(row.get("status") or ""),
             "model_id": str((row.get("requested") or {}).get("model") or ""), "usd": row.get("usd"),
             "prompt_ref": refs.get("observability_prompt") or {},

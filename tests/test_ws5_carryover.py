@@ -116,7 +116,7 @@ def test_capability_evidence_is_route_aware_not_model_aware(monkeypatch, tmp_pat
 
     import ouroboros.config as cfg
     from ouroboros import capability_evidence as ce
-    from ouroboros.tools import scope_review as sr
+    from ouroboros.tools import scope_window as sr
 
     model = "openai::gpt-5.5-pinned"
     base_urls = {"OPENAI_BASE_URL": "https://route-a.example/v1"}
@@ -134,13 +134,13 @@ def test_capability_evidence_is_route_aware_not_model_aware(monkeypatch, tmp_pat
 
     monkeypatch.setattr(ce, "_provider_metadata_window", fake_metadata)
 
-    sr._scope_window(model)
-    sr._scope_window(model)
+    sr.scope_window(model)
+    sr.scope_window(model)
     assert fetched == ["https://route-a.example/v1"], "one probe per route, not per call"
 
     # Same model, DIFFERENT base URL: a new route, so the lazy probe must run again.
     base_urls["OPENAI_BASE_URL"] = "https://route-b.example/v1"
-    sr._scope_window(model)
+    sr.scope_window(model)
     assert fetched == [
         "https://route-a.example/v1", "https://route-b.example/v1",
     ], "a base-URL change is a new route fingerprint and must be probed"

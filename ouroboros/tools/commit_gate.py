@@ -202,28 +202,26 @@ def resolve_root_task_id(ctx: ToolContext) -> str:
 
 
 def commit_review_contract_fingerprint() -> str:
-    """Identity of the commit gate's live review contract (Q22): triad roster+
-    routes, scope rows with their effective delivery class, enforcement, and the
-    shipped prompt-contract text — including the retrieving scope output
-    contract and the required-source policy version. A
-    changed fingerprint lapses free-refusal/replay authority (a new paid
-    review is allowed and refusals never quote across the change). Fail-open
-    "" — an unknown contract never matches, so nothing is refused on it.
-    The per-row efforts below are the RESOLVED efforts (``row_effort`` /
-    ``scope_reviewer_slots`` use a compound route's encoded effort before the
-    configured surface default). Changing a global effort therefore lapses
+    """Identity of the commit gate's live review contract (Q22): the one wave's
+    seat roster + routes, the ``parts`` each seat is asked (one brief, two parts),
+    enforcement, and the shipped prompt-contract text — contract A, contract B
+    and the required-source policy version. A changed fingerprint lapses
+    free-refusal/replay authority (a new paid review is allowed and refusals
+    never quote across the change). Fail-open "" — an unknown contract never
+    matches, so nothing is refused on it. The per-row efforts below are the
+    RESOLVED efforts (``row_effort`` uses a compound route's encoded effort before
+    the configured surface default). Changing a global effort therefore lapses
     only rows that actually inherit it (synthesis F4 — pinned by test)."""
     try:
         from ouroboros.config import get_review_enforcement
-        from ouroboros.review_substrate import scope_reviewer_slots
         from ouroboros.reviewer_slot_config import commit_triad_delivery
+        from ouroboros.tools.review_admission import fold_coupling_only_seats
         from ouroboros.tools.review_helpers import CRITICAL_FINDING_CALIBRATION, REVIEW_PREAMBLE
         from ouroboros.tools.scope_required_sources import SCOPE_REQUIRED_SOURCES_POLICY
-        from ouroboros.tools.scope_review import SCOPE_RETRIEVING_OUTPUT_CONTRACT
-        from ouroboros.triad_review import REVIEW_JSON_ARRAY_CONTRACT
+        from ouroboros.triad_review import REVIEW_JSON_ARRAY_CONTRACT, REVIEW_TWO_PART_OBJECT_CONTRACT
 
-        row_plan = commit_triad_delivery()
-        triad_rows = [
+        row_plan = fold_coupling_only_seats(commit_triad_delivery())
+        rows = [
             [
                 str(model),
                 str(getattr(route, "value", route) or ""),
@@ -244,53 +242,36 @@ def commit_review_contract_fingerprint() -> str:
         # only when some row carries one, so untouched legacy configs keep
         # their exact historical bytes (conservative in the paid direction
         # only where the contract actually changed).
-        triad_actor_ids = [str(a or "") for a in (row_plan.get("subagent_ids") or [])]
-        if any(triad_actor_ids):
-            for row, actor in zip(triad_rows, triad_actor_ids):
+        actor_ids = [str(a or "") for a in (row_plan.get("subagent_ids") or [])]
+        if any(actor_ids):
+            for row, actor in zip(rows, actor_ids):
                 row.append(actor)
         # A direct api row saved as native delivery (#1334) is the same kind of
         # contract change with no actor id to carry it; the column appears only
         # when such a row exists, so every other panel keeps its exact bytes.
         native_direct = [bool(flag) and not actor and str(getattr(route, "value", route) or "") == "api_chat"
-                         for flag, actor, route in zip(row_plan.get("retrieves") or [], triad_actor_ids
-                                                       or [""] * len(triad_rows), row_plan["routes"])]
+                         for flag, actor, route in zip(row_plan.get("retrieves") or [], actor_ids
+                                                       or [""] * len(rows), row_plan["routes"])]
         if any(native_direct):
-            for row, native in zip(triad_rows, native_direct):
+            for row, native in zip(rows, native_direct):
                 row.append("native_retrieval" if native else "")
-        scope_slots = list(scope_reviewer_slots())
-        scope_rows = [
-            [
-                str(getattr(slot, "slot_id", "") or ""),
-                str(getattr(slot, "model", "") or ""),
-                str(getattr(getattr(slot, "route", None), "value", "") or ""),
-                str(getattr(slot, "session_target", "") or ""),
-                str(getattr(slot, "session_profile", "") or ""),
-                str(getattr(slot, "effort", "") or ""),
-                # The EFFECTIVE delivery class of this scope row: what the row
-                # receives and how its coverage is observed, not the wire kind.
-                "native_retrieval" if getattr(slot, "native_retrieval", False)
-                else "agent_session" if getattr(slot, "retrieves", False) else "packet",
-            ]
-            for slot in scope_slots
-        ]
-        scope_actor_ids = [str(getattr(slot, "subagent_id", "") or "") for slot in scope_slots]
-        if any(scope_actor_ids):
-            for row, actor in zip(scope_rows, scope_actor_ids):
-                row.append(actor)
-        # The retrieving scope contract and the required-source policy are part
-        # of what a scope reviewer is asked and owed, so a change to either
-        # lapses recorded free-replay authority instead of surviving it.
-        # Governance-document CONTENTS stay out (docs/development 05).
+        # What each seat is ASKED is contract identity: a seat that gains or
+        # loses the coupling question is a different review.
+        parts = {str(slot_id or ""): list(seat_parts) for slot_id, seat_parts in zip(row_plan["slot_ids"], row_plan["parts"])}
+        # Both answer contracts and the required-source policy are part of what a
+        # reviewer is asked and owed, so a change to any of them lapses recorded
+        # free-replay authority instead of surviving it. Governance-document
+        # CONTENTS stay out (docs/development 05).
         prompt_contract = hashlib.sha256(
             "\n".join([
                 REVIEW_PREAMBLE, CRITICAL_FINDING_CALIBRATION, REVIEW_JSON_ARRAY_CONTRACT,
-                SCOPE_RETRIEVING_OUTPUT_CONTRACT, SCOPE_REQUIRED_SOURCES_POLICY,
+                REVIEW_TWO_PART_OBJECT_CONTRACT, SCOPE_REQUIRED_SOURCES_POLICY,
             ]).encode("utf-8")
         ).hexdigest()
         payload = json.dumps(
             {
-                "triad": triad_rows,
-                "scope": scope_rows,
+                "rows": rows,
+                "parts": parts,
                 "enforcement": str(get_review_enforcement() or ""),
                 "prompt_contract": prompt_contract,
             },
@@ -1350,7 +1331,6 @@ def _review_ledger_facts(ctx: ToolContext, commit_message: str, *, goal: str, sc
         "enforcement": enforcement, "mode": mode, "enforcement_blocks": bool(review_enforcement_blocks(enforcement)),
         "structured": dict(getattr(ctx, "_last_review_structured", {}) or {}), "slot_executions": executions,
         "triad_raw": list(getattr(ctx, "_last_triad_raw_results", []) or []),
-        "scope_raw": dict(getattr(ctx, "_last_scope_raw_result", {}) or {}),
         "blocked": bool(blocked), "block_reason": str(block_reason or ""),
         "dispatch_refusal": dispatch_refusal, "pending": bool(pending),
         "degraded_reasons": list(getattr(ctx, "_review_degraded_reasons", []) or []),

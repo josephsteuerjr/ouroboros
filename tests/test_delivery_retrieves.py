@@ -23,17 +23,18 @@ def test_predicate_accepts_route_kind_or_wire_string():
     assert delivery_retrieves(None, False) is False
 
 
-def test_owner_deadline_reaches_the_triad_and_scope_requests(monkeypatch, tmp_path):
-    """R23: the owner deadline is a bound of every retrieving episode, so the
-    commit triad and scope requests carry the task's deadline_at exactly as
-    the advisory does; a context without one yields ''. Behavioural: the
-    request each surface hands the substrate carries the context's deadline —
-    the stub captures it and refuses before any send."""
+def test_owner_deadline_reaches_every_seat_of_the_one_wave(monkeypatch, tmp_path):
+    """R23: the owner deadline is a bound of every retrieving episode, so every
+    seat of the one commit-gate wave — the packet seat and the retrieving
+    two-part seat alike — carries the task's deadline_at exactly as the advisory
+    does; a context without one yields ''. Behavioural: the request each seat
+    hands the substrate carries the context's deadline — the stub captures it
+    and refuses before any send."""
     import asyncio
     from types import SimpleNamespace
 
     import ouroboros.review_substrate as substrate
-    from ouroboros.tools import review as review_mod, scope_review as scope_mod
+    from ouroboros.tools import review as review_mod
     from ouroboros.tools.review import _owner_deadline_at
 
     ctx = SimpleNamespace(task_metadata={"deadline_at": "2030-01-01T00:00:00Z"})
@@ -44,19 +45,20 @@ def test_owner_deadline_reaches_the_triad_and_scope_requests(monkeypatch, tmp_pa
     seen = []
 
     def _capture(request, **_kwargs):
-        seen.append((request.surface, request.deadline_at))
+        seen.append((request.surface, request.deadline_at, bool(request.session_task)))
         raise RuntimeError("captured before any send")
 
     monkeypatch.setattr(substrate, "run_review_request", _capture)
-    monkeypatch.setattr(scope_mod, "LLMClient", lambda: object())
-    monkeypatch.setattr(scope_mod, "_scope_window", lambda model, **_k: SimpleNamespace(sizing_window=lambda floor: 200_000))
     ctx = SimpleNamespace(task_metadata={"deadline_at": "2030-01-01T00:00:00Z"}, task_id="t-deadline",
                           drive_root=str(tmp_path), pending_events=[], event_queue=None)
     _, payload, _ = asyncio.run(review_mod._query_model(object(), "openai/fake-reviewer", [], asyncio.Semaphore(1), ctx=ctx))
     assert "captured before any send" in payload["error"]
-    _, _, error = scope_mod._call_scope_llm("scope prompt", scope_model="openai/fake-scope", ctx=ctx)
-    assert "captured before any send" in error
-    assert seen == [("multi_model_review", "2030-01-01T00:00:00Z"), ("scope_review", "2030-01-01T00:00:00Z")]
+    _, payload, _ = asyncio.run(review_mod._query_model(
+        object(), "openai/fake-coupling", [], asyncio.Semaphore(1), ctx=ctx, slot_id="slot_2",
+        native_retrieval=True, session_task="two-part brief", session_root=str(tmp_path)))
+    assert "captured before any send" in payload["error"]
+    assert seen == [("multi_model_review", "2030-01-01T00:00:00Z", False),
+                    ("multi_model_review", "2030-01-01T00:00:00Z", True)]
 
 
 def test_slot_properties_and_plan_review_facade_share_the_predicate():

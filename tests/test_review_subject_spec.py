@@ -4,7 +4,7 @@
 ``run_parallel_review(subject=...)``, and the three identities derived from the
 frozen subject: the settled-record reuse key (a), the rebuttal round (b) and the
 custody retry key (c). The system repo's ``index`` subject must be byte-identical
-to today's commit gate: same api pack, same session task, same scope brief, same
+to today's commit gate: same api pack, same session task, same two-part brief, same
 seats, same aggregate.
 """
 
@@ -18,7 +18,6 @@ from types import SimpleNamespace
 import pytest
 
 from ouroboros import review_ledger as rl
-from ouroboros.tools.parallel_review import _prepare_scope_rows as _REAL_PREPARE_SCOPE_ROWS
 from ouroboros.tools.review_binary_context import capture_staged_diff
 from ouroboros.tools.review_subject import (
     FrozenSubject,
@@ -136,42 +135,38 @@ def _row_plan(routes):
         "models": [f"m/{i}-{r}" for i, r in enumerate(routes)], "routes": [kinds[r] for r in routes],
         "efforts": ["" for _ in routes], "session_targets": ["" for _ in routes],
         "session_profiles": ["" for _ in routes], "use_local": [False for _ in routes],
-        "slot_ids": [f"slot_{i}" for i, _ in enumerate(routes)],
+        "slot_ids": [f"slot_{i}" for i, _ in enumerate(routes)], "subagent_ids": ["" for _ in routes],
+        "retrieves": [r == "session" for r in routes],
     }
 
 
 def _run_wave(monkeypatch, ctx, subject=None):
-    """The REAL assembly of both triad deliveries and every scope brief; only the
-    paid dispatch seams are patched. Returns what each reviewer would be GIVEN."""
+    """The REAL assembly of the one wave — the packet of every packet seat and the
+    two-part brief of every retrieving seat; only the paid dispatch seam is
+    patched. Returns what each reviewer would be GIVEN."""
+    from ouroboros.review_ledger import CouplingOutcome
     from ouroboros.tools import parallel_review as pr
     from ouroboros.tools import review as review_mod
-    from ouroboros.tools.scope_review import ScopeReviewResult
     import ouroboros.reviewer_slot_config as slot_cfg
+    import ouroboros.tools.review_admission as admission
 
-    given = {"scope_briefs": []}
+    given = {}
     monkeypatch.setattr(slot_cfg, "commit_triad_delivery", lambda: _row_plan(["api", "session", "session"]))
+    monkeypatch.setattr(admission, "fold_coupling_only_seats", admission.seat_vectors)  # no legacy scope rows
     monkeypatch.setattr(review_mod, "calibrated_input_token_limit", lambda *a, **k: 2_000_000)
 
     def fake_dispatch(_ctx, _msg, prepared):
-        given["prompt"], given["session_task"] = prepared["prompt"], prepared["session_task"]
+        plan = prepared["row_plan"]
+        given["prompt"], given["parts"] = prepared["prompt"], [tuple(p) for p in plan["parts"]]
+        given["briefs"] = [task for task, parts in zip(plan["session_tasks"], plan["parts"]) if "coupling" in parts]
         given["models"], given["target_repo"] = list(prepared["models"]), str(prepared["target_repo"])
+        _ctx._last_coupling_result = CouplingOutcome(verdict="PASS", status="responded")
         return None
 
     monkeypatch.setattr(review_mod, "_dispatch_unified_review", fake_dispatch)
-
-    def capture_rows(*a, **k):
-        rows = _REAL_PREPARE_SCOPE_ROWS(*a, **k)
-        for row in rows:
-            assert row["final"] is None, row["final"]
-            given["scope_briefs"].append(row["prepared"]["session_task"])
-        return rows
-
-    monkeypatch.setattr(pr, "_prepare_scope_rows", capture_rows)
-    monkeypatch.setattr(pr, "run_scope_review", lambda _ctx, _msg, **kw: ScopeReviewResult(
-        blocked=False, status="responded", model_id=kw["prepared"]["scope_model_id"]))
-    review_err, scope_result, reason, advisory = pr.run_parallel_review(
+    review_err, coupling, reason, advisory = pr.run_parallel_review(
         ctx, "golden subject commit", goal="the goal", scope="the scope", subject=subject)
-    given.update(review_err=review_err, scope_status=scope_result.status, reason=reason, advisory=advisory,
+    given.update(review_err=review_err, coupling_status=coupling.status, reason=reason, advisory=advisory,
                  structured=dict(ctx._last_review_structured), retry_key=ctx._last_review_structured["retry_key"])
     return given
 
@@ -183,9 +178,10 @@ def test_frozen_system_index_wave_is_byte_identical_to_the_gate(tmp_path, monkey
     frozen = freeze_subject(ctx, _index_spec(repo))
     parametric = _run_wave(monkeypatch, ctx, subject=frozen)
 
-    assert "+y" in today["prompt"] and today["session_task"] and today["scope_briefs"]
-    for key in ("prompt", "session_task", "scope_briefs", "models", "target_repo",
-                "review_err", "scope_status", "reason", "advisory"):
+    assert "+y" in today["prompt"] and len(today["briefs"]) == 2 and all(today["briefs"])
+    assert today["parts"] == [("change",), ("change", "coupling"), ("change", "coupling")]
+    for key in ("prompt", "briefs", "parts", "models", "target_repo",
+                "review_err", "coupling_status", "reason", "advisory"):
         assert parametric[key] == today[key], key
     volatile = {"started_ts", "retry_key", "subject", "layer"}
     assert {k: v for k, v in parametric["structured"].items() if k not in volatile} == \
@@ -201,7 +197,7 @@ def test_frozen_system_index_wave_is_byte_identical_to_the_gate(tmp_path, monkey
 
 def test_frozen_foreign_base_head_wave_runs_the_core_layer_on_every_delivery(tmp_path, monkeypatch):
     """The mirror of the golden case: a foreign ``base..head`` subject under the
-    core layer. All three deliveries (api packet, session task, scope brief) are
+    core layer. Both deliveries (api packet, two-part brief) are
     assembled by the SAME code as the gate's wave, with the layer threaded through
     every builder: the universal checklist and the subject's own navigation are
     delivered; the body's constitution, standing disclosures, body-layer section
@@ -217,14 +213,13 @@ def test_frozen_foreign_base_head_wave_runs_the_core_layer_on_every_delivery(tmp
         given = _run_wave(monkeypatch, ctx, subject=frozen)
         checkout = frozen.checkout
 
-    assert given["review_err"] is None and given["scope_status"] == "responded"
+    assert given["review_err"] is None and given["coupling_status"] == "responded"
     assert given["target_repo"] == checkout and given["structured"]["layer"] == "core"
-    deliveries = {"prompt": given["prompt"], "session_task": given["session_task"], **{
-        f"scope_brief_{i}": brief for i, brief in enumerate(given["scope_briefs"])}}
-    assert len(given["scope_briefs"]) == 1
+    deliveries = {"prompt": given["prompt"], **{f"brief_{i}": brief for i, brief in enumerate(given["briefs"])}}
+    assert len(given["briefs"]) == 2
     for name, text in deliveries.items():
-        # The packet and the brief carry the frozen diff; the retrieving session reads the checkout.
-        assert name == "session_task" or ("+two" in text and "-one" in text), name
+        # The packet carries the frozen diff; a retrieving seat's brief reads the checkout.
+        assert name != "prompt" or ("+two" in text and "-one" in text), name
         # The universal rule set and the subject's own navigation are delivered …
         assert "## Change Review Checklist" in text or "## Intent / Scope Review Checklist" in text, name
         assert "## Governance navigation (core layer)" in text and "### Subject documents" in text, name
@@ -236,7 +231,7 @@ def test_frozen_foreign_base_head_wave_runs_the_core_layer_on_every_delivery(tmp
         assert "| 10 |" not in text and "version_bump" not in text, name
         assert "docs/ARCHITECTURE.md" not in text and "(navigation map)" not in text.replace("## README.md (navigation map)", ""), name
         assert "Its Constitution is BIBLE.md" not in text, name
-    assert "## Change Review Checklist" in deliveries["prompt"] and "## Change Review Checklist" in deliveries["session_task"]
+    assert "## Change Review Checklist" in deliveries["prompt"] and "## Change Review Checklist" in deliveries["brief_0"]
     # The api head of a core-layer row carries no constitutional preamble either.
     messages, bible_text = triad_api_messages(given["prompt"], 0, "turn", layer="core")
     system_text = "".join(block.get("text", "") if isinstance(block, dict) else str(block)
@@ -424,8 +419,15 @@ def test_worktree_subject_freezes_the_live_tree(tmp_path):
 
 
 def _seat_rows(status="responded"):
-    return [{"slot_id": f"s{i}", "model_id": m, "status": status, "raw_text": "[]", "parsed_items": [], "usd": 0.01}
+    """Three seats of one wave: s1 retrieves (asked both parts), s2/s3 are packet seats."""
+    answered = status == "responded"
+    rows = [{"slot_id": f"s{i}", "model_id": m, "status": status, "raw_text": "[]", "parsed_items": [], "usd": 0.01}
             for i, m in enumerate(("openai/gpt-5", "anthropic/claude-x", "google/gemini"), 1)]
+    rows[0]["parts"] = ["change", "coupling"]
+    if answered:
+        rows[0]["answers"] = {part: {"status": "responded", "verdict": "PASS", "findings": [], "critical": 0}
+                              for part in ("change", "coupling")}
+    return rows
 
 
 def _record_facts(frozen, *, reuse_key, pending=False, task_id="task-1"):
@@ -433,17 +435,22 @@ def _record_facts(frozen, *, reuse_key, pending=False, task_id="task-1"):
     return {
         "task_id": task_id, "root_task_id": task_id, "repo_dir": frozen.spec.root, "governance_root": frozen.spec.governance_root,
         "goal": "g", "scope": "s", "enforcement": "blocking", "enforcement_blocks": True, "blocked": False,
-        "block_reason": "", "triad_raw": rows, "scope_raw": {}, "pending": pending,
-        "structured": {"triad_prompt": "T", "scope_brief": "", "started_ts": "2026-10-07T00:00:00+00:00",
-                       "triad_rows": [{"slot_id": r["slot_id"], "model": r["model_id"], "route": "api_chat"} for r in rows],
-                       "scope_rows": [], "retry_key": review_retry_key(frozen), "subject": frozen.record_subject(),
+        "block_reason": "", "triad_raw": rows, "pending": pending,
+        "structured": {"triad_prompt": "T", "started_ts": "2026-10-07T00:00:00+00:00",
+                       "rows": [{"slot_id": r["slot_id"], "model": r["model_id"], "route": "api_chat",
+                                 "parts": r.get("parts") or ["change"], "retrieves": "coupling" in (r.get("parts") or [])}
+                                for r in rows],
+                       "retry_key": review_retry_key(frozen), "subject": frozen.record_subject(),
                        "layer": frozen.spec.layer},
         "reuse_key": reuse_key, "review_contract_fingerprint": "cf", "review_wave_id": "wave-1",
     }
 
 
+_ASSIGNED = (("s1", "change"), ("s1", "coupling"), ("s2", "change"), ("s3", "change"))
+
+
 def _keys(frozen, **over):
-    args = {"rules_sha": "rules", "layer": frozen.spec.layer, "assigned": assigned_seats(["s1", "s2", "s3"], []),
+    args = {"rules_sha": "rules", "layer": frozen.spec.layer, "assigned": _ASSIGNED,
             "enforcement": "blocking", "contract_fp": "cf"}
     args.update(over)
     return review_reuse_key(frozen, **args)
@@ -475,8 +482,10 @@ def test_reuse_key_returns_the_settled_record_without_a_wave(tmp_path):
     ):
         assert variant != key and reuse_or_none(drive, variant) is None
     # The composition hashes as rows, however it is spelled.
-    assert _keys(frozen, assigned=[("s3", "change"), ("s1", "change"), ("s2", "change")]) == key
-    assert _keys(frozen, assigned=[{"seat_id": s, "parts": ["change"]} for s in ("s1", "s2", "s3")]) == key
+    assert _keys(frozen, assigned=[("s3", "change"), ("s1", "coupling"), ("s2", "change"), ("s1", "change")]) == key
+    assert _keys(frozen, assigned=[{"seat_id": "s1", "parts": ["change", "coupling"]},
+                                   *({"seat_id": s, "parts": ["change"]} for s in ("s2", "s3"))]) == key
+    assert _keys(frozen, assigned=assigned_seats(["s1", "s2", "s3"], ["s1"])) == key
 
 
 def test_pending_or_refused_records_are_never_reused(tmp_path):
@@ -490,7 +499,7 @@ def test_pending_or_refused_records_are_never_reused(tmp_path):
     assert pending.state == "pending" and reuse_or_none(drive, key) is None
     facts = _record_facts(frozen, reuse_key=key)
     facts.update(dispatch_refusal={"kind": "review_cycles_exhausted", "message": "no"}, triad_raw=[],
-                 structured={**facts["structured"], "triad_rows": []})
+                 structured={**facts["structured"], "rows": []})
     refused = rl.build_wave_record(facts, surface="commit_gate", drive_root=drive)
     rl.write_record(drive, refused)
     assert refused.verdict["aggregate"] == "NOT_DISPATCHED" and reuse_or_none(drive, key) is None

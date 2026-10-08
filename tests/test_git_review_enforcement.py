@@ -109,22 +109,39 @@ class TestReviewQuorumLogic:
         assert "code_quality" in section
 
 
+def _clean_coupling_matrix():
+    from ouroboros.tools.scope_review_contract import SCOPE_REQUIRED_ITEMS
+
+    return [{"item": item, "verdict": "PASS", "severity": "advisory",
+             "reason": "checked the touched modules and their consumers against the staged diff; clean"}
+            for item in sorted(SCOPE_REQUIRED_ITEMS)]
+
+
 class TestReviewEnforcementModes:
     @staticmethod
     def _fake_result(*review_texts):
-        return json.dumps({
-            "results": [
-                {
-                    "model": f"model-{idx}",
-                    "verdict": "PASS",
-                    "text": text,
-                    "tokens_in": 0,
-                    "tokens_out": 0,
-                    "cost_estimate": 0.0,
-                }
-                for idx, text in enumerate(review_texts, start=1)
-            ]
+        """One wave of the module's pinned packet panel: the change texts land on
+        the packet seats ``slot_1..n`` and the transitional coupling-only seat
+        answers Part 2 with a clean matrix, so a verdict here is decided by the
+        change findings under test and not by an unanswered coupling question."""
+        rows = [
+            {
+                "model": f"model-{idx}",
+                "slot_id": f"slot_{idx}",
+                "verdict": "PASS",
+                "text": text,
+                "tokens_in": 0,
+                "tokens_out": 0,
+                "cost_estimate": 0.0,
+            }
+            for idx, text in enumerate(review_texts, start=1)
+        ]
+        rows.append({
+            "model": "coupling-seat", "slot_id": "scope_slot_1", "verdict": "PASS",
+            "text": json.dumps(_clean_coupling_matrix()),
+            "tokens_in": 0, "tokens_out": 0, "cost_estimate": 0.0,
         })
+        return json.dumps({"results": rows})
 
     @staticmethod
     def _mock_staged(monkeypatch, review_mod, changed_files="x.py", diff_text="diff --cached",
@@ -215,7 +232,7 @@ class TestReviewEnforcementModes:
         assert saved.count("material original finding") == 1
         assert saved.count("minor original finding") == 1
         assert saved.count("prior deterministic/preflight warning") == 1
-        assert saved.count("Note: 1 of 3 review models") == 1
+        assert saved.count("Note: 1 of 4 review models") == 1  # 3 packet seats + the coupling seat
 
     @pytest.mark.parametrize("failure", ["nonzero_rc", "non_utf8_rc"])
     def test_uncapturable_staged_diff_blocks_instead_of_reviewing_a_placeholder(
@@ -797,7 +814,9 @@ def test_the_prepared_packet_carries_the_governance_disclosure_record(review_ctx
     assert manifest and all(
         set(row) == {"path", "tier", "disposition", "chars", "reason"} for row in manifest)
     assert {row["tier"] for row in manifest} <= {1, 2, 3}
-    assert prepared["governance_packet_slots"] == list(prepared["row_plan"]["slot_ids"])
+    plan = prepared["row_plan"]
+    assert prepared["governance_packet_slots"] == [
+        slot for slot, retrieves in zip(plan["slot_ids"], plan["retrieves"]) if not retrieves]
     assert ctx._last_triad_governance_manifest == manifest
 
 
@@ -835,7 +854,8 @@ def test_a_managed_subject_keeps_every_full_text(review_ctx, monkeypatch):
     import ouroboros.tools.review_subject as _subject
     fake_subject = SimpleNamespace(
         render_prompt_diff=lambda unified=3: "diff --managed", touched_paths=lambda: ["uv.lock"],
-        m0_tree="", staged_tree="", name_status=[("M", "uv.lock")],
+        m0_tree="", staged_tree="", name_status=[("M", "uv.lock")], diff="diff --managed",
+        header=lambda body_rendered=True: "### Managed-update resolution subject (M0→S)",
     )
     monkeypatch.setattr(_subject, "managed_review_subject", lambda ctx_, repo: fake_subject)
     monkeypatch.setattr(review, "triad_pack_exclusions",

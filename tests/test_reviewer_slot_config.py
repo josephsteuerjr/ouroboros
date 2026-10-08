@@ -308,23 +308,6 @@ def test_slot_id_is_never_an_array_index(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Caps are pinned to their real owners, not free-floating copies.
-# ---------------------------------------------------------------------------
-
-
-def test_scope_cap_is_the_parallel_review_pool_width():
-    import inspect
-
-    from ouroboros.tools import parallel_review
-
-    source = inspect.getsource(parallel_review)
-    assert f"min(len(scope_slots), {SCOPE_SLOT_LIMIT})" in source, (
-        "SCOPE_SLOT_LIMIT no longer matches the scope thread-pool width — "
-        "move both or neither"
-    )
-
-
-# ---------------------------------------------------------------------------
 # Legacy migration read (comma-lists as API slots + copied global efforts).
 # ---------------------------------------------------------------------------
 

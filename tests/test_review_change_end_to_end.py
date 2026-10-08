@@ -106,10 +106,11 @@ def test_review_change_on_the_system_index_is_the_commit_gates_brief(staged_body
                     "composition", "chosen_by", "assigned", "additional")
     assert {key: operation_record["panel"][key] for key in shared_panel} == {
         key: gate_record["panel"][key] for key in shared_panel}
-    assert operation_record["panel"]["composition"] == "configured"
-    # Disclosed divergence: the gate's configured panel is loud about its unrecorded
-    # reason; the operation is loud only when an author NARROWED the panel without one.
-    assert (gate_record["panel"]["reason_missing"], operation_record["panel"]["reason_missing"]) == (True, False)
+    assert operation_record["panel"]["composition"] == "full_pool"
+    # The whole pool sat on both surfaces (the operation's extra seat is `additional`),
+    # and a full pool owes no reason: `reason_missing` is a fact only about a panel an
+    # author narrowed without one (contract §1.6).
+    assert (gate_record["panel"]["reason_missing"], operation_record["panel"]["reason_missing"]) == (False, False)
     assert operation_record["verdict"]["aggregate"] == gate_record["verdict"]["aggregate"] == "PASS"
     assert (operation_record["surface"], gate_record["surface"]) == ("change", "commit_gate")
 

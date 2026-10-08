@@ -40,6 +40,7 @@ from ouroboros.delegate_custody_usage import (
 from ouroboros.triad_review import (
     ACCEPTANCE_SURFACE_RULES,
     TIER_CLASSIFICATION_RULES,
+    TWO_PART_SESSION_OUTPUT_SCHEMA,
     default_output_contract,
     review_output_shape,
 )
@@ -623,26 +624,23 @@ ACCEPTANCE_SESSION_OUTPUT_SCHEMA: Dict[str, Any] = {
 def review_session_output_schema(surface: str) -> Optional[Dict[str, Any]]:
     """The session verdict schema, shaped to the SURFACE's own clean contract.
 
-    The shared schema admits ``{"findings": []}`` — the honest clean verdict for a
-    triad or ordinary advisory reviewer. Scope's coverage contract requires all
-    checklist rows (PASS included); Skill Review has the same matrix shape. Their
-    schemas demand ``minItems: 1`` so an engine cannot conform with an empty answer;
-    each surface's downstream parser still verifies exact item coverage. An
-    ``object``-shaped surface (task acceptance) asks for the whole verdict object; a
-    ``report`` surface asks for NO schema — its prose passes through verbatim.
+    The shared schema admits ``{"findings": []}`` — the honest clean verdict for an
+    ordinary advisory reviewer. Skill Review's matrix contract requires all checklist
+    rows (PASS included): its schema demands ``minItems: 1`` and the downstream parser
+    still verifies exact item coverage. The commit gate's ``two_part`` shape asks for
+    contract B's one object; an ``object`` surface (task acceptance) for the whole
+    verdict object; a ``report`` surface for NO schema — its prose passes verbatim.
     """
     shape = review_output_shape(surface)
-    if shape == "report":
-        return None
-    if shape == "object":
-        return ACCEPTANCE_SESSION_OUTPUT_SCHEMA
+    if shape in ("report", "object", "two_part"):
+        return {"object": ACCEPTANCE_SESSION_OUTPUT_SCHEMA, "two_part": TWO_PART_SESSION_OUTPUT_SCHEMA}.get(shape)
     if surface == "plan_review":
         # plan review's own element contract (4e133c8a): the generic item/verdict shape
         # would conform-and-launder — an unknown class demotes to a note.
         from ouroboros.tools.plan_spec import PLAN_REVIEW_SESSION_OUTPUT_SCHEMA
 
         return PLAN_REVIEW_SESSION_OUTPUT_SCHEMA
-    if surface not in {"scope_review", "skill_review"}:
+    if surface != "skill_review":
         return REVIEW_SESSION_OUTPUT_SCHEMA
     shaped = json.loads(json.dumps(REVIEW_SESSION_OUTPUT_SCHEMA))
     shaped["properties"]["findings"]["minItems"] = 1

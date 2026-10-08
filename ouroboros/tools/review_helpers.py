@@ -453,56 +453,6 @@ def load_governance_doc(
 # ---------------------------------------------------------------------------
 
 
-# Anti-thrashing prompt rules — shared across triad, scope, and advisory reviewers.
-
-
-# Shared anti-thrashing prompt scaffolding (DRY — used by triad, scope, skill
-# reviewers); per-reviewer history bodies stay local because record shapes differ.
-
-
-def build_scope_actor_record(scope_result: object, *, fallback_model_id: str = "", slot_id: str = "") -> dict:
-    parsed_items = list(getattr(scope_result, "parsed_items", None) or [])
-    critical_findings = list(getattr(scope_result, "critical_findings", None) or [])
-    advisory_findings = list(getattr(scope_result, "advisory_findings", None) or [])
-    if not parsed_items:
-        parsed_items = critical_findings + advisory_findings
-    status = getattr(scope_result, "status", "responded")
-    # Surface the failure text on non-responded actors: the provider error
-    # (e.g. a deterministic 400 prompt-too-long) lives in block_message, and
-    # dropping it here previously forced operators to dig observability blobs
-    # to learn WHY a scope slot recorded status=error with empty raw_text.
-    error_text = ""
-    if status not in ("responded", "ok"):
-        error_text = str(getattr(scope_result, "block_message", "") or "")
-    return {
-        "slot": slot_id,
-        "slot_id": slot_id,
-        "model_id": getattr(scope_result, "model_id", "") or fallback_model_id,
-        "status": status,
-        "error": error_text,
-        **{key: str(getattr(scope_result, key, "") or "") for key in ("failure_phase", "failure_code")},
-        "raw_text": getattr(scope_result, "raw_text", ""),
-        "prompt_chars": getattr(scope_result, "prompt_chars", 0),
-        # measured | estimated_from_tokens | not_assembled — a back-computed count
-        # must not read as a measurement (RS5).
-        "prompt_chars_source": getattr(scope_result, "prompt_chars_source", "measured"),
-        "tokens_in": getattr(scope_result, "tokens_in", 0),
-        "tokens_out": getattr(scope_result, "tokens_out", 0),
-        "cost_usd": getattr(scope_result, "cost_usd", 0.0),
-        "context_manifest": getattr(scope_result, "context_manifest", {}) or {},
-        "prompt_ref": getattr(scope_result, "prompt_ref", {}) or {},
-        "response_ref": getattr(scope_result, "response_ref", {}) or {},
-        "operation_id": str(getattr(scope_result, "operation_id", "") or ""),
-        "operation_state": str(getattr(scope_result, "operation_state", "settled") or "settled"),
-        "late_result_pending": bool(getattr(scope_result, "late_result_pending", False)),
-        "pending_invocation_id": str(getattr(scope_result, "pending_invocation_id", "") or ""),
-        "delegated_run_id": str(getattr(scope_result, "delegated_run_id", "") or ""),
-        "parsed_items": parsed_items,
-        "critical_findings": critical_findings,
-        "advisory_findings": advisory_findings,
-    }
-
-
 def build_blocking_findings_json_section(
     open_obligations: list,
     blocking_history: list,

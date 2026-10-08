@@ -412,7 +412,7 @@ def test_assisted_update_refuses_when_one_review_wave_is_unaffordable(monkeypatc
     assert response.status_code == 409
     body = _body(response)
     assert "review wave" in body["error"]
-    assert body["estimated_wave_usd"] == 6.42  # triad + scope surfaces summed
+    assert body["estimated_wave_usd"] == 3.21  # ONE wave, priced once: both parts of the brief ride each seat
 
 
 @pytest.mark.parametrize(("ready", "expected_status"), [(True, 200), (False, 409)])

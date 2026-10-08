@@ -165,7 +165,7 @@ A registry of `config.SETTINGS_DEFAULTS` (exact defaults canonical in `settings_
 | OUROBOROS_PREFLIGHT_TEST_WORKERS | (unset) | Env-only: xdist workers for the hermetic parallel pass (floor 2, else `os.cpu_count()`); read from the OPERATOR environment, scrubbed from the candidate |
 | OUROBOROS_AUTO_GRANT_REVIEWED_SKILLS | true | Auto-grant manifest-declared permissions to cleanly reviewed skills (hash-bound; blocking findings never grant) |
 | OUROBOROS_TRUST_NATIVE_SEEDED_SKILLS | true | Launcher seed/resync writes hash-pinned `native_seed` verdicts; acts only at seed/resync, no runtime grant endpoint |
-| OUROBOROS_CONTEXT_MODE | max | Context mode `nano`/`low`/`max`, owner-selected outside Cyber Pro; `nano` records `owner_nano`/`rendered_mode=nano`; sizes Ouroboros's own working window, while scope review runs in every mode (BIBLE P1/P3); Cyber may configure it through the same audited writer (§6 Context fitting, retry, and compaction) |
+| OUROBOROS_CONTEXT_MODE | max | Context mode `nano`/`low`/`max`, owner-selected outside Cyber Pro; `nano` records `owner_nano`/`rendered_mode=nano`; sizes Ouroboros's own working window, while the review wave's retrieving seats run in every mode (BIBLE P1/P3); Cyber may configure it through the same audited writer (§6 Context fitting, retry, and compaction) |
 | OUROBOROS_CONTEXT_MODE_AUTO_LOW | false | Provenance tombstone of the RETIRED persistent auto-Low, not a toggle: normalization writes `false` and `get_owner_context_mode()` honours a persisted `low` only beside it (`context_mode_compat.py`); task-local overflow retry is separate (§6 Context fitting, retry, and compaction) |
 | OUROBOROS_RUNTIME_MODE | advanced | Effective Access light/advanced/pro/cyber_pro, persisted as the next-boot value; boundaries and Cyber agency: §6 Safety and runtime mode; review enforcement stays independent |
 | OUROBOROS_SKILLS_REPO_PATH | "" | Extra skills checkout path (expanded at read time, never cloned/pulled) |
@@ -178,7 +178,7 @@ A registry of `config.SETTINGS_DEFAULTS` (exact defaults canonical in `settings_
 | OUROBOROS_EFFORT_TASK | medium | Task reasoning effort (none/minimal/low/medium/high/xhigh/max/ultra; Settings hides `minimal`), the start of every ordinary root that names no explicit `reasoning_effort` (§6 Explicit starting effort of a root); preferred tier; exact-route, success-confirmed adaptation, original/sent/reported facts stay in usage/Logs. Controls Light post-task synthesis (reflection, Pattern Register update, episodic summary), which has no separate level |
 | OUROBOROS_EFFORT_EVOLUTION | high | Evolution effort |
 | OUROBOROS_EFFORT_REVIEW | high | Review effort for rows that pin none; a plan envelope's `reviewer_effort` outranks it and a row's pinned effort for that plan (a compound route slug keeps its encoded effort); the effective per-seat effort is recorded and a panel ordered weaker than the owner's setting is named |
-| OUROBOROS_EFFORT_SCOPE_REVIEW | high | Scope-review effort |
+| OUROBOROS_EFFORT_SCOPE_REVIEW | high | Effort of the transitional coupling-only rows still configured under the old scope role |
 | OUROBOROS_EFFORT_DEEP_SELF_REVIEW | high | Deep-self-review surface default; a saved `deep_review` row's own effort outranks it |
 | OUROBOROS_EFFORT_CONSCIOUSNESS | (empty) | Consciousness effort; empty = the Task / Chat effort (a wake is an ordinary Main turn), a set value is honored |
 | OUROBOROS_RETURN_REASONING | true | Ask OpenRouter to return reasoning; direct/local request copies strip OpenRouter-only fields |

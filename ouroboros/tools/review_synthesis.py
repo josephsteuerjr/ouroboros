@@ -12,12 +12,8 @@ import json
 import logging
 from typing import Any, Dict, List, Optional
 
-from ouroboros.triad_review import REVIEW_JSON_MATRIX_CONTRACT, extract_json_array
-from ouroboros.tools.review_helpers import (
-    anti_pattern_lock_guard,
-    emit_review_usage,
-    review_preamble,
-)
+from ouroboros.triad_review import extract_json_array
+from ouroboros.tools.review_helpers import emit_review_usage
 
 log = logging.getLogger(__name__)
 
@@ -28,9 +24,9 @@ _MIN_CLAIMS_FOR_SYNTHESIS = 2
 
 _SYNTHESIS_PROMPT_TEMPLATE = (
     "You are a code-review claim synthesizer. You receive a list of raw findings\n"
-    "from multiple independent reviewers (triad diff-reviewers + the\n"
-    "whole-repository scope reviewer). Your job is to produce a deduplicated\n"
-    "canonical list.\n"
+    "from multiple independent reviewers answering one two-part brief (the change\n"
+    "itself, and its coupling to the rest of the repository). Your job is to\n"
+    "produce a deduplicated canonical list.\n"
     "\n"
     "## Rules\n"
     "\n"
@@ -347,165 +343,6 @@ def per_slot_input_token_limits(
     return limits
 
 
-def build_scope_review_prompt(
-    current_files_section: str,
-    *,
-    scope_checklist: str,
-    canonical_docs: str,
-    intent_context: str,
-    history_block: str,
-    diff_text: str,
-    repo_pack_placeholder: str,
-    critical_calibration: str,
-    task_evidence_section: str = "",
-    layer: str = "body",
-) -> tuple:
-    # STABLE-FIRST for provider prompt caching: instructions, checklist and the
-    # always-inline governance tier are byte-stable across commits and form the
-    # cache-marked prefix; goal/scope/history/diff/index are the per-commit
-    # tail. The returned boundary is the length of that prefix. ``layer`` is
-    # the checklist layer (review_body_fact.layer_for): the core layer names no
-    # Ouroboros governance document and inlines none.
-    canonical_section = (
-        "## Canonical Documentation Context\n\n"
-        "These rules are inlined for every review of every change. Every other governance\n"
-        "document is named in the navigation below and is one read away; none of them is\n"
-        f"omitted.\n\n{canonical_docs}\n"
-    ) if layer == "body" else (
-        "## Canonical Documentation Context\n\n"
-        "The subject is not the Ouroboros body: none of Ouroboros's own governance documents\n"
-        "governs it or is inlined here. The `Governance navigation (core layer)` block in the\n"
-        "wider repository context names the whole rule set and indexes the subject's own\n"
-        "documents.\n"
-    )
-    stable = f"""\
-{review_preamble(layer)}
-
-## Your role
-
-You are the whole-repository reviewer, and you REACH the repository with your own
-read-only tools. Diff reviewers cover line-level mistakes;
-you cover cross-module contracts, forgotten touchpoints, hidden regressions,
-prompt/doc sync, architecture fit, and end-to-end intent completeness.
-
-## Your task
-
-For each finding, you MUST name the exact file, symbol, test, prompt, doc,
-config, or sibling flow that proves the issue. Vague concerns without a
-concrete artifact reference must be marked advisory, not critical.
-
-## Output format
-
-Output ONLY a valid JSON array.
-
-You MUST cover every checklist item from the Intent / Scope Review
-Checklist below. Skipping an item is not allowed — a missing entry
-indicates the item was not actually reviewed.
-
-The eight checklist item identifiers you MUST return (exactly these strings
-in the "item" field; no substitutions):
-
-1. intent_alignment
-2. forgotten_touchpoints
-3. cross_surface_consistency
-4. regression_surface
-5. prompt_doc_sync
-6. architecture_fit
-7. cross_module_bugs
-8. implicit_contracts
-
-Each element must follow the shared review JSON contract:
-{REVIEW_JSON_MATRIX_CONTRACT}
-
-Additional scope-review requirements:
-- "item" must be one of the eight identifiers above — verbatim, case-sensitive.
-- optional "obligation_id" when resolving or re-checking a previously surfaced obligation.
-- "reason":
-  - For FAIL: concrete artifact (file/symbol/line/contract) + what is wrong + how to fix.
-  - For PASS: 1–2 sentences stating WHY this item passes, naming a concrete
-artifact or code path that you checked. A bare "PASS" or single-word
-reason without justification indicates the item was not actually
-reviewed and will be treated as a reviewer failure.
-
-If one checklist item has multiple distinct concrete problems, return one
-FAIL entry per distinct root cause. Do not compress unrelated bugs into a
-single summary. If an item has no problems, return one PASS entry. Do not
-return duplicate PASS entries, and do not return PASS for an item that also
-has a FAIL — the concrete FAIL is authoritative.
-
-Severity rules: critical requires a concrete current artifact and a required
-change to this diff; otherwise use advisory. Scope affects only unchanged
-legacy code outside the diff. Apply the `Critical surface whitelist` in
-`docs/CHECKLISTS.md` for prose-vs-code mismatches.
-
-If an open obligation record in the review history section below already names
-an `obligation_id` for this root cause, reuse that exact `obligation_id`.
-Do NOT invent a new id for the same root cause.
-
-## Anti pattern-lock guard
-
-{anti_pattern_lock_guard(layer)}
-
-{critical_calibration}
-
-{scope_checklist}
-
-{canonical_section}"""
-    dynamic = f"""\
-{intent_context}
-
-{history_block}
-
-{task_evidence_section}
-
-## Touched files
-
-The manifest below names every path this change touches, with what happened to
-it and how large it is in the candidate tree. No file body is inlined: the
-staged diff carries every added and removed line, and you read any file itself
-with your own tools.
-
-{current_files_section}
-
-## Staged diff
-
-{diff_text}
-
-## Wider repository context
-
-{repo_pack_placeholder}
-"""
-    return stable + "\n" + dynamic, len(stable) + 1
-
-
-def build_plan_review_messages(
-    system_prompt: str,
-    user_content: str,
-    user_stable_len: int = 0,
-) -> List[Dict[str, Any]]:
-    """Cache-friendly plan-review message pair.
-
-    The whole system prompt (governance docs + reviewer contract) is byte-stable
-    across plan reviews and carries the cache marker; the user content marks its
-    evidence/plan boundary so stable repository evidence caches while the
-    revised plan does not."""
-    from ouroboros.tools.review_helpers import cached_prompt_blocks
-
-    return [
-        {"role": "system", "content": cached_prompt_blocks(system_prompt)},
-        {
-            "role": "user",
-            "content": (
-                cached_prompt_blocks(
-                    user_content[:user_stable_len], user_content[user_stable_len:]
-                )
-                if 0 < user_stable_len <= len(user_content)
-                else user_content
-            ),
-        },
-    ]
-
-
 COUPLING_QUESTION_IDS = (
     "intent_alignment",
     "forgotten_touchpoints",
@@ -583,3 +420,31 @@ A missing entry means the question was not reviewed.
 
 {history_block}
 """
+
+
+def build_plan_review_messages(
+    system_prompt: str,
+    user_content: str,
+    user_stable_len: int = 0,
+) -> List[Dict[str, Any]]:
+    """Cache-friendly plan-review message pair.
+
+    The whole system prompt (governance docs + reviewer contract) is byte-stable
+    across plan reviews and carries the cache marker; the user content marks its
+    evidence/plan boundary so stable repository evidence caches while the
+    revised plan does not."""
+    from ouroboros.tools.review_helpers import cached_prompt_blocks
+
+    return [
+        {"role": "system", "content": cached_prompt_blocks(system_prompt)},
+        {
+            "role": "user",
+            "content": (
+                cached_prompt_blocks(
+                    user_content[:user_stable_len], user_content[user_stable_len:]
+                )
+                if 0 < user_stable_len <= len(user_content)
+                else user_content
+            ),
+        },
+    ]

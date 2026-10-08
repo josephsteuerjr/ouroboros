@@ -49,7 +49,7 @@ TOOL_MODULES = [
     "ouroboros.tools.claude_advisory_review",
     "ouroboros.tools.review_change",
     "ouroboros.tools.recent_tasks",
-    "ouroboros.tools.scope_review",
+    "ouroboros.tools.review_brief_coupling",
     "ouroboros.tools.review_helpers",
     "ouroboros.tools.plan_review",
     "ouroboros.tools.git_rollback",

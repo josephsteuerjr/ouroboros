@@ -35,7 +35,7 @@ from ouroboros.config import (
 from ouroboros.review_body_fact import body_fact, layer_for
 from ouroboros.review_ledger import (
     PART_CHANGE, PART_COUPLING, PARTS, QUESTION_NOT_PERFORMED, build_wave_record, ledger_root, new_record_id,
-    panel_facts, reduce_verdict, revise_record, row_verdict, write_record,
+    panel_facts, reduce_verdict, revise_record, row_verdict, seat_parts, write_record,
 )
 from ouroboros.runtime_mode_policy import runtime_mode_at_least
 from ouroboros.settings_scales import EFFORT_SCALE, effort_rank
@@ -58,9 +58,9 @@ TOOL_NAME = "review_change"
 SURFACE = "change"
 ROOTS = ("active_workspace", "system_repo")
 SUBJECT_KINDS = ("index", "worktree", "base..head")
-# Wave block reasons the seat rows state themselves (findings, quorum, scope);
+# Wave block reasons the seat rows state themselves (findings, quorum, coupling);
 # any other block keeps a verdict recomputed over the assigned seats from PASS.
-_ROW_STATED_BLOCKS = frozenset({"", "critical_findings", "review_quorum", "scope_blocked"})
+_ROW_STATED_BLOCKS = frozenset({"", "critical_findings", "review_quorum", "coupling_not_performed", "change_unanswered"})
 _GIT_PROBE_TIMEOUT_SEC = 30
 _SEAT_PREFIX = "rc-"
 _SEAT_ID_MAX = 64
@@ -237,7 +237,8 @@ class ComposedPanel:
     def assigned(self) -> Tuple[Tuple[str, str, str], ...]:
         """The composition identity: every seat, its part, and whether it counts."""
         extra = set(self.additional)
-        seats = [(row.slot_id, PART_CHANGE) for row in self.triad] + [(row.slot_id, PART_COUPLING) for row in self.scope]
+        seats = [(row.slot_id, part) for row in self.triad for part in seat_parts(row)]
+        seats += [(row.slot_id, part) for row in self.scope for part in seat_parts(row, coupling_only=True)]
         return tuple(sorted((seat, part, "additional" if seat in extra else "assigned") for seat, part in seats))
 
 
@@ -295,7 +296,7 @@ def compose_panel(request: ReviewChangeRequest, *, adds_only: bool) -> ComposedP
     try:
         config = slots.load_reviewer_slot_config()
     except ValueError as exc:
-        return ComposedPanel((), (), (), False, {"composition": "configured", "composition_error": str(exc)})
+        return ComposedPanel((), (), (), False, {"composition": "full_pool", "composition_error": str(exc)})
     by_name = _configured_seats(config)
     configured = {row.slot_id for row in (*config.triad, *config.scope)}
     taken = set(configured)
@@ -318,7 +319,7 @@ def compose_panel(request: ReviewChangeRequest, *, adds_only: bool) -> ComposedP
             if row.slot_id not in configured and row not in triad:
                 triad.append(row)
                 additional.append(row.slot_id)
-        facts: Dict[str, Any] = {"composition": "configured", "chosen_by": "owner",
+        facts: Dict[str, Any] = {"composition": "full_pool", "chosen_by": "owner",
                                  "reviewers_subset_ignored": bool(named_configured) and named_configured != configured}
     elif named:
         for part, row in named:
@@ -427,15 +428,16 @@ def _prepare_wave(ctx: ToolContext, request: ReviewChangeRequest, frozen: Any, p
 # The shared task context's review state; the wave runs with this call's
 # identities and a fresh history, and every field is restored afterwards.
 _CTX_FIELDS = (
-    "last_push_succeeded", "_review_advisory", "_last_triad_models", "_last_scope_model",
+    "last_push_succeeded", "_review_advisory", "_last_triad_models", "_last_coupling_result",
     "_last_triad_raw_results", "_last_review_critical_findings", "_last_review_block_reason",
-    "_last_review_advisory_findings", "_last_scope_raw_result", "_last_scope_raw_results",
+    "_last_review_advisory_findings", "_last_review_verdict", "_last_scope_raw_result",
     "_last_review_structured", "_review_degraded_reasons", "_current_review_tool_name",
     "_current_review_retry_key", "_current_review_record_id", "_review_reconcile_only",
     "_review_frozen_rows", "_review_custody_lost", "_current_review_attempt_number",
     "_author_commit_source", "_author_commit_decision", "_author_commit_record", "_commit_review_status",
     "_current_review_rebuttal_sha256", "_current_review_contract_fingerprint", "_review_history",
-    "_review_iteration_count", "_scope_review_history", "_triad_withheld_seat_records",
+    "_review_iteration_count", "_coupling_review_history", "_coupling_review_history_rounds",
+    "_triad_withheld_seat_records",
     "_review_paid_stamp", "_review_reserved_roster", "_review_reserved_operations",
     "_review_pending_invocation_checkpoint", "_last_review_slot_executions", "_pending_review_attempt",
 )
@@ -454,7 +456,7 @@ def _wave_context(ctx: ToolContext, wave: _Wave) -> Iterator[None]:
         ctx._current_review_record_id = wave.record_id
         ctx._current_review_rebuttal_sha256 = wave.rebuttal_sha
         ctx._current_review_contract_fingerprint = wave.contract_fp
-        ctx._review_history, ctx._review_iteration_count, ctx._scope_review_history = [], 0, {}
+        ctx._review_history, ctx._review_iteration_count, ctx._coupling_review_history = [], 0, {}
         yield
     finally:
         for name, value in saved.items():
@@ -476,7 +478,7 @@ def _dispatch(ctx: ToolContext, wave: _Wave) -> Dict[str, Any]:
     asked = "".join(f"\n{number}. {question}" for number, question in enumerate(wave.request.author_questions, 1))
     goal = f"{wave.request.goal}\n\nAuthor questions (answer each as asked):{asked}".lstrip("\n") if asked else wave.request.goal
     try:
-        review_err, scope_result, triad_block_reason, _advisory = run_parallel_review(
+        review_err, _coupling, block_reason, _advisory = run_parallel_review(
             ctx, wave.label, goal=goal, scope=wave.request.scope,
             review_rebuttal=wave.request.review_rebuttal,
             review_binding_fingerprint=str(wave.frozen.diff_sha), subject=wave.frozen)
@@ -486,18 +488,17 @@ def _dispatch(ctx: ToolContext, wave: _Wave) -> Dict[str, Any]:
                 "attempt": holder}
     finally:
         git_mod._reconcile_and_clear_review_roster(ctx)
+    # The one wave decides once (review_ledger.reduce_verdict): a coupling FAIL is
+    # a critical finding of the same verdict, never a second block.
     if review_err:
-        return {"blocked": True, "block_reason": str(triad_block_reason or ""), "attempt": holder}
-    scope_blocked = bool(getattr(scope_result, "blocked", False))
-    return {"blocked": scope_blocked, "block_reason": "scope_blocked" if scope_blocked else "", "attempt": holder}
+        return {"blocked": True, "block_reason": str(block_reason or ""), "attempt": holder}
+    return {"blocked": False, "block_reason": "", "attempt": holder}
 
 
 def _forensic(ctx: ToolContext) -> Dict[str, Any]:
-    scope_raw = getattr(ctx, "_last_scope_raw_result", {}) or {}
     return {
         "structured": dict(getattr(ctx, "_last_review_structured", {}) or {}),
         "triad_raw": [row for row in (getattr(ctx, "_last_triad_raw_results", []) or []) if isinstance(row, dict)],
-        "scope_raw": dict(scope_raw) if isinstance(scope_raw, dict) else {},
         "degraded_reasons": [str(item) for item in (getattr(ctx, "_review_degraded_reasons", []) or [])],
         "block_reason": str(getattr(ctx, "_last_review_block_reason", "") or ""),
         "custody_lost": bool(getattr(ctx, "_review_custody_lost", False)),
@@ -507,13 +508,8 @@ def _forensic(ctx: ToolContext) -> Dict[str, Any]:
     }
 
 
-def _scope_rows(scope_raw: Dict[str, Any]) -> List[Dict[str, Any]]:
-    rows = [row for row in (scope_raw.get("raw_results") or []) if isinstance(row, dict)]
-    return rows or ([scope_raw] if scope_raw.get("status") else [])
-
-
 def _open_seats(forensic: Dict[str, Any]) -> List[str]:
-    rows = [*forensic.get("triad_raw", []), *_scope_rows(forensic.get("scope_raw") or {})]
+    rows = list(forensic.get("triad_raw", []))
     return [str(row.get("slot_id") or "") for row in rows
             if bool(row.get("late_result_pending")) or str(row.get("operation_state") or "") in {"in_flight", "custody_lost"}]
 
@@ -540,22 +536,29 @@ def _checkout_custody(ctx: ToolContext, forensic: Dict[str, Any]) -> Dict[str, A
     return facts
 
 
-def seat_findings(triad_raw: Sequence[Dict[str, Any]], scope_raw: Dict[str, Any],
+def seat_findings(triad_raw: Sequence[Dict[str, Any]],
                   additional: set) -> Tuple[List[dict], List[dict], List[dict]]:
-    """(critical, advisory, additional) FAIL items, each attributed to its seat."""
+    """(critical, advisory, additional) FAIL items, each attributed to its seat
+    and the PART it answered (``answers`` by part; a record without ``answers``
+    is a packet seat whose ``parsed_items`` are the change's)."""
     critical, advisory, extra = [], [], []
-    for part, rows in ((PART_CHANGE, triad_raw), (PART_COUPLING, _scope_rows(scope_raw))):
-        for raw in rows:
-            seat = str(raw.get("slot_id") or "")
-            items = [("critical", item) for item in raw.get("critical_findings") or [] if isinstance(item, dict)]
-            items += [("advisory", item) for item in raw.get("advisory_findings") or [] if isinstance(item, dict)]
-            if not items:
-                items = [("critical" if str(item.get("severity") or "").lower() == "critical" else "advisory", item)
-                         for item in raw.get("parsed_items") or []
-                         if isinstance(item, dict) and str(item.get("verdict") or "FAIL").upper() == "FAIL"]
-            for severity, item in items:
-                finding = {**item, "seat_id": seat, "part": part, "severity": severity}
-                (extra if seat in additional else critical if severity == "critical" else advisory).append(finding)
+
+    def _severity(item: Dict[str, Any]) -> str:
+        return "critical" if str(item.get("severity") or "").lower() == "critical" else "advisory"
+
+    for raw in triad_raw:
+        seat = str(raw.get("slot_id") or "")
+        answers = raw.get("answers") if isinstance(raw.get("answers"), dict) else None
+        if answers:
+            items = [(part, item) for part in PARTS for item in (answers.get(part) or {}).get("findings") or []
+                     if isinstance(item, dict)]
+        else:
+            items = [(PART_CHANGE, item) for item in raw.get("parsed_items") or []
+                     if isinstance(item, dict) and str(item.get("verdict") or "FAIL").upper() == "FAIL"]
+        for part, item in items:
+            severity = _severity(item)
+            finding = {**item, "seat_id": seat, "part": part, "severity": severity}
+            (extra if seat in additional else critical if severity == "critical" else advisory).append(finding)
     return critical, advisory, extra
 
 
@@ -567,14 +570,14 @@ def wave_facts(ctx: ToolContext, wave: _Wave, *, outcome: Dict[str, Any], forens
 
     task_id = str(getattr(ctx, "task_id", "") or "")
     structured = dict(forensic.get("structured") or {})
-    triad_raw, scope_raw = list(forensic.get("triad_raw") or []), dict(forensic.get("scope_raw") or {})
+    triad_raw = list(forensic.get("triad_raw") or [])
     refusal = outcome.get("dispatch_refusal")
     if refusal is None and forensic.get("block_reason") == "review_wave_budget_insufficient":
         refusal = {"kind": "review_wave_budget_insufficient", "message": str(structured.get("wave_refusal") or "")}
     degraded = list(forensic.get("degraded_reasons") or [])
     if outcome.get("crash"):
         degraded.append(f"review_change_wave_crashed: {outcome['crash']}")
-    critical, advisory, additional = seat_findings(triad_raw, scope_raw, set(wave.panel.additional))
+    critical, advisory, additional = seat_findings(triad_raw, set(wave.panel.additional))
     executions = dict(forensic.get("slot_executions") or {})
     mode = ""
     with contextlib.suppress(Exception):
@@ -590,13 +593,16 @@ def wave_facts(ctx: ToolContext, wave: _Wave, *, outcome: Dict[str, Any], forens
         "binding_fingerprint": str(wave.frozen.diff_sha), "review_contract_fingerprint": wave.contract_fp,
         "rebuttal_sha256": wave.rebuttal_sha, "enforcement": wave.enforcement, "mode": mode,
         "enforcement_blocks": wave.layer == "body" and bool(review_enforcement_blocks(wave.enforcement)),
-        "structured": structured, "slot_executions": executions, "triad_raw": triad_raw, "scope_raw": scope_raw,
+        "structured": structured, "slot_executions": executions, "triad_raw": triad_raw,
         "blocked": bool(outcome.get("blocked")), "block_reason": str(outcome.get("block_reason") or ""),
         "dispatch_refusal": refusal, "pending": _seats_open(forensic), "degraded_reasons": degraded,
         "critical_findings": critical, "advisory_findings": advisory, "additional_findings": additional,
         "tests": {"policy": "NOT_RUN", "result": "unknown"},
         "preflight": {"status": "not_performed", "record_id": ""},
         "reuse_key": wave.reuse_key if refusal is None else "", "retry_key": wave.retry_key,
+        "composition": str(wave.panel.facts.get("composition") or "full_pool"),
+        "composition_reason": str(wave.panel.facts.get("reason") or ""),
+        "chosen_by": str(wave.panel.facts.get("chosen_by") or "owner"),
     }
 
 
@@ -614,11 +620,11 @@ def subject_facts(frozen: Any, retention: Optional[Dict[str, Any]] = None) -> Di
 
 
 def _assigned_verdict(record: Any, rows: List[Dict[str, Any]], outcome: Dict[str, Any]) -> Dict[str, Any]:
-    """The decision over the ASSIGNED seats only; added seats never count."""
-    counts = {part: sum(1 for seat in rows if part in (seat.get("parts") or [])) for part in PARTS}
+    """The decision over the ASSIGNED seats only; added seats never count. The
+    quorum is ``adaptive_quorum`` of the assigned seats — one number, as the gate's."""
     reason = str(outcome.get("block_reason") or "")
     verdict = reduce_verdict(
-        rows, quorum_required={part: adaptive_quorum(n) if n else 0 for part, n in counts.items()},
+        rows, quorum_required=adaptive_quorum(len(rows)) if rows else 0,
         gate_blocked=bool(outcome.get("blocked")) and reason not in _ROW_STATED_BLOCKS, gate_reason=reason,
         dispatch_refusal=record.dispatch_refusal, pending=record.state == "pending")
     verdict["per_row"] = {**{str(s.get("seat_id") or ""): row_verdict(s) for s in record.rows}, **verdict["per_row"]}
@@ -643,7 +649,9 @@ def _finish_record(record: Any, wave: _Wave, outcome: Dict[str, Any], *, reuse_k
         verdict = _assigned_verdict(record, assigned_rows, outcome)
         record.verdict = {**dict(record.verdict or {}), **verdict}
         record.brief["parts"] = [part for part in PARTS if verdict["per_question"].get(part) != QUESTION_NOT_PERFORMED]
-        panel = panel_facts(assigned_rows)
+        panel = panel_facts(assigned_rows, composition=str(wave.panel.facts.get("composition") or "full_pool"),
+                            reason=str(wave.panel.facts.get("reason") or ""),
+                            chosen_by=str(wave.panel.facts.get("chosen_by") or "owner"))
     record.panel = {**panel, **wave.panel.facts}
 
 

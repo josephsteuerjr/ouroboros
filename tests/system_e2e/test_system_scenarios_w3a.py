@@ -81,7 +81,7 @@ from tests.system_e2e.harness import (
     keyless_reviewer_slots,
     keyless_settings,
     require_lane,
-    scope_clean_text,
+    two_part_clean_text,
     scripted_completion,
     start_server,
     submit_running,
@@ -599,7 +599,7 @@ def test_s15_advisory_class_red_verdict_recorded_and_commit_lands(e2e_clone, tmp
             assert len(_tool_rows(task_drive, "commit_reviewed")) >= 2
             kinds = stub.kinds()
             assert kinds.count("triad_review") == 3, kinds
-            assert kinds.count("scope_review") == 1, kinds
+            assert kinds.count("two_part_review") == 1, kinds
             review_script.assert_consumed()
         finally:
             server.stop()
@@ -699,7 +699,7 @@ def test_s16_blocking_class_red_blocks_identical_refused_free_then_green_lands(
             assert blocked, attempts
             kinds = stub.kinds()
             assert kinds.count("triad_review") == 6, kinds
-            assert kinds.count("scope_review") == 2, kinds
+            assert kinds.count("two_part_review") == 2, kinds
             review_script.assert_consumed()
         finally:
             server.stop()
@@ -758,16 +758,16 @@ def test_s16_freshness_refreshes_advisory_then_rejects_post_verdict_mutation(
     def _mutate_staged_tree_then_pass(_body):
         # The post-verdict freshness probe: stage NEW bytes while the paid
         # review wave is in flight (after the pre-dispatch fingerprint, before
-        # settlement). The scope verdict returned here is ALL-CLEAN — the
+        # settlement). The two-part verdict returned here is ALL-CLEAN — the
         # refusal below can only come from the freshness gate, never from the
         # verdicts.
         (clone / S13B_JUNK).write_text("staged mid-review to prove post-verdict freshness\n",
                                        encoding="utf-8")
         subprocess.run(["git", "add", S13B_JUNK], cwd=str(clone),
                        check=True, capture_output=True)
-        return scope_clean_text()
+        return two_part_clean_text()
 
-    review_script = ReviewScript({"scope_review": [_mutate_staged_tree_then_pass]})
+    review_script = ReviewScript({"two_part_review": [_mutate_staged_tree_then_pass]})
     stub = ScriptedStubModel(S13B_SCRIPT, review_script=review_script)
     with stub:
         settings = keyless_settings(
@@ -833,7 +833,7 @@ def test_s16_freshness_refreshes_advisory_then_rejects_post_verdict_mutation(
             kinds = stub.kinds()
             assert kinds.count("advisory_review") == 2, kinds
             assert kinds.count("triad_review") == 3, kinds
-            assert kinds.count("scope_review") == 1, kinds
+            assert kinds.count("two_part_review") == 1, kinds
             assert max(i for i, kind in enumerate(kinds) if kind == "advisory_review") < kinds.index("triad_review"), kinds
             review_script.assert_consumed()
         finally:

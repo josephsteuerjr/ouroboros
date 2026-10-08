@@ -1329,17 +1329,18 @@ class TestReviewContractModes:
         assert "NO_FINDINGS" not in REVIEW_JSON_MATRIX_CONTRACT
         assert "one entry per required checklist item" in REVIEW_JSON_MATRIX_CONTRACT
 
-    def test_rendered_scope_prompt_offers_no_all_clear(self):
-        """The scope parser rejects an empty array as all eight items missing,
-        so the prompt it is paired with must not advertise the sentinel."""
-        from ouroboros.tools.review_synthesis import build_scope_review_prompt
+    def test_rendered_coupling_part_offers_no_all_clear(self):
+        """The coupling parser rejects an empty matrix as all eight questions
+        missing, so Part 2 and contract B must not advertise the sentinel."""
+        from ouroboros.triad_review import REVIEW_TWO_PART_OBJECT_CONTRACT
+        from ouroboros.tools.review_synthesis import COUPLING_QUESTION_IDS, build_coupling_part
 
-        rendered = "".join(
-            part for part in build_scope_review_prompt(
-                "files", scope_checklist="cl", canonical_docs="docs",
-                intent_context="intent", history_block="hist", diff_text="diff",
-                repo_pack_placeholder="atlas", critical_calibration="calib",
-            ) if isinstance(part, str)
+        rendered = build_coupling_part(
+            coupling_checklist="cl", required_sources_section="sources",
+            repository_index="index", history_block="hist",
         )
         assert "NO_FINDINGS" not in rendered
-        assert "one entry per required checklist item" in rendered
+        assert "Answer EVERY question" in rendered
+        assert all(item in rendered for item in COUPLING_QUESTION_IDS)
+        assert "NO_FINDINGS" not in REVIEW_TWO_PART_OBJECT_CONTRACT
+        assert "no empty \"coupling\"" in REVIEW_TWO_PART_OBJECT_CONTRACT

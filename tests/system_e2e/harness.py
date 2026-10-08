@@ -159,7 +159,8 @@ DISTINCT_MOCK_MODEL_IDS = tuple(f"mock-model-t{i}" for i in (1, 2, 3))
 #   REVIEWER_SLOT_MARKER   — ouroboros/review_execution.py::_render_prompt_parts
 #   ACCEPTANCE_KEYS_MARKER — same function, the task_acceptance criteria_used key list
 #   TRIAD_USER_MARKER      — ouroboros/tools/review.py::_dispatch_unified_review
-#   SCOPE_USER_MARKER      — ouroboros/tools/scope_review.py::_call_scope_llm
+#   TWO_PART_SURFACE       — ouroboros/triad_review.py::REVIEW_OUTPUT_SHAPES (the commit gate's
+#                            native inspection episode names it on its "Surface:" line)
 #   PLAN_REVIEW_MARKER     — ouroboros/tools/plan_packet.py::build_plan_review_system_prompt
 #   NATIVE_EPISODE_MARKER  — ouroboros/review_native_episode.py::episode_prompt
 # The default-lane marker-pin test greps them out of the source files so drift is a
@@ -168,7 +169,9 @@ DISTINCT_MOCK_MODEL_IDS = tuple(f"mock-model-t{i}" for i in (1, 2, 3))
 REVIEWER_SLOT_MARKER = "You are an independent Ouroboros reviewer slot."
 ACCEPTANCE_KEYS_MARKER = "criteria_used (the acceptance criteria you re-derived"
 TRIAD_USER_MARKER = "Review the staged diff and context provided in the instructions above."
-SCOPE_USER_MARKER = "Review the staged change and context above. Output ONLY a JSON array."
+# The one wave's native inspection episode (one brief, two parts — contract B):
+# classified by the surface NAME on its prompt line, never by a packet marker.
+TWO_PART_SURFACE = "multi_model_review"
 SKILL_REVIEW_MARKER = "You are performing a SKILL review, not a repo-commit review."
 PLAN_REVIEW_MARKER = (
     "You are one independent reviewer of an INTENTION — a plan spec — "
@@ -191,7 +194,6 @@ MARKER_SOURCES = {
     REVIEWER_SLOT_MARKER: "ouroboros/review_execution.py",
     ACCEPTANCE_KEYS_MARKER: "ouroboros/review_execution.py",
     TRIAD_USER_MARKER: "ouroboros/tools/review_multi_model.py",   # TRIAD_USER_TURN: the one literal the send and the admission share
-    SCOPE_USER_MARKER: "ouroboros/tools/scope_review.py",
     SKILL_REVIEW_MARKER: "ouroboros/skill_review_prompt.py",
     PLAN_REVIEW_MARKER: "ouroboros/tools/plan_packet.py",
     NATIVE_EPISODE_MARKER: "ouroboros/review_native_episode.py",
@@ -240,7 +242,7 @@ def body_text(body: dict) -> str:
 def classify_call(body: dict) -> str:
     """Name the branch a chat-completion body belongs to.
 
-    Returns one of: ``safety``, ``skill_review``, ``scope_review``, ``triad_review``,
+    Returns one of: ``safety``, ``skill_review``, ``two_part_review``, ``triad_review``,
     ``acceptance``, ``reviewer_slot``, ``plan_review``, ``advisory_review``,
     ``native_episode``, ``finalization``, ``agent``. ORDER MATTERS (roast F22):
     every review-organ branch is checked BEFORE the finalization-turn check,
@@ -264,9 +266,6 @@ def classify_call(body: dict) -> str:
     # another branch's marker; its own opening sentence is the most specific.
     if SKILL_REVIEW_MARKER in full:
         return "skill_review"
-    # Scope before triad: both user messages start with "Review the staged".
-    if SCOPE_USER_MARKER in user_tail:
-        return "scope_review"
     if TRIAD_USER_MARKER in user_tail:
         return "triad_review"
     if PLAN_REVIEW_MARKER in full:
@@ -274,7 +273,9 @@ def classify_call(body: dict) -> str:
     if NATIVE_EPISODE_MARKER in full:
         match = _SURFACE_LINE_RE.search(full)
         surface = match.group(1) if match else ""
-        return surface if surface in {"advisory_review", "scope_review"} else "native_episode"
+        if surface == TWO_PART_SURFACE:
+            return "two_part_review"   # the commit gate's retrieving seat (contract B)
+        return surface if surface == "advisory_review" else "native_episode"
     if REVIEWER_SLOT_MARKER in full:
         return "acceptance" if ACCEPTANCE_KEYS_MARKER in full else "reviewer_slot"
     if any(marker in full for marker in FINALIZATION_MARKERS):
@@ -286,7 +287,7 @@ def classify_call(body: dict) -> str:
 # consume an agent script step or a ReplayModel fixture row, and a scenario's
 # ReviewScript may override their canned answers.
 REVIEW_KINDS = frozenset({
-    "safety", "scope_review", "triad_review", "acceptance", "reviewer_slot",
+    "safety", "two_part_review", "triad_review", "acceptance", "reviewer_slot",
     "plan_review", "advisory_review", "native_episode",
 })
 
@@ -294,8 +295,10 @@ REVIEW_KINDS = frozenset({
 # ---------------------------------------------------------------------------
 # Canned review-organ verdicts (all-clean). Shapes come from the tree's own parsers:
 # triad — triad_review.REVIEW_JSON_ARRAY_CONTRACT ([] + NO_FINDINGS sentinel);
-# scope — scope_review_contract.normalize_scope_items (required matrix, PASS reasons
-# must be non-terse); reviewer slot — review_execution's "Return JSON with keys" list.
+# two-part — triad_review.REVIEW_TWO_PART_OBJECT_CONTRACT: one object {change, change_clean,
+# coupling}, the coupling matrix per scope_review_contract.normalize_scope_items (required
+# matrix, PASS reasons must be non-terse); reviewer slot — review_execution's "Return JSON
+# with keys" list.
 # ---------------------------------------------------------------------------
 
 TRIAD_CLEAN_TEXT = "[]\nNO_FINDINGS"
@@ -313,8 +316,8 @@ def canned_review_answer(kind: str) -> dict | None:
                 "content": json.dumps({"status": "SAFE", "reason": "stub"})}
     if kind == "skill_review":
         return {"role": "assistant", "content": skill_review_clean_text()}
-    if kind == "scope_review":
-        return {"role": "assistant", "content": scope_clean_text()}
+    if kind == "two_part_review":
+        return {"role": "assistant", "content": two_part_clean_text()}
     if kind == "triad_review":
         return {"role": "assistant", "content": TRIAD_CLEAN_TEXT}
     if kind in ("acceptance", "reviewer_slot"):
@@ -350,16 +353,20 @@ def skill_review_clean_text() -> str:
     ])
 
 
-def scope_clean_text() -> str:
-    return json.dumps([
-        {
-            "item": item,
-            "verdict": "PASS",
-            "severity": "advisory",
-            "reason": "Stub scope reviewer: checked and clean for this scripted smoke diff.",
-        }
-        for item in sorted(SCOPE_REQUIRED_ITEMS)
-    ])
+def two_part_clean_text() -> str:
+    """Contract B, all clean: no change findings and a full PASS coupling matrix."""
+    return json.dumps({
+        "change": [], "change_clean": True,
+        "coupling": [
+            {
+                "item": item,
+                "verdict": "PASS",
+                "severity": "advisory",
+                "reason": "Stub coupling reviewer: checked and clean for this scripted smoke diff.",
+            }
+            for item in sorted(SCOPE_REQUIRED_ITEMS)
+        ],
+    })
 
 
 def reviewer_slot_clean_text(kind: str) -> str:
@@ -1258,7 +1265,7 @@ class ArtifactOracle:
         On this tree a headless task's ToolContext drive root is
         ``state/headless_tasks/<task_id>/data`` under the server's data root, so the
         durable review evidence (state/advisory_review.json, the
-        advisory_review_bypassed / scope_review_complete events) lands THERE, not in
+        advisory_review_bypassed event, the review ledger record) lands THERE, not in
         the server-level files. Falls back to the server root when the task has no
         forked drive (e.g. a direct-chat turn)."""
         forked = self.data_root / "state" / "headless_tasks" / str(task_id) / "data"

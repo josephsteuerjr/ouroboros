@@ -318,13 +318,10 @@ def test_m0_missing_falls_back_to_full_diff_with_loud_disclosure(tmp_path, monke
 def test_m0_missing_session_fallback_texts_are_honest(tmp_path, monkeypatch):
     """M4: the SESSION variant of the M0-missing packet renders NO diff body —
     its header must instruct retrieval, not claim a rendering below, for BOTH
-    the triad and the scope session builders."""
+    the packet seat's session task and the retrieving seat's two-part brief
+    (whose Part 1 is that same task)."""
+    from ouroboros.tools.review_brief_coupling import BriefInputs, BriefIntent, build_retrieving_brief
     from ouroboros.tools.review_helpers import REPO_ROOT
-    from ouroboros.tools.scope_review_session import (
-        ScopeBriefInputs,
-        ScopeIntentContext,
-        build_scope_session_task,
-    )
 
     repo, ctx, tx = _managed_resolution_repo(tmp_path, monkeypatch)
     tx.pop("m0_tree")
@@ -339,13 +336,13 @@ def test_m0_missing_session_fallback_texts_are_honest(tmp_path, monkeypatch):
     assert subject.fallback_full_diff is True
 
     triad_task = build_triad_session_task(subject=subject, **_SESSION_SECTIONS)
-    scope_task, _m = build_scope_session_task(repo, ScopeBriefInputs(
+    brief, _m = build_retrieving_brief(repo, BriefInputs(
         commit_message="land the update",
-        intent=ScopeIntentContext(goal="g", scope="s"),
+        intent=BriefIntent(goal="g", scope="s"),
         governance_repo_dir=pathlib.Path(REPO_ROOT),
         managed_subject=subject,
     ))
-    for task in (triad_task, scope_task):
+    for task in (triad_task, brief):
         assert "M0 BASELINE UNAVAILABLE" in task
         assert "retrieve the FULL staged candidate diff yourself" in task
         assert "`git diff --cached`" in task
@@ -400,20 +397,16 @@ def test_triad_session_task_inlines_managed_delta(tmp_path, monkeypatch):
     assert "Retrieve it yourself" in plain and "resolved by the agent" not in plain
 
 
-def test_scope_session_task_inlines_managed_delta(tmp_path, monkeypatch):
+def test_two_part_brief_inlines_managed_delta(tmp_path, monkeypatch):
+    from ouroboros.tools.review_brief_coupling import BriefInputs, BriefIntent, build_retrieving_brief
     from ouroboros.tools.review_helpers import REPO_ROOT
-    from ouroboros.tools.scope_review_session import (
-        ScopeBriefInputs,
-        ScopeIntentContext,
-        build_scope_session_task,
-    )
 
     repo, ctx, _tx = _managed_resolution_repo(tmp_path, monkeypatch)
     subject = managed_review_subject(ctx, repo)
 
-    task, manifest = build_scope_session_task(repo, ScopeBriefInputs(
+    task, manifest = build_retrieving_brief(repo, BriefInputs(
         commit_message="land the update",
-        intent=ScopeIntentContext(goal="g", scope="s"),
+        intent=BriefIntent(goal="g", scope="s"),
         governance_repo_dir=pathlib.Path(REPO_ROOT),
         managed_subject=subject,
     ))
@@ -421,7 +414,7 @@ def test_scope_session_task_inlines_managed_delta(tmp_path, monkeypatch):
     assert "AUTHORITATIVE review subject" in task
     assert "resolved by the agent" in task
     assert "conflict.txt" in task
-    assert manifest["diff_delivery"] == "inline"
+    assert manifest["diff_delivery"] == "inline" and manifest["parts"] == ["change", "coupling"]
     # The subject is the resolution delta: the already-released official change
     # is NOT re-rendered, and the brief never points at `git diff --cached`.
     assert "released official change" not in task
@@ -429,9 +422,9 @@ def test_scope_session_task_inlines_managed_delta(tmp_path, monkeypatch):
 
     # An ordinary commit's subject is the staged diff itself, official delta
     # included — and it carries none of the managed subject's authority wording.
-    plain_task, plain_manifest = build_scope_session_task(repo, ScopeBriefInputs(
+    plain_task, plain_manifest = build_retrieving_brief(repo, BriefInputs(
         commit_message="land the update",
-        intent=ScopeIntentContext(goal="g", scope="s"),
+        intent=BriefIntent(goal="g", scope="s"),
         governance_repo_dir=pathlib.Path(REPO_ROOT),
     ))
     assert "AUTHORITATIVE review subject" not in plain_task
@@ -468,14 +461,10 @@ def _plain_repo(tmp_path):
     return repo
 
 
-def _fake_slot(name="scope_slot_1", route=None):
-    return SimpleNamespace(
-        model=f"m/{name}", slot_id=name, route=route, effort="",
-        session_target="", session_profile="",
-    )
-
-
-def test_triad_assembly_block_dispatches_nothing(tmp_path, monkeypatch):
+def test_packet_assembly_block_dispatches_nothing(tmp_path, monkeypatch):
+    """A deterministic assembly block exits BEFORE the wave: no seat is
+    dispatched and no coupling outcome is invented for a wave that never had
+    seats."""
     from ouroboros.tools import parallel_review as pr
     from ouroboros.tools import review as review_mod
 
@@ -487,106 +476,101 @@ def test_triad_assembly_block_dispatches_nothing(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(
         review_mod, "_dispatch_unified_review",
-        lambda *a, **k: pytest.fail("triad dispatched despite assembly block"),
-    )
-    monkeypatch.setattr(
-        pr, "run_scope_review",
-        lambda *a, **k: pytest.fail("scope dispatched despite assembly block"),
-    )
-    monkeypatch.setattr(
-        pr, "_prepare_scope_rows",
-        lambda *a, **k: [{"slot": _fake_slot(), "prepared": {"ok": True}, "final": None}],
+        lambda *a, **k: pytest.fail("the wave dispatched despite assembly block"),
     )
 
-    review_err, scope_result, _reason, _advisory = pr.run_parallel_review(ctx, "msg")
+    review_err, coupling, _reason, _advisory = pr.run_parallel_review(ctx, "msg")
 
     assert review_err == block
-    assert scope_result is not None and scope_result.blocked is False
-    assert scope_result.status == "not_dispatched"
-    reasons = " ".join(
-        f.get("reason", "") for f in (scope_result.advisory_findings or [])
-    )
-    assert "$0 spent" in reasons
+    assert coupling is None
+    assert ctx._last_review_structured["assembly_refusal"] == block
+    assert ctx._last_review_structured["rows"] == []
 
 
-def test_scope_assembly_block_dispatches_nothing(tmp_path, monkeypatch):
+def test_brief_assembly_failure_blocks_the_whole_wave_before_dispatch(tmp_path, monkeypatch):
+    """The REAL assembly over the plain repo, with the retrieving seat's brief
+    builder failing: the wave exits typed (infra_failure) naming the seat, and
+    nothing — neither the packet seats nor the retrieving seat — is dispatched
+    ($0). There is no second review to fall back to."""
+    from ouroboros.review_execution import ReviewRouteKind
     from ouroboros.tools import parallel_review as pr
     from ouroboros.tools import review as review_mod
-    from ouroboros.tools.scope_review import ScopeReviewResult
-
-    repo = _plain_repo(tmp_path)
-    ctx = _admission_ctx(repo)
-    monkeypatch.setattr(
-        review_mod, "_prepare_unified_review",
-        lambda *a, **k: ({"prompt": "p", "blocking_review": False}, None, False),
-    )
-    monkeypatch.setattr(
-        review_mod, "_dispatch_unified_review",
-        lambda *a, **k: pytest.fail("triad dispatched despite deterministic scope block"),
-    )
-    monkeypatch.setattr(
-        pr, "run_scope_review",
-        lambda *a, **k: pytest.fail("scope dispatched its blocked row"),
-    )
-    blocked_row = ScopeReviewResult(
-        blocked=True, status="error",
-        block_message="⚠️ SCOPE_REVIEW_BLOCKED: Failed to build review context",
-        model_id="m/scope_slot_1",
-    )
-    monkeypatch.setattr(
-        pr, "_prepare_scope_rows",
-        lambda *a, **k: [{"slot": _fake_slot(), "prepared": None, "final": blocked_row}],
-    )
-
-    review_err, scope_result, reason, _advisory = pr.run_parallel_review(ctx, "msg")
-
-    assert review_err is None
-    assert scope_result is not None and scope_result.blocked is True
-    assert "Failed to build review context" in scope_result.block_message
-    assert any(
-        "triad_not_dispatched_assembly_block" in r
-        for r in getattr(ctx, "_review_degraded_reasons", [])
-    )
-
-
-def test_healthy_assembly_dispatches_both(tmp_path, monkeypatch):
-    """The REAL triad assembly runs over the plain-repo fixture; only the LLM
-    dispatch seam is patched — the dispatched packet must carry the ACTUAL
-    staged hunk, proving assembly assembled the real evidence (m3a)."""
-    from ouroboros.tools import parallel_review as pr
-    from ouroboros.tools import review as review_mod
-    from ouroboros.tools.scope_review import ScopeReviewResult
+    from ouroboros.tools import review_admission as admission
+    import ouroboros.reviewer_slot_config as slot_cfg
 
     repo = _plain_repo(tmp_path)
     ctx = _admission_ctx(repo)
     ctx._review_iteration_count = 0
-    calls = {"triad": 0, "scope": 0}
+    plan = _row_plan(["api", "api"])
+    plan.update(subagent_ids=["", "critic"], retrieves=[False, True])
+    plan["routes"] = [ReviewRouteKind.API_CHAT, ReviewRouteKind.API_CHAT]
+    monkeypatch.setattr(slot_cfg, "commit_triad_delivery", lambda: plan)
+    monkeypatch.setattr(admission, "fold_coupling_only_seats", admission.seat_vectors)
+
+    def _boom(**_kwargs):
+        raise RuntimeError("the coupling checklist could not be loaded")
+
+    monkeypatch.setattr(admission, "retrieving_brief_for_seat", _boom)
+    monkeypatch.setattr(
+        review_mod, "_dispatch_unified_review",
+        lambda *a, **k: pytest.fail("the wave dispatched despite the brief failure"),
+    )
+    from ouroboros import config as cfg
+
+    monkeypatch.setattr(cfg, "get_review_enforcement", lambda: "blocking")
+
+    review_err, coupling, reason, _advisory = pr.run_parallel_review(ctx, "msg")
+
+    assert review_err and "Failed to build the review brief" in review_err
+    assert "Seat slot_1: RuntimeError: the coupling checklist could not be loaded" in review_err \
+        or "Seat slot_1: the coupling checklist could not be loaded" in review_err
+    assert reason == "infra_failure" and coupling is None
+    assert ctx._last_triad_raw_results == []
+
+
+def test_healthy_assembly_dispatches_the_one_wave(tmp_path, monkeypatch):
+    """The REAL assembly runs over the plain-repo fixture; only the LLM
+    dispatch seam is patched — the dispatched packet must carry the ACTUAL
+    staged hunk, proving assembly assembled the real evidence (m3a), and the
+    one seat list carries every seat's ``parts`` — the coupling-only seat folded
+    from the scope rows beside the packet seats."""
+    from ouroboros.review_ledger import CouplingOutcome
+    from ouroboros.tools import parallel_review as pr
+    from ouroboros.tools import review as review_mod
+
+    repo = _plain_repo(tmp_path)
+    ctx = _admission_ctx(repo)
+    ctx._review_iteration_count = 0
+    calls = {"wave": 0}
 
     def fake_dispatch(_ctx, _msg, prepared):
-        calls["triad"] += 1
+        calls["wave"] += 1
         # The REAL assembled api pack carries the actual staged hunk (x -> y).
         assert "+y" in prepared["prompt"] and "-x" in prepared["prompt"]
         assert prepared["models"], "resolved reviewer rows must ride with the packet"
+        plan = prepared["row_plan"]
+        assert len(plan["parts"]) == len(prepared["models"])
+        asked = [i for i, p in enumerate(plan["parts"]) if "coupling" in p]
+        assert asked, "the one wave carries the coupling question"
+        for i in asked:
+            assert "## Part 2 — Coupling questions" in plan["session_tasks"][i]
+            assert "+y" in plan["session_tasks"][i]  # the brief's Part 1 carries the change too
+        _ctx._last_coupling_result = CouplingOutcome(verdict="PASS", status="responded")
         return None
 
     monkeypatch.setattr(review_mod, "_dispatch_unified_review", fake_dispatch)
-    prepared_row = {"slot": _fake_slot(), "prepared": {"packet": 1}, "final": None}
-    monkeypatch.setattr(pr, "_prepare_scope_rows", lambda *a, **k: [prepared_row])
 
-    def fake_scope(_ctx, _msg, **kwargs):
-        calls["scope"] += 1
-        assert kwargs["prepared"] == {"packet": 1}
-        return ScopeReviewResult(blocked=False, status="responded", model_id="m/scope_slot_1")
-
-    monkeypatch.setattr(pr, "run_scope_review", fake_scope)
-
-    review_err, scope_result, _reason, _advisory = pr.run_parallel_review(
+    review_err, coupling, _reason, _advisory = pr.run_parallel_review(
         ctx, "healthy assembly test commit"
     )
 
     assert review_err is None
-    assert calls == {"triad": 1, "scope": 1}
-    assert scope_result is not None and scope_result.status == "responded"
+    assert calls == {"wave": 1}
+    assert coupling is not None and coupling.status == "responded"
+    structured = ctx._last_review_structured
+    assert [r["parts"] for r in structured["rows"]].count(["coupling"]) >= 1
+    assert structured["brief_texts"] and all(
+        r["brief_sha"] in structured["brief_texts"] for r in structured["rows"] if "coupling" in r["parts"])
 
 
 # ---------------------------------------------------------------------------
@@ -601,6 +585,7 @@ def _triad_real_fit_env(tmp_path, monkeypatch, row_plan):
     at every rung and terminates in the ladder's own block message. No error
     string is injected anywhere."""
     from ouroboros.tools import review as review_mod
+    from ouroboros.tools import review_admission as admission
     import ouroboros.reviewer_slot_config as slot_cfg
 
     repo, ctx, _tx = _managed_resolution_repo(tmp_path, monkeypatch)
@@ -609,6 +594,9 @@ def _triad_real_fit_env(tmp_path, monkeypatch, row_plan):
     ctx._review_advisory = []
     ctx._review_iteration_count = 0
     monkeypatch.setattr(slot_cfg, "commit_triad_delivery", lambda: row_plan)
+    # The configured panel alone: the transitional fold of the old scope rows
+    # is pinned by test_healthy_assembly_dispatches_the_one_wave.
+    monkeypatch.setattr(admission, "fold_coupling_only_seats", admission.seat_vectors)
     monkeypatch.setattr(
         review_mod, "calibrated_input_token_limit", lambda *a, **k: 50
     )
@@ -645,9 +633,14 @@ def test_fit_error_with_session_quorum_drops_api_rows(tmp_path, monkeypatch):
     assert not exited and early is None
     assert prepared["models"] == ["m/1-session", "m/2-session"]
     assert prepared["prompt"] == ""
-    # Sessions still get the REAL task text, with the managed delta inlined.
-    assert "AUTHORITATIVE review subject" in prepared["session_task"]
-    assert "resolved by the agent" in prepared["session_task"]
+    # Sessions still get the REAL two-part brief, with the managed delta inlined
+    # in Part 1 — one brief per seat, the parts vector dropped in step.
+    plan = prepared["row_plan"]
+    assert plan["parts"] == [("change", "coupling"), ("change", "coupling")]
+    for brief in plan["session_tasks"]:
+        assert "AUTHORITATIVE review subject" in brief
+        assert "resolved by the agent" in brief
+        assert "## Part 2 — Coupling questions" in brief
     assert any(
         "triad_api_rows_dropped_oversize_pack" in r for r in ctx._review_degraded_reasons
     )
@@ -681,146 +674,30 @@ def test_fit_error_without_session_quorum_is_typed_zero_spend_with_guidance(
     assert ctx._last_review_block_reason == "fixed_overflow"
 
 
-def test_no_scope_row_yields_its_seat_to_a_retrieving_quorum(tmp_path, monkeypatch):
-    """Every scope row retrieves, so no row can be refused for a packet it never
-    receives and there is nothing for a quorum to absorb: a terminal produced at
-    assembly is preserved as the row's own outcome, whatever its neighbours are.
-    """
+def test_a_retrieving_seat_is_never_refused_for_the_packet_it_does_not_receive(tmp_path, monkeypatch):
+    """One wave, two deliveries: the packet fit ladder sizes the PACKET seats;
+    a retrieving seat is given its own two-part brief sized to its own first
+    send, so an oversized packet drops the packet api rows and leaves every
+    retrieving seat — both parts — in the wave (the former scope row's "yield
+    quorum" has no object any more: no seat is refused for a packet it never
+    receives)."""
     from ouroboros.review_execution import ReviewRouteKind
-    from ouroboros.tools import parallel_review as pr
-    from ouroboros.tools import review_admission as admission
-    from ouroboros.tools.scope_review import ScopeReviewResult
 
-    repo = _plain_repo(tmp_path)
-    ctx = _admission_ctx(repo)
-    api_slot = _fake_slot("scope_api", route=ReviewRouteKind.API_CHAT)
-    s1 = _fake_slot("scope_s1", route=ReviewRouteKind.AGENT_SESSION)
-    s2 = _fake_slot("scope_s2", route=ReviewRouteKind.AGENT_SESSION)
-    terminal = ScopeReviewResult(
-        blocked=True, status="error", failure_phase="context",
-        block_message="⚠️ SCOPE_REVIEW_BLOCKED: Failed to build review context",
-        model_id=api_slot.model,
+    plan = _row_plan(["api", "api", "session"])
+    plan.update(subagent_ids=["", "critic", ""], retrieves=[False, True, True])
+    plan["routes"] = [ReviewRouteKind.API_CHAT, ReviewRouteKind.API_CHAT, ReviewRouteKind.AGENT_SESSION]
+    review_mod, ctx = _triad_real_fit_env(tmp_path, monkeypatch, plan)
+
+    prepared, early, exited = review_mod._prepare_unified_review(
+        ctx, "resolve managed update conflicts"
     )
 
-    def fake_prepare(_ctx, _msg, **kwargs):
-        if kwargs["slot_id"] == "scope_api":
-            return None, terminal
-        return {"brief": kwargs["slot_id"], "delegated": True}, None
-
-    monkeypatch.setattr(admission, "prepare_scope_review", fake_prepare)
-    monkeypatch.setattr(pr, "scope_reviewer_slots", lambda: [api_slot, s1, s2])
-
-    rows = pr._prepare_scope_rows(
-        ctx, "msg", goal="", scope="", review_rebuttal="",
-        history_snapshot=[], scope_history=[],
-    )
-
-    kept = rows[0]["final"]
-    assert kept.blocked is True and kept.block_message
-    assert not any(f.get("item") == "scope_api_row_oversize_yielded"
-                   for f in (kept.advisory_findings or []))
-    assert rows[1]["prepared"] and rows[2]["prepared"]
-
-
-def test_dead_session_rows_do_not_count_toward_yield_quorum(tmp_path, monkeypatch):
-    """m8: a session row that already terminated at assembly (final is not
-    None) is a dead seat — it can never deliver the verdict the yield leans on,
-    so the fit-blocked api row must KEEP its terminal."""
-    from ouroboros.review_execution import ReviewRouteKind
-    from ouroboros.tools import parallel_review as pr
-    from ouroboros.tools import review_admission as admission
-    from ouroboros.tools.scope_review import ScopeReviewResult
-
-    repo = _plain_repo(tmp_path)
-    ctx = _admission_ctx(repo)
-    api_slot = _fake_slot("scope_api", route=ReviewRouteKind.API_CHAT)
-    s1 = _fake_slot("scope_s1", route=ReviewRouteKind.AGENT_SESSION)
-    s2 = _fake_slot("scope_s2", route=ReviewRouteKind.AGENT_SESSION)
-    fit_blocked = ScopeReviewResult(
-        blocked=True, status="sub_floor",
-        block_message="⚠️ SCOPE_REVIEW_BLOCKED: pack did not assemble",
-        model_id=api_slot.model,
-    )
-    dead_session = ScopeReviewResult(
-        blocked=True, status="error",
-        block_message="⚠️ SCOPE_REVIEW_BLOCKED: Failed to build review context",
-        model_id=s2.model,
-    )
-
-    def fake_prepare(_ctx, _msg, **kwargs):
-        if kwargs["slot_id"] == "scope_api":
-            return None, fit_blocked
-        if kwargs["slot_id"] == "scope_s2":
-            return None, dead_session  # dead seat: terminated at assembly
-        return {"packet": kwargs["slot_id"], "delegated": True}, None
-
-    monkeypatch.setattr(admission, "prepare_scope_review", fake_prepare)
-    monkeypatch.setattr(pr, "scope_reviewer_slots", lambda: [api_slot, s1, s2])
-
-    rows = pr._prepare_scope_rows(
-        ctx, "msg", goal="", scope="", review_rebuttal="",
-        history_snapshot=[], scope_history=[],
-    )
-
-    # Only ONE live session row remains (< adaptive quorum 2 of 3): no yield.
-    assert rows[0]["final"].blocked is True
-    assert rows[0]["final"].block_message  # terminal preserved
-
-
-def test_all_not_dispatched_scope_aggregate_is_typed(tmp_path, monkeypatch):
-    """m9: a panel where EVERY row is a $0 not_dispatched placeholder must not
-    record scope_quorum_not_met ("diversity was not achieved") — no reviewer
-    ran to fall short; the manifest carries the distinct typed reason."""
-    from ouroboros.tools import parallel_review as pr
-
-    repo = _plain_repo(tmp_path)
-    ctx = _admission_ctx(repo)
-    rows = [
-        {"slot": _fake_slot("scope_a"), "prepared": {"packet": "a"}, "final": None},
-        {"slot": _fake_slot("scope_b"), "prepared": {"packet": "b"}, "final": None},
-    ]
-
-    result = pr._run_scope(
-        ctx, "msg", rows, False, goal="", scope="", review_rebuttal="",
-        history_snapshot=[], scope_history=[],
-    )
-
-    assert result.blocked is False
-    items = [f.get("item") for f in (result.advisory_findings or [])]
-    assert "scope_quorum_not_met" not in items
-    assert items.count("scope_row_not_dispatched") == 2  # typed per-row records
-    reasons = " ".join(result.context_manifest.get("scope_degraded_reasons", []))
-    assert "scope_not_dispatched_assembly_block" in reasons
-    assert "scope_quorum_not_met" not in reasons
-
-
-def test_scope_fit_blocked_api_row_stays_blocking_without_session_quorum(
-    tmp_path, monkeypatch
-):
-    from ouroboros.review_execution import ReviewRouteKind
-    from ouroboros.tools import parallel_review as pr
-    from ouroboros.tools import review_admission as admission
-    from ouroboros.tools.scope_review import ScopeReviewResult
-
-    repo = _plain_repo(tmp_path)
-    ctx = _admission_ctx(repo)
-    api_slot = _fake_slot("scope_api", route=ReviewRouteKind.API_CHAT)
-    fit_blocked = ScopeReviewResult(
-        blocked=True, status="sub_floor",
-        block_message="⚠️ SCOPE_REVIEW_BLOCKED: pack did not assemble",
-        model_id=api_slot.model,
-    )
-    monkeypatch.setattr(
-        admission, "prepare_scope_review", lambda *a, **k: (None, fit_blocked)
-    )
-    monkeypatch.setattr(pr, "scope_reviewer_slots", lambda: [api_slot])
-
-    rows = pr._prepare_scope_rows(
-        ctx, "msg", goal="", scope="", review_rebuttal="",
-        history_snapshot=[], scope_history=[],
-    )
-
-    assert rows[0]["final"].blocked is True  # pure-api panel keeps the terminal
+    assert not exited and early is None
+    assert prepared["models"] == ["m/1-api", "m/2-session"]
+    assert prepared["row_plan"]["parts"] == [("change", "coupling"), ("change", "coupling")]
+    assert all("## Part 2 — Coupling questions" in t for t in prepared["row_plan"]["session_tasks"])
+    withheld = getattr(ctx, "_triad_withheld_seat_records", [])
+    assert [r["model_id"] for r in withheld] == ["m/0-api"]
 
 
 # ---------------------------------------------------------------------------
@@ -1251,39 +1128,37 @@ def test_managed_binary_deletion_is_rendered_with_m0_evidence(tmp_path, monkeypa
     assert not staged_path_is_binary(repo, "payload")
 
 
-def test_withheld_triad_seats_get_typed_records_on_assembly_block(tmp_path, monkeypatch):
-    """R5a: a deterministic scope assembly block withholds a PREPARED triad —
-    every configured triad seat must leave a typed $0 not_dispatched actor
-    record (seat identity survives), not just a degraded-reason string."""
+def test_withheld_seats_get_typed_records_on_wave_refusal(tmp_path, monkeypatch):
+    """R5a: a PREPARED wave that the money admission refuses leaves every seat
+    a typed $0 not_dispatched actor record (seat identity survives), not just a
+    degraded-reason string — and the coupling outcome is typed the same way."""
+    from ouroboros.review_execution import ReviewRouteKind
     from ouroboros.tools import parallel_review as pr
     from ouroboros.tools import review as review_mod
-    from ouroboros.tools.scope_review import ScopeReviewResult
+    from ouroboros.tools import review_admission as admission
 
     repo = _plain_repo(tmp_path)
     ctx = _admission_ctx(repo)
-    prepared = {
-        "prompt": "p", "blocking_review": False, "row_plan": _row_plan(["api", "session"]),
-    }
+    plan = _row_plan(["api", "session"])
+    plan.update(retrieves=[False, True], parts=[("change",), ("change", "coupling")],
+                routes=[ReviewRouteKind.API_CHAT, ReviewRouteKind.AGENT_SESSION])
+    prepared = {"prompt": "p", "blocking_review": False, "row_plan": plan,
+                "models": list(plan["models"]), "routes": list(plan["routes"])}
     monkeypatch.setattr(
         review_mod, "_prepare_unified_review", lambda *a, **k: (prepared, None, False)
     )
     monkeypatch.setattr(
         review_mod, "_dispatch_unified_review",
-        lambda *a, **k: pytest.fail("triad dispatched despite deterministic scope block"),
+        lambda *a, **k: pytest.fail("the wave dispatched despite the refusal"),
     )
-    blocked_row = ScopeReviewResult(
-        blocked=True, status="error",
-        block_message="⚠️ SCOPE_REVIEW_BLOCKED: Failed to build review context",
-        model_id="m/scope_slot_1",
-    )
-    monkeypatch.setattr(
-        pr, "_prepare_scope_rows",
-        lambda *a, **k: [{"slot": _fake_slot(), "prepared": None, "final": blocked_row}],
-    )
+    monkeypatch.setattr(admission, "commit_gate_paid_seats", lambda *a, **k: [{"surface": "multi_model_review"}])
+    monkeypatch.setattr(admission, "admit_commit_gate_wave",
+                        lambda *a, **k: "⚠️ REVIEW_BLOCKED: commit-gate review wave declined before dispatch ($0 spent)")
 
-    _err, scope_result, _reason, _adv = pr.run_parallel_review(ctx, "msg")
+    _err, coupling, reason, _adv = pr.run_parallel_review(ctx, "msg")
 
-    assert scope_result is not None and scope_result.blocked
+    assert reason == "review_wave_budget_insufficient"
+    assert coupling is not None and coupling.status == "not_dispatched"
     records = ctx._last_triad_raw_results
     assert [r["model_id"] for r in records] == ["m/0-api", "m/1-session"]
     assert all(r["status"] == "not_dispatched" for r in records)
@@ -1311,10 +1186,10 @@ def test_q28_dropped_api_seats_survive_into_raw_results(tmp_path, monkeypatch):
 
     # The dispatched panel reports; the dropped seat's record must survive.
     model_results = [
-        {"model": "m/1-session", "text": "[]"},
-        {"model": "m/2-session", "text": "[]"},
+        {"model": "m/1-session", "slot_id": "slot_1", "text": "[]"},
+        {"model": "m/2-session", "slot_id": "slot_2", "text": "[]"},
     ]
-    review_mod._collect_review_findings(ctx, model_results)
+    review_mod._collect_review_findings(ctx, model_results, prepared["row_plan"])
     statuses = {r["model_id"]: r["status"] for r in ctx._last_triad_raw_results}
     assert statuses["m/0-api"] == "not_dispatched"
     assert set(statuses) == {"m/0-api", "m/1-session", "m/2-session"}

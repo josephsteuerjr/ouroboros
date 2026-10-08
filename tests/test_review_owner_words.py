@@ -105,7 +105,11 @@ def _triad_prompt(tmp_path, monkeypatch, kind: str) -> tuple[str, int, str]:
         return ""
 
     def capture_review(*_args, **kwargs):
-        captured.update(prompt=kwargs["prompt"], stable=kwargs["stable_prefix_len"], task=kwargs["session_task"])
+        plan = kwargs.get("row_plan") or {}
+        briefs = [task for task, parts in zip(plan.get("session_tasks") or [], plan.get("parts") or [])
+                  if "coupling" in tuple(parts)]
+        captured.update(prompt=kwargs["prompt"], stable=kwargs["stable_prefix_len"],
+                        task=briefs[0] if briefs else kwargs["session_task"])
         return json.dumps({"results": []})
 
     monkeypatch.setattr(review, "run_cmd", fake_run_cmd)
@@ -140,7 +144,7 @@ def test_the_triad_packet_reads_the_words_in_its_dynamic_half(tmp_path, monkeypa
 
 
 def test_the_retrieving_triad_reads_the_words_in_its_session_task(tmp_path, monkeypatch):
-    """A natively retrieving pool reads the work itself: its session task carries the same section."""
+    """A natively retrieving pool reads the work itself: its two-part brief carries the same section."""
     set_review_pool(monkeypatch, delivery="native")
     prompt, _stable, task = _triad_prompt(tmp_path, monkeypatch, "root")
     assert not prompt and _section("root") in task and task.index("GOAL_SENTINEL") < task.index(OWNER)
@@ -148,13 +152,13 @@ def test_the_retrieving_triad_reads_the_words_in_its_session_task(tmp_path, monk
     assert ABSENT_CONSCIOUS in conscious and OWNER not in conscious
 
 
-# --- scope --------------------------------------------------------------------------------------------------
+# --- the two-part brief (Part 2 asks the coupling question) ---------------------------------------------
 
-def _scope_brief(tmp_path, kind: str) -> tuple[str, str]:
-    """One real scope row's brief (``prepare_scope_review``) on a staged repository."""
-    from ouroboros.review_execution import ReviewRouteKind
+def _two_part_brief(tmp_path, kind: str) -> tuple[str, str]:
+    """One real retrieving seat's two-part brief (``build_two_part_brief``) on a staged repository."""
     from ouroboros.tools.registry import ToolContext
-    from ouroboros.tools.review_admission import prepare_scope_review
+    from ouroboros.tools.review_admission import build_two_part_brief
+    from ouroboros.tools.review_subject import ReviewSubjectSpec, freeze_subject
     from tests.test_review_session_scope_wiring import BRIEF_TASK_ID, _staged_subject
 
     root = tmp_path / kind
@@ -165,33 +169,34 @@ def _scope_brief(tmp_path, kind: str) -> tuple[str, str]:
     ctx = ToolContext(repo_dir=repo, drive_root=drive, task_id=BRIEF_TASK_ID)
     for name, value in _attrs(kind).items():
         setattr(ctx, name, value)
-    prepared, final = prepare_scope_review(ctx, "fix: login timeout", goal="GOAL_SENTINEL", scope_model="fixture/model",
-                                           slot_id="scope_slot_1", route=ReviewRouteKind.API_CHAT)
-    assert final is None
-    return prepared["session_task"], ow.owner_words_text(ctx)
+    frozen = freeze_subject(ctx, ReviewSubjectSpec(root_kind="system_repo", root=str(repo), kind="index",
+                                                   surface="commit_gate", layer="body"))
+    seat = {"slot_id": "seat-native", "model": "fixture/model", "route": "api_chat", "retrieves": True}
+    words = ow.owner_words_text(ctx)
+    built = build_two_part_brief(frozen, seat, goal="GOAL_SENTINEL", commit_message="fix: login timeout",
+                                 owner_words=words, drive_root=drive, task_id=BRIEF_TASK_ID)
+    assert built["parts"] == ["change", "coupling"]
+    return built["system"], words
 
 
-def test_the_scope_brief_carries_the_words_after_its_intent(tmp_path):
-    brief, words = _scope_brief(tmp_path, "root")
-    assert words == _section("root", task_id="scope-brief-task")
-    assert words in brief and brief.index("GOAL_SENTINEL") < brief.index(words) < brief.index("## Staged diff")
-    conscious, _words = _scope_brief(tmp_path, "conscious")
+def test_the_two_part_brief_carries_the_words_after_its_intent(tmp_path):
+    from tests.test_review_session_scope_wiring import BRIEF_TASK_ID
+
+    brief, words = _two_part_brief(tmp_path, "root")
+    assert words == _section("root", task_id=BRIEF_TASK_ID)
+    assert words in brief and brief.index("GOAL_SENTINEL") < brief.index(words) < brief.index("### Staged diff")
+    assert brief.index(words) < brief.index("## Part 2")  # the words ride Part 1's intent; Part 2 reads them there
+    conscious, _words = _two_part_brief(tmp_path, "conscious")
     assert ABSENT_CONSCIOUS in conscious and OWNER not in conscious
 
 
-def test_the_scope_prompt_keeps_its_stable_prefix():
-    from ouroboros.tools.review_synthesis import build_scope_review_prompt
+def test_the_coupling_part_keeps_its_stable_text():
+    """Part 2 is the same bytes whatever the owner said: the words ride Part 1's intent only."""
+    from ouroboros.tools.review_synthesis import build_coupling_part
 
-    def prompt(owner_words: str) -> tuple[str, int]:
-        goal = build_goal_section("GOAL_SENTINEL", "", "fix: retry", owner_words)
-        return build_scope_review_prompt(
-            "touched", scope_checklist="checklist", canonical_docs="docs", intent_context=f"scope\n\n{goal}",
-            history_block="", diff_text="diff", repo_pack_placeholder="pack", critical_calibration="calibration",
-            task_evidence_section="")
-
-    (bare, bare_stable), (worded, worded_stable) = prompt(""), prompt(_section("root"))
-    assert OWNER not in bare and OWNER in worded and worded.index(OWNER) > worded_stable
-    assert bare_stable == worded_stable and bare[:bare_stable] == worded[:worded_stable]
+    part2 = build_coupling_part(coupling_checklist="checklist", required_sources_section="sources",
+                                repository_index="index", history_block="", layer="body")
+    assert OWNER not in part2 and "GOAL_SENTINEL" not in part2 and part2.startswith("## Part 2")
 
 
 # --- advisory -----------------------------------------------------------------------------------------------

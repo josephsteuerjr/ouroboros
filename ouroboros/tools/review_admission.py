@@ -1,24 +1,25 @@
-"""Pre-dispatch review admission (Q25=A / Q28=A).
+"""Pre-dispatch review admission (Q25=A / Q28=A) and the one brief's builders.
 
-Every commit-gate reviewer is PREPARED before any of them is dispatched — the
-triad api pack is assembled and fit-checked, every scope row's brief is built —
-so a deterministic assembly failure on one side can never spend money on the
-other (previously triad and scope dispatched concurrently). A universal reorder
-with zero verdict change: the same assembly code runs, the same results come
-out — only the ordering moves the spend after the last deterministic gate.
+Every commit-gate seat is PREPARED before any of them is dispatched — the packet
+seats' prompt is assembled and fit-checked, every retrieving seat's two-part
+brief is built — so a deterministic assembly failure can never spend money. A
+universal reorder with zero verdict change: the same assembly code runs, the
+same results come out — only the ordering moves the spend after the last
+deterministic gate.
 
-Q28-A oversized outcomes: packet limits gate only the triad api rows. A panel
-whose agent-session rows alone satisfy the quorum proceeds without the api rows
+Q28-A oversized outcomes: packet limits gate only the packet (api) rows. A panel
+whose retrieving rows alone satisfy the quorum proceeds without the packet rows
 (recorded, never silent); a panel that cannot reach quorum without them gets a
 typed ZERO-SPEND terminal, and for the managed resolver that refusal carries
 the settings guidance below (the resolver's terminal contract already explains
 rollback + retry).
 
-``prepare_scope_review`` is the assembly half of ``run_scope_review`` — moved
-here whole; the dispatch half stays in ``scope_review``. Internals are reached
-through the module object (``_scope().name``) so test monkeypatching of
-``scope_review`` attributes keeps working. Scope review delivers by retrieval
-(owner decision 2026-09-17), so a scope row is never fit-checked against a
+One brief, two parts (PR-3 B): there is no scope role. Every seat answers the
+change (Part 1); a seat that retrieves also answers the eight coupling
+questions (Part 2) in the same brief — ``build_two_part_brief`` is the pure
+builder over a frozen subject, ``assemble_packet_prompt`` the packet seat's
+Part-1 prompt, ``retrieving_brief_for_seat`` the retrieving seat's brief
+(``review_brief_coupling``). A retrieving seat is never fit-checked against a
 packet limit: its brief carries the diff, the touched manifest and the
 required-source manifest, and the reviewer reads the rest itself.
 
@@ -33,13 +34,12 @@ refusal path proceeds unchanged.
 
 Money admission (owner decision 2026-09-05, answer 2 = A) is the last
 pre-dispatch gate: ``commit_gate_paid_seats`` prices every PAID seat of the
-wave — scope first, packet rows by their exact message pair, native episodes
-by their exact first send — each under the usage scope its substrate sends
-under, and ``admit_commit_gate_wave`` admits them as ONE wave against the
-task's current root fence through the shared ``review_wave_budget_gate``; a
-wave that does not fit is a typed $0 refusal naming the shortfall, never a
-half-dispatched panel. The scope-first dispatch ORDER stays with the
-orchestrator (``parallel_review._await_scope_reservation``).
+wave — packet rows by their exact message pair, native episodes by their exact
+first send — each under the usage scope its substrate sends under, and
+``admit_commit_gate_wave`` admits them as ONE wave against the task's current
+root fence through the shared ``review_wave_budget_gate``; a wave that does
+not fit is a typed $0 refusal naming the shortfall, never a half-dispatched
+panel.
 """
 
 from __future__ import annotations
@@ -48,6 +48,7 @@ import hashlib
 import json
 import logging
 import pathlib
+import subprocess
 from typing import Any, Optional, Sequence, Tuple
 
 log = logging.getLogger(__name__)
@@ -64,12 +65,6 @@ MANAGED_OVERSIZE_GUIDANCE = (
     "Settings → Agents → Review lanes (packet limits do not apply to them), "
     "or configure larger-window models."
 )
-
-def _scope():
-    from ouroboros.tools import scope_review
-
-    return scope_review
-
 
 DENSITY_PROBE_CALL_TYPE = "review_density_probe"
 DENSITY_PROBE_EVENT = "review_density_probe"
@@ -315,419 +310,14 @@ def drop_api_rows(row_plan: dict) -> dict:
     # row never received the oversized packet, so packet overflow is not its failure.
     keep = [i for i in range(len(routes)) if row_plan_retrieves(row_plan, i)]
     filtered = dict(row_plan)
-    for key in ("models", "routes", "efforts", "session_targets",
-                "session_profiles", "slot_ids", "subagent_ids", "retrieves", "use_local"):
+    vectors = ["models", "routes", "efforts", "session_targets", "session_profiles", "slot_ids",
+               "subagent_ids", "retrieves", "use_local"]
+    # The per-seat brief vectors ride along when the plan already carries them.
+    vectors += [key for key in ("parts", "session_tasks", "session_policies", "brief_shas") if key in row_plan]
+    for key in vectors:
         rows = list(row_plan.get(key) or [])
         filtered[key] = [rows[i] for i in keep if i < len(rows)]
     return filtered
-
-
-# One durable marker per install for the scope-delivery migration notice below.
-SCOPE_DELIVERY_MIGRATION_FILENAME = "scope_delivery_migration.json"
-SCOPE_DELIVERY_MIGRATION_EVENT = "review_scope_delivery_migrated"
-
-
-def _scope_delivery_migration_path() -> pathlib.Path:
-    from ouroboros.config import DATA_DIR
-
-    return pathlib.Path(DATA_DIR) / "state" / SCOPE_DELIVERY_MIGRATION_FILENAME
-
-
-def disclose_scope_delivery_migration(ctx: Any, slot_id: str, model: str) -> None:
-    """Announce ONCE per install that a stored bare api scope row now retrieves.
-
-    A scope row saved before the retrieving delivery carries no actor binding,
-    and its delivery changes under it: the row runs a bounded native inspection
-    episode on the same model instead of receiving an assembled packet. That is
-    a visible change in what the row spends and how long it takes, so it is
-    stated in the durable event stream rather than discovered from a bill. The
-    marker lives beside the other reviewer-slot projection state in the
-    canonical data plane; a marker the host cannot write discloses again next
-    time rather than failing the review.
-    """
-    from ouroboros.tools.review_helpers import emit_review_event
-    from ouroboros.utils import utc_now_iso, write_text_atomic
-
-    path = _scope_delivery_migration_path()
-    try:
-        if path.exists():
-            return
-    except OSError:
-        return
-    emit_review_event(ctx, {
-        "type": SCOPE_DELIVERY_MIGRATION_EVENT,
-        "task_id": str(getattr(ctx, "task_id", "") or ""),
-        "slot_id": str(slot_id or ""), "model": str(model or ""),
-        "delivery": "native_retrieval",
-        "reason": (
-            "this stored scope row has no actor binding; scope review delivers by "
-            "retrieval, so the row now runs a bounded native inspection episode on "
-            "its own route instead of receiving an assembled packet"
-        ),
-    })
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        write_text_atomic(path, json.dumps(
-            {"disclosed_at": utc_now_iso(), "slot_id": str(slot_id or ""), "model": str(model or "")},
-            ensure_ascii=False))
-    except OSError:
-        log.debug("scope delivery migration marker not written", exc_info=True)
-
-
-def _scope_source_root(ctx: Any, task_evidence: dict) -> str:
-    """The data root a paged brief source is stored under, or ``""``.
-
-    It is the root the row's OWN reader resolves: the canonical task data root,
-    which is what the commit-review evidence view already records and what a
-    native episode reads as ``policy["native_data_root"]``. A context with no
-    resolvable data plane has nowhere to page to, and the brief inlines instead.
-    """
-    recorded = str((task_evidence or {}).get("data_root") or "").strip()
-    if recorded:
-        return recorded
-    try:
-        from ouroboros.tool_access import canonical_data_root
-
-        return str(canonical_data_root(ctx))
-    except (AttributeError, OSError, TypeError, ValueError):
-        return ""
-
-
-def prepare_scope_review(
-    ctx: Any,
-    commit_message: str,
-    goal: str = "",
-    scope: str = "",
-    review_rebuttal: str = "",
-    review_history: Optional[list] = None,
-    scope_review_history: Optional[list] = None,
-    scope_model: Optional[str] = None,
-    slot_id: str = "",
-    route: Any = None,
-    slot_effort: str = "",
-    session_target: str = "",
-    session_profile: str = "",
-    subagent_id: str = "",
-    subject: Any = None,
-) -> Tuple[Optional[dict], Optional[Any]]:
-    """Assemble ONE scope row's brief without dispatching anything.
-
-    Returns ``(prepared, final)`` — exactly one is non-None. ``final`` is a
-    complete ScopeReviewResult (deterministic early exit: invalid roots,
-    an unavailable review subject, a context-build failure); ``prepared``
-    carries everything the dispatch half needs, including the required-source
-    manifest and the context-manifest value (ContextVars do not cross threads,
-    so it is captured here and re-seeded at dispatch).
-
-    Every scope row retrieves (owner decision 2026-09-17): the brief is the same
-    for both transports, scope review applies in every context mode, and no
-    brief is ever assembled as a packet.
-
-    With a frozen ``subject`` (``review_subject.FrozenSubject``) the governance
-    root is the spec's (always the installed body) and the reading root is the
-    subject's ``review_root`` (its isolated checkout, else the live root); the
-    manifest is computed against the FROZEN trees. ``None`` keeps the gate's
-    path: the context's review roots and the live staged index.
-    """
-    sr = _scope()
-    window_binding = {"model_role": f"reviewer:{slot_id}", "credential_profile_id": session_profile} if slot_id else {}
-    try:
-        if subject is not None:
-            governance_repo = pathlib.Path(subject.spec.governance_root).resolve(strict=False)
-            repo_dir = pathlib.Path(subject.review_root).resolve(strict=False)
-        else:
-            governance_repo, repo_dir = sr.review_repo_dirs_for(ctx)
-    except (TypeError, ValueError) as exc:
-        return None, sr.ScopeReviewResult(
-            blocked=True,
-            status="error", failure_phase="authority", failure_code="invalid_roots",
-            block_message=f"⚠️ SCOPE_REVIEW_BLOCKED: invalid review roots: {exc}.",
-        )
-    scope_model_id = scope_model or sr._get_scope_model()
-    from ouroboros.model_wait import current_model_wait
-    waiter = current_model_wait()
-    override = waiter.overrides.get(f"reviewer:{slot_id}", {}) if waiter else {}
-    if override and str(getattr(route, "value", route) or "") != "agent_session":
-        scope_model_id, session_profile = override["model"], override["model_account_override"]
-        window_binding.update(credential_profile_id=session_profile, use_local=override["use_local"])
-    delegated = str(getattr(route, "value", route) or "") == "agent_session"
-    from ouroboros.review_evidence import commit_review_evidence_section, materialize_commit_review_session_view
-
-    task_evidence = dict(getattr(ctx, "_commit_review_evidence", None) or {})
-    if delegated:
-        task_evidence = materialize_commit_review_session_view(task_evidence, repo_dir)
-        ctx._commit_review_evidence = task_evidence
-    task_evidence_section = commit_review_evidence_section(
-        task_evidence, delivery="session" if delegated else "native")
-
-    from ouroboros.tools.review_binary_context import StagedDiffUnavailable
-    from ouroboros.tools.review_subject import managed_review_subject
-
-    frozen, subject = subject, None
-    try:
-        # The system repo's own index is read through the gate's capture (the
-        # frozen subject's ``managed`` is the same artifact; the live call keeps
-        # the gate's tree assertion and memo exactly as today).
-        subject = managed_review_subject(ctx, repo_dir) if frozen is None or frozen.is_system_index else frozen.managed
-    except (RuntimeError, StagedDiffUnavailable, ValueError) as exc:
-        return None, sr.ScopeReviewResult(
-            blocked=True, status="error", failure_phase="authority", failure_code="subject_unavailable",
-            block_message=f"⚠️ SCOPE_REVIEW_BLOCKED: review subject could not be established: {exc}",
-        )
-    # The path/tree source of the manifest: the managed artifact when the subject
-    # is one; the frozen trees and diff of every other frozen subject; the live
-    # staged index only for the gate's own subject (the gate's path, byte-identical).
-    frozen_read = frozen is not None and not frozen.is_system_index
-    path_subject = subject if subject is not None else (frozen if frozen_read else None)
-    required_sources: list = []
-    required_ref: dict = {}
-    try:
-        # Retrieving delivery (5.2): same task/checklist/contract, no assembled
-        # pack — the reviewer reads the subject with its own tools in the repo
-        # root, and the required-source manifest states what it is owed IN FULL.
-        # For a managed resolution the delta is inlined.
-        from ouroboros.tools.scope_required_sources import (
-            required_sources_ref,
-            scope_required_sources, staged_tree_identity, staged_touched_paths,
-            touched_manifest,
-        )
-        from ouroboros.owner_words import owner_words_text
-        from ouroboros.tools.scope_review_session import ScopeIntentContext as _Intent
-        from ouroboros.tools.scope_review_session import (
-            ScopeBriefInputs, build_scope_session_task,
-        )
-
-        touched = staged_touched_paths(repo_dir, path_subject)
-        tree_sha = staged_tree_identity(repo_dir, path_subject)
-        layer = str(frozen.spec.layer or "body") if frozen is not None else "body"
-        manifest_rows = scope_required_sources(
-            repo_dir, touched, staged_tree_sha=tree_sha, subject=path_subject, layer=layer)
-        required_ref = required_sources_ref(manifest_rows, staged_tree_sha=tree_sha)
-        session_task, session_manifest = build_scope_session_task(repo_dir, ScopeBriefInputs(
-            commit_message=commit_message,
-            intent=_Intent(goal=goal, scope=scope, review_rebuttal=review_rebuttal,
-                           review_history=review_history,
-                           scope_review_history=scope_review_history, owner_words=owner_words_text(ctx)),
-            drive_root=pathlib.Path(ctx.drive_root) if getattr(ctx, "drive_root", None) else None,
-            governance_repo_dir=governance_repo,
-            managed_subject=subject,
-            subject_diff=str(frozen.diff_text) if frozen_read else "",
-            task_evidence_section=task_evidence_section,
-            required_sources=manifest_rows,
-            required_sources_ref=required_ref,
-            touched_manifest=touched_manifest(repo_dir, touched),
-            touched_paths=tuple(path for _status, path in touched),
-            layer=layer,
-            delegated=delegated,
-            scope_model=scope_model_id,
-            slot_id=slot_id,
-            session_profile=session_profile,
-            use_local=override.get("use_local"),
-            task_id=str(getattr(ctx, "task_id", "") or "") or "scope_review",
-            source_root=_scope_source_root(ctx, task_evidence),
-        ))
-        # The brief resolves preimages, inline documents and a paged subject
-        # into one final manifest. Missing rows remain diagnostic gaps.
-        required_sources = session_manifest["native_required_sources"]
-        required_ref = session_manifest["native_required_sources_ref"]
-        sr._SCOPE_CONTEXT_MANIFEST.set(session_manifest)
-        if not delegated and not str(subagent_id or "").strip():
-            disclose_scope_delivery_migration(ctx, slot_id, scope_model_id)
-    except (RuntimeError, StagedDiffUnavailable, OSError, ValueError) as exc:
-        from ouroboros.llm_claudexor import propagate_model_error
-        propagate_model_error(exc)
-        # Row-local preparation evidence, before any reviewer is dispatched.
-        try:
-            sr.append_jsonl(ctx.drive_logs() / "events.jsonl", {
-                "ts": sr.utc_now_iso(), "type": "scope_review_preparation_failed",
-                "task_id": getattr(ctx, "task_id", "") or "", "slot_id": slot_id,
-                "model": scope_model_id, "status": "error",
-                "failure_phase": "context", "failure_code": "context_unavailable",
-                "reason": str(exc),
-            })
-        except Exception:
-            pass
-        return None, sr.ScopeReviewResult(
-            blocked=True,
-            block_message=(
-                "⚠️ SCOPE_REVIEW_BLOCKED: Failed to build review context — commit blocked.\n"
-                f"Error: {exc}\n"
-                "Ensure git is available and the repository is in a valid state."
-            ),
-            model_id=scope_model_id,
-            status="error", failure_phase="context", failure_code="context_unavailable",
-            context_manifest=sr._current_scope_context_manifest(),
-        )
-
-    return {
-        "session_task": session_task,
-        "repo_dir": repo_dir,
-        "scope_model_id": scope_model_id,
-        "delegated": delegated,
-        "slot_id": slot_id,
-        "route": route,
-        "slot_effort": slot_effort,
-        "session_target": session_target,
-        "session_profile": session_profile,
-        "subagent_id": subagent_id,
-        "window_binding": window_binding, "task_evidence": task_evidence,
-        "use_local": override.get("use_local"),
-        # Every exact source resolves under the root that stored it, whether
-        # the brief paged its diff or carries a deleted-file preimage.
-        "native_data_root": str(session_manifest.get("native_data_root") or ""),
-        "required_sources": required_sources,
-        "required_sources_ref": required_ref,
-        "context_manifest": sr._current_scope_context_manifest(),
-    }, None
-
-
-def commit_gate_paid_seats(triad_prepared, triad_exited, scope_rows) -> list:
-    """The PAID seats of one commit-gate wave, SCOPE FIRST (owner decision
-    2026-09-05: the only constitutionally blocking seat takes precedence in
-    admission and reservation order). A paid seat is an api row — the triad's
-    packet OR a native episode — whose every send is a ``reserve_attempt`` on
-    the ledger; an agent-session row rides the owner's subscription (its ledger
-    row is written at settlement, never reserved) and is not priced. Each seat
-    carries the exact chars of the send its substrate opens with (the triad
-    packet's message pair; a native episode's first send: instructions,
-    work-order and tool schemas — its later rounds reserve themselves) and that
-    send's output reservation, so the wave is priced the way
-    ``reserve_attempt`` prices it. Every scope seat is a retrieving one."""
-
-    from ouroboros.review_execution import ReviewRouteKind
-    from ouroboros.review_native_episode import native_first_send_chars
-    from ouroboros.reviewer_slot_config import row_plan_retrieves
-    from ouroboros.reviewer_slot_config import SCOPE_ROLE_HINT
-    from ouroboros.tools.review_multi_model import (
-        TRIAD_ROLE_HINT, TRIAD_USER_TURN, _review_output_budget, triad_api_messages,
-    )
-    from ouroboros.triad_review import REVIEW_JSON_ARRAY_CONTRACT
-    from ouroboros.review_evidence import commit_review_evidence_section
-
-    sr = _scope()
-
-    def _chars(messages) -> int:
-        return len(json.dumps({"messages": messages}, ensure_ascii=False, default=str))
-
-    def _session(route) -> bool:
-        return str(getattr(route, "value", route) or "") == ReviewRouteKind.AGENT_SESSION.value
-
-    seats = []
-    for row in scope_rows or []:
-        slot, prepared = row["slot"], row.get("prepared") or {}
-        route, slot_id = getattr(slot, "route", None), str(slot.slot_id or "")
-        if row.get("final") is not None or _session(route):
-            continue
-        model = str(prepared.get("scope_model_id") or slot.model or "")
-        binding = {"model_role": f"reviewer:{slot_id}",
-                   "credential_profile_id": prepared.get("session_profile", str(getattr(slot, "session_profile", "") or "")),
-                   "use_local": prepared.get("use_local", getattr(slot, "use_local", None)),
-                   **(prepared.get("window_binding") or {})}
-        output_tokens, _ = sr._window_scaled_reserves(
-            sr._scope_window(model, **binding).sizing_window(sr._SCOPE_SIZING_FALLBACK)
-        )
-        # Every scope row is a native inspection episode, so its seat is priced
-        # by its first send — instructions, brief and tool schemas — never by a
-        # message pair it does not assemble.
-        chars = native_first_send_chars(
-            str(prepared.get("repo_dir") or ""), surface="scope_review", role_hint=SCOPE_ROLE_HINT,
-            slot_id=slot_id, session_task=str(prepared.get("session_task") or ""),
-            output_contract=sr.SCOPE_RETRIEVING_OUTPUT_CONTRACT,
-        )
-        seats.append({"surface": "scope_review", "slot_id": slot_id, "model": model,
-                      "prompt_chars": chars, "max_completion_tokens": int(output_tokens)})
-    if triad_exited or not triad_prepared:
-        return seats
-    row_plan = triad_prepared.get("row_plan") or {}
-    models = list(triad_prepared.get("models") or row_plan.get("models") or [])
-    routes = list(triad_prepared.get("routes") or row_plan.get("routes") or [])
-    slot_ids = list(row_plan.get("slot_ids") or [])
-    triad_chars = None
-    for index, model in enumerate(models):
-        route = routes[index] if index < len(routes) else "api_chat"
-        slot_id = str(slot_ids[index] if index < len(slot_ids) else f"slot_{index + 1}")
-        if _session(route):
-            continue
-        if row_plan_retrieves({**row_plan, "routes": routes}, index):
-            chars = native_first_send_chars(
-                str(triad_prepared.get("target_repo") or ""), surface="multi_model_review",
-                role_hint=TRIAD_ROLE_HINT, slot_id=slot_id,
-                session_task=str(triad_prepared.get("session_task") or "") + ("\n\n" + commit_review_evidence_section(triad_prepared["task_evidence"], delivery="native") if triad_prepared.get("task_evidence") else ""),
-                output_contract=REVIEW_JSON_ARRAY_CONTRACT,
-            )
-        else:
-            if triad_chars is None:
-                messages, _ = triad_api_messages(
-                    str(triad_prepared.get("prompt") or ""),
-                    int(triad_prepared.get("stable_prefix_len") or 0), TRIAD_USER_TURN,
-                    layer=str(triad_prepared.get("layer") or "body"),
-                )
-                triad_chars = _chars(messages)
-            chars = triad_chars
-        seats.append({"surface": "multi_model_review", "slot_id": slot_id, "model": str(model or ""),
-                      "prompt_chars": chars, "max_completion_tokens": int(_review_output_budget())})
-    return seats
-
-
-def admit_commit_gate_wave(ctx, seats) -> str | None:
-    """All-or-nothing money admission of one commit-gate wave (owner decision
-    2026-09-05): every paid seat's reservation upper bound must fit TOGETHER,
-    against every fence ``reserve_attempt`` enforces (the global TOTAL_BUDGET
-    remainder, root and original group fences), before ANY seat is dispatched. Returns the
-    typed refusal text ($0, nothing dispatched) naming the binding axis, or
-    None; fail-open on unknowns like the task-level surfaces that already ride
-    ``review_wave_budget_gate``."""
-    if not seats:
-        return None
-    from ouroboros.review_substrate import review_usage_category
-    from ouroboros.tools.review_helpers import review_wave_binding_fence, review_wave_budget_gate
-
-    # Each seat is priced under the usage scope its substrate will SEND under
-    # (surface category + slot), so its bound reads the seat's own observed
-    # cache split — never the caller's warm transcript split.
-    admission = review_wave_budget_gate(
-        ctx, surface="commit_gate",
-        models=[seat["model"] for seat in seats],
-        prompt_chars=[seat["prompt_chars"] for seat in seats],
-        max_completion_tokens=[seat["max_completion_tokens"] for seat in seats],
-        categories=[review_usage_category(seat["surface"]) for seat in seats],
-        slot_ids=[seat["slot_id"] for seat in seats],
-        extra={"seats": [f"{seat['surface']}:{seat['slot_id']}" for seat in seats]},
-    )
-    if admission is None:
-        return None
-    usd = lambda value: "unknown" if value is None else f"${float(value):.6f}"  # noqa: E731
-    bounds = list(admission.get("slot_bounds") or []) + [None] * len(seats)
-    wave, remaining = admission.get("estimated_wave_usd"), admission.get("remaining_usd")
-    shortfall = None if wave is None or remaining is None else max(0.0, float(wave) - float(remaining))
-    limit, accounted = admission.get("limit_usd"), admission.get("accounted_usd")
-    root_remaining = None if limit is None or accounted is None else max(0.0, float(limit) - float(accounted))
-    if admission.get("binding_axis") == "global":
-        # The refusal names the fence that binds and the knob that moves it — never
-        # a per-task fence the wave would have fit.
-        fence = (
-            f"the global budget TOTAL_BUDGET {usd(admission.get('global_limit_usd'))}: "
-            f"accounted={usd(admission.get('global_accounted_usd'))} across every task (of which "
-            f"{usd(admission.get('global_reserved_usd'))} is reserved by other in-flight attempts), "
-            f"remaining={usd(remaining)}, shortfall={usd(shortfall)}; the per-task budget fence "
-            f"{usd(limit)} alone would leave {usd(root_remaining)}"
-        )
-    else:
-        label = "whole-work billing-group budget fence" if admission.get("binding_axis") == "group" else "per-task budget fence"
-        fence = (
-            f"the {label} {usd(limit)}: accounted={usd(accounted)} (of which "
-            f"{usd(admission.get('reserved_usd'))} is reserved by other in-flight attempts), "
-            f"remaining={usd(remaining)}, shortfall={usd(shortfall)}; the global budget "
-            f"{usd(admission.get('global_limit_usd'))} alone would leave {usd(admission.get('global_remaining_usd'))}"
-        )
-    remedy = review_wave_binding_fence(admission)[1]
-    return (
-        "⚠️ REVIEW_BLOCKED: commit-gate review wave declined before dispatch ($0 spent). "
-        f"The wave's reservation upper bound {usd(wave)} ("
-        + "; ".join(f"{s['surface']}:{s['slot_id']} {s['model']} {usd(bounds[i])}" for i, s in enumerate(seats))
-        + f") does not fit {fence}. No reviewer seat was dispatched (scope and triad alike): wait for "
-        f"in-flight attempts to settle or {remedy}, then retry the same commit."
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -867,17 +457,18 @@ def seat_vectors(row_plan: dict) -> dict:
 def fold_coupling_only_seats(row_plan: dict) -> dict:
     """TRANSITIONAL (until packet A retires ``config.scope``): the rows an owner
     still configures under the old scope role join the ONE wave as coupling-only
-    seats — same brief, ``parts=("coupling",)``, their own route and identity.
-    The read is explicit (``commit_scope_rows``), never a fail-open import trap:
-    a malformed configuration surfaces as the gate's infra block."""
+    seats — same brief, ``parts=("coupling",)``, their own route and identity
+    (``review_substrate.scope_reviewer_slots``: every such row retrieves). The
+    read is explicit, never a fail-open import trap: a malformed configuration
+    surfaces as the gate's infra block."""
     from ouroboros.review_execution import ReviewRouteKind
-    from ouroboros.reviewer_slot_config import commit_scope_rows
+    from ouroboros.review_substrate import scope_reviewer_slots
 
     plan = seat_vectors(row_plan)
     seen = set(str(s) for s in plan.get("slot_ids") or [])
     blanks = {"retrieves": False, "use_local": None, "parts": ()}
-    for slot in commit_scope_rows():
-        slot_id = str(slot.slot_id or "")
+    for slot in scope_reviewer_slots():
+        slot_id = str(getattr(slot, "slot_id", "") or "")
         if not slot_id or slot_id in seen:
             continue
         seen.add(slot_id)
@@ -888,7 +479,7 @@ def fold_coupling_only_seats(row_plan: dict) -> dict:
                            ("session_profiles", str(getattr(slot, "session_profile", "") or "")),
                            ("slot_ids", slot_id), ("subagent_ids", str(getattr(slot, "subagent_id", "") or "")),
                            ("retrieves", True), ("use_local", getattr(slot, "use_local", None)),
-                           ("parts", ("coupling",)), ("models", str(slot.model or ""))):
+                           ("parts", ("coupling",)), ("models", str(getattr(slot, "model", "") or ""))):
             rows = list(plan.get(key) or [])
             rows += [blanks.get(key, "")] * (width - len(rows))
             plan[key] = [*rows, value]
@@ -924,6 +515,95 @@ def retrieving_brief_for_seat(*, review_root: Any, governance_root: Any, path_su
         layer=layer, checklist_section=checklist_section, parts=tuple(parts), delegated=delegated, model=model,
         slot_id=slot_id, session_profile=session_profile, use_local=use_local, task_id=task_id, source_root=source_root,
     ))
+
+
+BRIEF_PREPARATION_FAILED_EVENT = "review_brief_preparation_failed"
+
+
+def emit_brief_preparation_failure(ctx: Any, *, slot_id: str, model: str, parts: Sequence[str], exc: BaseException) -> None:
+    """Seat-local preparation evidence, not a verdict: one durable row in the
+    task's events log, whose normal sink forwards it live. Best-effort — a
+    logging failure never changes the typed assembly block the gate returns."""
+    from ouroboros.utils import append_jsonl, utc_now_iso
+
+    logs = getattr(ctx, "drive_logs", None)
+    if not callable(logs):
+        return
+    try:
+        append_jsonl(logs() / "events.jsonl", {
+            "ts": utc_now_iso(), "type": BRIEF_PREPARATION_FAILED_EVENT,
+            "task_id": str(getattr(ctx, "task_id", "") or ""), "slot_id": str(slot_id), "model": str(model),
+            "parts": list(parts), "status": "error", "failure_phase": "context",
+            "failure_code": "context_unavailable", "reason": str(exc)})
+    except Exception:
+        pass
+
+
+def prepare_retrieving_seats(ctx: Any, row_plan: dict, models: list, row_routes: list, *,
+                             target_repo, governance_root, subject, frozen, diff_text: str, layer: str,
+                             checklist_section: str, commit_message: str, goal: str, scope: str,
+                             review_rebuttal: str, owner_words: str, task_evidence: dict) -> tuple:
+    """Every retrieving seat receives ITS OWN two-part brief (Part 1 the change,
+    Part 2 the coupling questions; a coupling-only seat answers Part 2 alone),
+    sized to the seat's own first-send bound. Returns ``(row_plan,
+    retrieving_manifests, brief_texts, failure)``: the row vectors carry the
+    brief and its answer policy per seat, ``brief_texts`` keeps every distinct
+    brief by sha for the durable wave record, and ``failure`` is ``None`` or
+    ``(slot_id, exc)`` — the seat whose brief could not be built, already
+    recorded as seat-local preparation evidence; the gate turns it into the
+    whole wave's typed assembly block (one wave, so one seat's missing context
+    dispatches nothing). Model-control exceptions propagate before logging."""
+    from ouroboros.review_execution import ReviewRouteKind
+    from ouroboros.reviewer_slot_config import row_plan_retrieves
+    from ouroboros.tools.review_brief_coupling import BriefIntent
+    from ouroboros.triad_review import REVIEW_JSON_ARRAY_CONTRACT, REVIEW_TWO_PART_OBJECT_CONTRACT
+
+    row_plan = dict(row_plan)
+    session_tasks, session_policies, brief_shas = [""] * len(models), [None] * len(models), [""] * len(models)
+    brief_texts: dict = {}
+    retrieving_manifests: list = []
+    path_subject = subject if subject is not None else (frozen if frozen is not None and not frozen.is_system_index else None)
+    intent = BriefIntent(goal=goal, scope=scope, review_rebuttal=review_rebuttal,
+                         review_history=list(ctx._review_history or []),
+                         coupling_history=list(getattr(ctx, "_coupling_review_history_rounds", None) or []),
+                         owner_words=owner_words)
+    for i in range(len(models)):
+        if not row_plan_retrieves(row_plan, i):
+            continue
+        parts = tuple(row_plan["parts"][i])
+        delegated = row_routes[i] is ReviewRouteKind.AGENT_SESSION
+        try:
+            text, manifest = retrieving_brief_for_seat(
+                review_root=target_repo, governance_root=governance_root, path_subject=path_subject,
+                managed_subject=subject, diff_text=diff_text, layer=layer, checklist_section=checklist_section,
+                commit_message=commit_message, intent=intent, parts=parts, delegated=delegated,
+                model=models[i], slot_id=str(row_plan["slot_ids"][i]),
+                session_profile=str(row_plan["session_profiles"][i] or ""), use_local=row_plan["use_local"][i],
+                drive_root=getattr(ctx, "drive_root", None),
+                task_id=str(getattr(ctx, "task_id", "") or "") or "commit_review",
+                source_root=source_root_for(ctx, task_evidence))
+        except (RuntimeError, OSError, ValueError, subprocess.SubprocessError) as exc:
+            from ouroboros.llm_claudexor import propagate_model_error
+            propagate_model_error(exc)
+            log.error("Review brief assembly failed for %s: %s", row_plan["slot_ids"][i], exc)
+            emit_brief_preparation_failure(ctx, slot_id=str(row_plan["slot_ids"][i]), model=str(models[i]),
+                                           parts=parts, exc=exc)
+            return row_plan, retrieving_manifests, brief_texts, (str(row_plan["slot_ids"][i]), exc)
+        session_tasks[i], brief_shas[i] = text, manifest["sha"]["brief"]
+        brief_texts[manifest["sha"]["brief"]] = text
+        policy = {"output_contract": REVIEW_TWO_PART_OBJECT_CONTRACT if "coupling" in parts else REVIEW_JSON_ARRAY_CONTRACT}
+        if manifest.get("native_required_sources") is not None:
+            policy["native_required_sources"] = manifest["native_required_sources"]
+            policy["native_required_sources_ref"] = manifest.get("native_required_sources_ref") or {}
+        if manifest.get("native_data_root"):
+            policy["native_data_root"] = manifest["native_data_root"]
+        session_policies[i] = policy
+        retrieving_manifests.append({"slot_id": str(row_plan["slot_ids"][i]), **{
+            k: manifest.get(k) for k in ("delivery", "parts", "diff_delivery", "diff_source", "first_send_chars",
+                                         "first_send_bound", "brief_chars", "governance_manifest", "repository_index",
+                                         "sha")}})
+    row_plan.update(session_tasks=session_tasks, session_policies=session_policies, brief_shas=brief_shas)
+    return row_plan, retrieving_manifests, brief_texts, None
 
 
 def build_two_part_brief(frozen_subject: Any, seat: Any, *, layer: Optional[str] = None, goal: str = "",
@@ -1033,3 +713,165 @@ def build_two_part_brief(frozen_subject: Any, seat: Any, *, layer: Optional[str]
             "sha": {"brief": sha, "change_prompt_sha": sha, "coupling_brief_sha": ""},
             "delivery": "packet", "manifest": {"governance_manifest": list(governance.manifest), "prompt_chars": len(prompt)},
             "stable_prefix_len": stable_len}
+
+
+def commit_gate_paid_seats(prepared, exited) -> list:
+    """The PAID seats of one commit-gate wave, priced before the first paid call.
+    A paid seat is an api row — a packet seat OR a native inspection episode —
+    whose every send is a ``reserve_attempt`` on the ledger; an agent-session row
+    rides the owner's subscription (its ledger row is written at settlement, never
+    reserved) and is not priced. Each seat carries the exact chars of the send its
+    substrate opens with (the packet's message pair; a native episode's first send:
+    instructions, its OWN two-part brief and tool schemas — later rounds reserve
+    themselves) and that send's output reservation, so the wave is priced the way
+    ``reserve_attempt`` prices it."""
+    from ouroboros.review_execution import ReviewRouteKind
+    from ouroboros.review_native_episode import native_first_send_chars
+    from ouroboros.reviewer_slot_config import row_plan_retrieves
+    from ouroboros.tools.review_multi_model import (
+        TRIAD_ROLE_HINT, TRIAD_USER_TURN, _review_output_budget, triad_api_messages,
+    )
+    from ouroboros.triad_review import REVIEW_TWO_PART_OBJECT_CONTRACT
+    from ouroboros.review_evidence import commit_review_evidence_section
+
+    if exited or not prepared:
+        return []
+    row_plan = prepared.get("row_plan") or {}
+    models = list(prepared.get("models") or row_plan.get("models") or [])
+    routes = list(prepared.get("routes") or row_plan.get("routes") or [])
+    slot_ids = list(row_plan.get("slot_ids") or [])
+    tasks = list(row_plan.get("session_tasks") or [])
+    seats, packet_chars = [], None
+    for index, model in enumerate(models):
+        route = routes[index] if index < len(routes) else "api_chat"
+        slot_id = str(slot_ids[index] if index < len(slot_ids) else f"slot_{index + 1}")
+        if str(getattr(route, "value", route) or "") == ReviewRouteKind.AGENT_SESSION.value:
+            continue
+        if row_plan_retrieves({**row_plan, "routes": routes}, index):
+            task = str(tasks[index] if index < len(tasks) else "") or str(prepared.get("session_task") or "")
+            if prepared.get("task_evidence"):
+                task += "\n\n" + commit_review_evidence_section(prepared["task_evidence"], delivery="native")
+            chars = native_first_send_chars(
+                str(prepared.get("target_repo") or ""), surface="multi_model_review", role_hint=TRIAD_ROLE_HINT,
+                slot_id=slot_id, session_task=task, output_contract=REVIEW_TWO_PART_OBJECT_CONTRACT)
+        else:
+            if packet_chars is None:
+                messages, _ = triad_api_messages(
+                    str(prepared.get("prompt") or ""), int(prepared.get("stable_prefix_len") or 0), TRIAD_USER_TURN,
+                    layer=str(prepared.get("layer") or "body"))
+                packet_chars = len(json.dumps({"messages": messages}, ensure_ascii=False, default=str))
+            chars = packet_chars
+        seats.append({"surface": "multi_model_review", "slot_id": slot_id, "model": str(model or ""),
+                      "prompt_chars": chars, "max_completion_tokens": int(_review_output_budget())})
+    return seats
+
+
+def admit_commit_gate_wave(ctx, seats) -> str | None:
+    """All-or-nothing money admission of one commit-gate wave (owner decision
+    2026-09-05): every paid seat's reservation upper bound must fit TOGETHER,
+    against every fence ``reserve_attempt`` enforces (the global TOTAL_BUDGET
+    remainder, root and original group fences), before ANY seat is dispatched. Returns the
+    typed refusal text ($0, nothing dispatched) naming the binding axis, or
+    None; fail-open on unknowns like the task-level surfaces that already ride
+    ``review_wave_budget_gate``."""
+    if not seats:
+        return None
+    from ouroboros.review_substrate import review_usage_category
+    from ouroboros.tools.review_helpers import review_wave_binding_fence, review_wave_budget_gate
+
+    # Each seat is priced under the usage scope its substrate will SEND under
+    # (surface category + slot), so its bound reads the seat's own observed
+    # cache split — never the caller's warm transcript split.
+    admission = review_wave_budget_gate(
+        ctx, surface="commit_gate",
+        models=[seat["model"] for seat in seats],
+        prompt_chars=[seat["prompt_chars"] for seat in seats],
+        max_completion_tokens=[seat["max_completion_tokens"] for seat in seats],
+        categories=[review_usage_category(seat["surface"]) for seat in seats],
+        slot_ids=[seat["slot_id"] for seat in seats],
+        extra={"seats": [f"{seat['surface']}:{seat['slot_id']}" for seat in seats]},
+    )
+    if admission is None:
+        return None
+    usd = lambda value: "unknown" if value is None else f"${float(value):.6f}"  # noqa: E731
+    bounds = list(admission.get("slot_bounds") or []) + [None] * len(seats)
+    wave, remaining = admission.get("estimated_wave_usd"), admission.get("remaining_usd")
+    shortfall = None if wave is None or remaining is None else max(0.0, float(wave) - float(remaining))
+    limit, accounted = admission.get("limit_usd"), admission.get("accounted_usd")
+    root_remaining = None if limit is None or accounted is None else max(0.0, float(limit) - float(accounted))
+    if admission.get("binding_axis") == "global":
+        # The refusal names the fence that binds and the knob that moves it — never
+        # a per-task fence the wave would have fit.
+        fence = (
+            f"the global budget TOTAL_BUDGET {usd(admission.get('global_limit_usd'))}: "
+            f"accounted={usd(admission.get('global_accounted_usd'))} across every task (of which "
+            f"{usd(admission.get('global_reserved_usd'))} is reserved by other in-flight attempts), "
+            f"remaining={usd(remaining)}, shortfall={usd(shortfall)}; the per-task budget fence "
+            f"{usd(limit)} alone would leave {usd(root_remaining)}"
+        )
+    else:
+        label = "whole-work billing-group budget fence" if admission.get("binding_axis") == "group" else "per-task budget fence"
+        fence = (
+            f"the {label} {usd(limit)}: accounted={usd(accounted)} (of which "
+            f"{usd(admission.get('reserved_usd'))} is reserved by other in-flight attempts), "
+            f"remaining={usd(remaining)}, shortfall={usd(shortfall)}; the global budget "
+            f"{usd(admission.get('global_limit_usd'))} alone would leave {usd(admission.get('global_remaining_usd'))}"
+        )
+    remedy = review_wave_binding_fence(admission)[1]
+    return (
+        "⚠️ REVIEW_BLOCKED: commit-gate review wave declined before dispatch ($0 spent). "
+        f"The wave's reservation upper bound {usd(wave)} ("
+        + "; ".join(f"{s['surface']}:{s['slot_id']} {s['model']} {usd(bounds[i])}" for i, s in enumerate(seats))
+        + f") does not fit {fence}. No reviewer seat was dispatched (scope and triad alike): wait for "
+        f"in-flight attempts to settle or {remedy}, then retry the same commit."
+    )
+
+
+def managed_update_wave_floor(remaining_usd: float) -> Tuple[dict, list]:
+    """Affordability floor of ONE commit-gate wave for the managed-update resolver:
+    ``(admission, events)``. The pool is the one wave's paid seats — every
+    api-route row of the panel (packet or native, both parts of the brief ride
+    one seat) plus, transitionally, the coupling-only rows still configured under
+    the old scope role — priced at the packs' own worst-case caps (the shared
+    920K-token input SSOT per API row, the review output reserve) with the
+    shared reservation math; agent-session rows ride subscriptions and are
+    counted, not priced. Estimator errors fail open INSIDE the estimate (one
+    typed event), never by swallowing a missing symbol: this function is called
+    explicitly and a broken import propagates to the caller."""
+    from ouroboros.reviewer_slot_config import commit_scope_rows, commit_triad_rows
+    from ouroboros.tools.review_helpers import REVIEW_PROMPT_TOKEN_BUDGET
+    from ouroboros.tools.review_multi_model import _review_output_budget
+    from ouroboros.usage_admission import review_wave_admission
+
+    rows = [*commit_triad_rows(), *commit_scope_rows()]
+    models = [row.target_id for row in rows if not row.is_session and row.target_id]
+    session_slots = sum(1 for row in rows if row.is_session)
+    admission: dict = {"fits": True}
+    events: list = []
+    if not models:
+        return admission, events
+    try:
+        estimate = review_wave_admission(
+            root_task_id="managed-update-admission", models=models,
+            prompt_chars=int(REVIEW_PROMPT_TOKEN_BUDGET) * 4,
+            max_completion_tokens=int(_review_output_budget()),
+            remaining_usd_override=float(remaining_usd))
+    except Exception as exc:
+        log.debug("assisted admission wave estimate failed open", exc_info=True)
+        events.append({"type": "managed_update_wave_floor_estimator_failed", "remaining_usd": float(remaining_usd),
+                       "error": f"{type(exc).__name__}: {exc}"})
+        return admission, events
+    unpriced = int(estimate.get("unpriced_slots") or 0)
+    total = estimate.get("estimated_wave_usd")
+    if total is None:
+        unpriced += len(models)
+    else:
+        admission = {"fits": float(total) <= float(remaining_usd) + 1e-9, "estimated_wave_usd": round(float(total), 6),
+                     "remaining_usd": float(remaining_usd), "unpriced_slots": unpriced, "session_slots": session_slots}
+    if admission.get("fits", True) and (unpriced or (session_slots and total is None)):
+        # An ADMITTED wave with unknowable parts must not read as a fully priced
+        # estimate later (P1: represent the gap) — one durable line.
+        events.append({"type": "managed_update_wave_floor_partial_unknown",
+                       "estimated_wave_usd": admission.get("estimated_wave_usd"), "unpriced_slots": unpriced,
+                       "session_slots": session_slots, "remaining_usd": float(remaining_usd)})
+    return admission, events

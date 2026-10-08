@@ -95,13 +95,12 @@ def install_paid_stamp(ctx: Any, wave: Any) -> Dict[str, int]:
         reserved = getattr(ctx, "_review_reserved_roster", None)
         reserved = reserved if isinstance(reserved, dict) else {}
         triad = copy.deepcopy(list(reserved.get("multi_model_review") or []))
-        scope = copy.deepcopy(list(reserved.get("scope_review") or []))
 
         def _mutate(state: Any) -> None:
             number = holder["attempt"] or state.next_attempt_number(repo_key, TOOL_NAME, task_id)
             state.record_attempt(attempt_record(
                 wave, ctx, status="reviewing", phase="review", paid=True, attempt=number,
-                triad_raw_results=triad, scope_raw_result={"raw_results": scope} if scope else {}))
+                triad_raw_results=triad))
             holder["attempt"] = number
 
         update_state(drive, _mutate)
@@ -130,14 +129,12 @@ def settle_attempt(ctx: Any, wave: Any, outcome: Dict[str, Any], payload: Dict[s
     from ouroboros.review_state import update_state
 
     verdict = dict(payload.get("verdict") or {})
-    scope_raw = copy.deepcopy(dict(forensic.get("scope_raw") or {}))
     try:
         update_state(pathlib.Path(ctx.drive_root), lambda state: state.record_attempt(attempt_record(
             wave, ctx, status="reviewed", phase="review", paid=True, attempt=number,
             late_result_pending=payload.get("state") == "pending",
             block_reason=str(outcome.get("block_reason") or ""),
             triad_raw_results=copy.deepcopy([row for row in forensic.get("triad_raw") or [] if isinstance(row, dict)]),
-            scope_raw_result=scope_raw if scope_raw else {},
             degraded_reasons=[str(item) for item in verdict.get("degraded_reasons") or []])))
     except Exception:
         log.warning("review_change attempt row was not settled", exc_info=True)

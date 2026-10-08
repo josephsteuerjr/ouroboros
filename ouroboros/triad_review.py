@@ -260,6 +260,10 @@ def extract_fenced_json(text: str) -> Any:
 REVIEW_OUTPUT_SHAPES: Dict[str, str] = {
     "task_acceptance": "object",
     "deep_self_review": "report",
+    # The commit gate's retrieving seats answer the two-part brief (contract B):
+    # one object {change, change_clean, coupling}. Packet seats on the same
+    # surface answer contract A over direct chat and are never canonicalized.
+    "multi_model_review": "two_part",
 }
 OBJECT_VERDICT_REQUIRED_KEYS = ("verdict",)
 TWO_PART_KEYS = ("change", "change_clean", "coupling")
@@ -359,10 +363,13 @@ def _change_items(entries: List[Dict[str, Any]], *, model_label: str, slot_id: s
 
 
 def _change_answer(items: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """``findings`` are the FAIL items (what the gate and the record reason over);
+    ``items`` is every normalized row, PASS included, for the actor record's
+    forensic ``parsed_items`` — stripped before the answer is recorded."""
     failed = [i for i in items if i["verdict"] == "FAIL"]
     critical = [i for i in failed if i["severity"] == "critical"]
     return {"status": "responded", "verdict": "FAIL" if critical else "PASS", "findings": failed,
-            "critical": len(critical), "coverage": "n/a"}
+            "critical": len(critical), "coverage": "n/a", "items": list(items)}
 
 
 def _unanswered(part: str, error: str = "") -> Dict[str, Any]:
@@ -419,7 +426,8 @@ def parse_two_part_answer(raw_text: str, parts: Sequence[str], *, model_label: s
                 for finding in critical + advisory:  # the projection's placeholder model → this seat
                     finding.update(model=model_label, slot_id=slot_id)
                 answers["coupling"] = {"status": "responded", "verdict": "FAIL" if critical else "PASS",
-                                       "findings": critical + advisory, "critical": len(critical), "coverage": coverage}
+                                       "findings": critical + advisory, "critical": len(critical), "coverage": coverage,
+                                       "items": [dict(i, model=model_label, slot_id=slot_id) for i in items]}
     return answers
 
 
@@ -461,13 +469,13 @@ def parse_seat_answers(result_json: Dict[str, Any], row_parts: Dict[str, Sequenc
                 record = _actor_record(actor, idx=idx, model_label=model_label, status="parse_failure", raw_text=raw_text)
             else:
                 usable = [p for p in parts if answers[p]["status"] == "responded"]
-                items = [f for p in usable for f in answers[p]["findings"]]
+                items = [f for p in usable for f in answers[p].pop("items", answers[p]["findings"])]
                 record = _actor_record(actor, idx=idx, model_label=model_label,
                                        status="responded" if usable else "parse_failure", raw_text=raw_text,
                                        parsed_items=items)
                 record.answers = answers
                 if usable:
-                    findings.extend(items)
+                    findings.extend(f for p in usable for f in answers[p]["findings"])
                     responsive.append(f"{model_label} [{slot_id}]" if slot_id else f"{model_label}#{idx + 1}")
         record.parts = parts
         if "coupling" in parts:

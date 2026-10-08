@@ -177,12 +177,12 @@ class TestAdvisoryFallbackProviderAttribution:
         assert ev["provider"] == expected_provider
 
 
-class TestScopeReviewUsageFallback:
-    """_emit_usage in scope_review.py must fall back to pending_events."""
+class TestReviewUsageFallback:
+    """``emit_review_usage`` (review_helpers) must fall back to pending_events."""
 
     def _get_fn(self):
         from ouroboros.tools.review_helpers import emit_review_usage
-        return lambda ctx, model, usage: emit_review_usage(ctx, model=model, usage=usage, source="scope_review")
+        return lambda ctx, model, usage: emit_review_usage(ctx, model=model, usage=usage, source="review")
 
     def test_routes_to_pending_events_when_no_queue(self):
         fn = self._get_fn()

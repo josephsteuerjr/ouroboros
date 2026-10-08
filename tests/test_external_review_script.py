@@ -70,9 +70,9 @@ def test_contributor_mixed_panel_keeps_packet_limit():
 
 
 def test_contributor_trust_boundary_covers_functional_review_dependencies():
-    from ouroboros.tools.scope_review import _CANONICAL_CONTEXT_DOCS
+    from ouroboros.tools.review_helpers import CANONICAL_GOVERNANCE_DOCS
 
-    assert set(_CANONICAL_CONTEXT_DOCS) <= _REVIEW_SUBSTRATE_PATHS and "docs/DESIGN.md" in _CANONICAL_CONTEXT_DOCS
+    assert set(CANONICAL_GOVERNANCE_DOCS) <= _REVIEW_SUBSTRATE_PATHS and "docs/DESIGN.md" in CANONICAL_GOVERNANCE_DOCS
     assert {
         "docs/ARCHITECTURE.md",
         "ouroboros/capability_evidence.py",
@@ -109,7 +109,8 @@ def test_contributor_trust_boundary_covers_functional_review_dependencies():
         "ouroboros/tools/release_sync.py",
         "ouroboros/tools/review_synthesis.py",
         "ouroboros/tools/review_binary_context.py",
-        "ouroboros/tools/scope_review_session.py",
+        "ouroboros/tools/review_brief_coupling.py",
+        "ouroboros/tools/scope_review_contract.py",
         "ouroboros/tools/scope_window.py",
         "ouroboros/subagents.py",
         "ouroboros/review_native_episode.py",
@@ -968,10 +969,13 @@ def test_contributor_packet_is_redacted_and_shareable(tmp_path):
 
 
 def _actors(triad: list[dict], scope: list[dict] | None = None) -> list[tuple[str, dict]]:
-    """The seats as a review record carries them: ledger rows of the raw actors."""
+    """The seats as a review record carries them: ledger rows of the raw actors
+    of ONE wave — a seat configured under the scope role is a coupling-only seat
+    (``parts=["coupling"]``) beside the triad seats."""
     from ouroboros.review_ledger import build_commit_gate_record
 
-    record = build_commit_gate_record({"triad_raw": triad, "scope_raw": {"raw_results": scope or []}})
+    coupling_only = [{**row, "parts": ["coupling"]} for row in (scope or [])]
+    record = build_commit_gate_record({"triad_raw": [*triad, *coupling_only]})
     return _record_actors(asdict(record))
 
 

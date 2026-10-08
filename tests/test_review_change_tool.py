@@ -86,7 +86,10 @@ class Frozen:
 
 
 class Wave:
-    """The paid wave stub."""
+    """The paid wave stub: ONE wave, every seat asked its ``parts`` — a configured
+    triad seat ``seat_parts(row)`` (both when it retrieves), a configured scope seat
+    ``coupling`` only — each answering by part (contract B's shape as the ledger
+    records it)."""
 
     def __init__(self) -> None:
         self.calls: List[SimpleNamespace] = []
@@ -94,16 +97,22 @@ class Wave:
         self.status = "responded"
         self.last = SimpleNamespace()
 
-    def _answer(self, row: Any, part: str) -> Dict[str, Any]:
-        failing = row.slot_id in self.failing
-        answer = {"slot_id": row.slot_id, "model_id": row.target_id, "status": self.status,
-                  "raw_text": f"{row.slot_id} {part} answer", "cost_usd": 0.01}
-        if part == rl.PART_COUPLING:
-            answer.update(critical_findings=[{"item": "coupling", "reason": f"{row.slot_id}: a caller breaks"}] if failing else [],
-                          advisory_findings=[])
-        else:
-            answer["parsed_items"] = [{"item": "code_quality", "verdict": "FAIL" if failing else "PASS",
-                                       "severity": "critical", "reason": f"{row.slot_id}: defect" if failing else "clean"}]
+    def _answer(self, row: Any, parts: tuple) -> Dict[str, Any]:
+        failing, answered = row.slot_id in self.failing, self.status == "responded"
+        answers: Dict[str, Any] = {}
+        for part in parts:
+            if part == rl.PART_COUPLING:
+                findings = [{"item": "forgotten_touchpoints", "verdict": "FAIL", "severity": "critical",
+                             "reason": f"{row.slot_id}: a caller breaks"}] if failing else []
+            else:
+                findings = [{"item": "code_quality", "verdict": "FAIL", "severity": "critical",
+                             "reason": f"{row.slot_id}: defect"}] if failing else []
+            answers[part] = {"status": "responded", "verdict": "FAIL" if findings else "PASS", "findings": findings,
+                             "critical": len(findings), "coverage": "n/a" if part == rl.PART_CHANGE else "complete"}
+        answer = {"slot_id": row.slot_id, "model_id": row.target_id, "status": self.status, "parts": list(parts),
+                  "raw_text": f"{row.slot_id} {'+'.join(parts)} answer", "cost_usd": 0.01}
+        if answered:
+            answer["answers"] = answers
         return answer
 
     def __call__(self, ctx: Any, commit_message: str, *, goal: str = "", scope: str = "", review_rebuttal: str = "",
@@ -112,29 +121,32 @@ class Wave:
 
         config = slots.load_reviewer_slot_config()
         triad, coupling = list(config.triad), list(config.scope)
-        prompt = f"TRIAD BRIEF\n{commit_message}\n{goal}\n{subject.diff_text}"
-        brief = f"SCOPE BRIEF\n{goal}\n{subject.diff_text}" if coupling else ""
+        seats = [(row, rl.seat_parts(row)) for row in triad] + [(row, rl.seat_parts(row, coupling_only=True)) for row in coupling]
+        prompt = f"PACKET\n{commit_message}\n{goal}\n{subject.diff_text}"
+        brief = f"TWO-PART BRIEF\n{goal}\n{subject.diff_text}"
+        texts = {_sha(prompt): prompt, _sha(brief): brief}
         self.calls.append(SimpleNamespace(
             subject=subject, label=commit_message, goal=goal, scope=scope, rebuttal=review_rebuttal,
             fingerprint=review_binding_fingerprint, tool=ctx._current_review_tool_name,
             retry_key=ctx._current_review_retry_key, record_id=ctx._current_review_record_id,
             triad=[row.slot_id for row in triad], coupling=[row.slot_id for row in coupling],
+            parts={row.slot_id: parts for row, parts in seats},
             efforts={row.slot_id: row.effort for row in (*triad, *coupling)}, prompt=prompt, brief=brief))
         invoke_review_paid_stamp(ctx._review_paid_stamp)
-        ctx._last_triad_raw_results = [self._answer(row, rl.PART_CHANGE) for row in triad]
-        rows = [self._answer(row, rl.PART_COUPLING) for row in coupling]
-        ctx._last_scope_raw_result = {"status": "responded", "raw_results": rows} if rows else {}
-        plan = [{"slot_id": row.slot_id, "model": row.target_id, "route": "api_chat", "effort": row.effort or "high"}
-                for row in (*triad, *coupling)]
-        ctx._last_review_structured = {"triad_prompt": prompt, "scope_brief": brief,
-                                       "started_ts": "2026-10-07T00:00:00+00:00",
-                                       "triad_rows": plan[:len(triad)], "scope_rows": plan[len(triad):]}
-        critical = any(row.slot_id in self.failing for row in triad)
+        ctx._last_triad_raw_results = [self._answer(row, parts) for row, parts in seats]
+        plan = [{"slot_id": row.slot_id, "model": row.target_id, "route": "api_chat", "effort": row.effort or "high",
+                 "parts": list(parts), "retrieves": rl.PART_COUPLING in parts,
+                 "brief_sha": _sha(brief) if rl.PART_COUPLING in parts else _sha(prompt)} for row, parts in seats]
+        ctx._last_review_structured = {"started_ts": "2026-10-07T00:00:00+00:00", "rows": plan, "brief_texts": texts,
+                                       "quorum": rl._quorum_for(len(plan))}
+        rows = rl.build_rows({"structured": ctx._last_review_structured, "triad_raw": ctx._last_triad_raw_results})
+        verdict = rl.reduce_verdict([seat for seat in rows if not seat["additional"]])
+        ctx._last_review_verdict = verdict
+        ctx._last_coupling_result = rl.coupling_outcome(verdict, rows)
+        critical = verdict["aggregate"] == rl.VERDICT_FAIL
         ctx._last_review_block_reason = "critical_findings" if critical else ""
-        self.last = SimpleNamespace(structured=dict(ctx._last_review_structured),
-                                    triad_raw=list(ctx._last_triad_raw_results), scope_raw=dict(ctx._last_scope_raw_result))
-        scope_result = SimpleNamespace(blocked=any(row.slot_id in self.failing for row in coupling))
-        return ("⚠️ REVIEW_BLOCKED: critical findings" if critical else None), scope_result, ctx._last_review_block_reason, []
+        self.last = SimpleNamespace(structured=dict(ctx._last_review_structured), triad_raw=list(ctx._last_triad_raw_results))
+        return ("⚠️ REVIEW_BLOCKED: critical findings" if critical else None), ctx._last_coupling_result, ctx._last_review_block_reason, []
 
 
 def gate_record(facts: Dict[str, Any], *, record_id: str = "", drive_root: Any = None) -> Any:
@@ -308,15 +320,16 @@ def test_the_system_index_is_the_gate_path_on_one_frozen_subject(h: Harness, tmp
     gate = gate_record({"task_id": "task-rc", "repo_dir": str(h.system), "subject": frozen, "goal": "Fix the body",
                         **vars(h.wave.last)}, drive_root=tmp_path / "gate-data").to_dict()
     record = rl.load_record(h.drive, result["record_id"])
-    assert _prompt_shas(record) == _prompt_shas(gate) == {("change", _sha(call.prompt)), ("coupling", _sha(call.brief))}
     triad, scope = _configured()
+    expected = {(",".join(parts), _sha(call.brief if "coupling" in parts else call.prompt)) for parts in call.parts.values()}
+    assert _prompt_shas(record) == _prompt_shas(gate) == expected and ("coupling", _sha(call.brief)) in expected
     assert [seat["seat_id"] for seat in record["rows"]] == [seat["seat_id"] for seat in gate["rows"]] == [*triad, *scope]
     assert (record["verdict"]["aggregate"], record["verdict"]["per_question"]) == (
         gate["verdict"]["aggregate"], gate["verdict"]["per_question"])
     assert result["aggregate"] == rl.VERDICT_PASS and result["record_id"] == call.record_id
     assert result["checklist"] == {"layer": "body", "body_fact": "true", "how": "dir", "treat_as_body": False}
     assert record["surface"] == "change" and record["brief"]["checklist"]["rules_source"]["sha"] == "body-rules"
-    assert result["panel"]["composition"] == "configured" and result["panel"]["chosen_by"] == "owner"
+    assert result["panel"]["composition"] == "full_pool" and result["panel"]["chosen_by"] == "owner"
 
 
 def test_a_foreign_base_head_is_core_untested_and_locks_nothing(h: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -334,7 +347,8 @@ def test_a_foreign_base_head_is_core_untested_and_locks_nothing(h: Harness, monk
         "checkout", "checkout_closed"]
     assert result["checklist"] == {"layer": "core", "body_fact": "false", "how": "remote_chain", "treat_as_body": False}
     assert result["tests"] == {"policy": "NOT_RUN", "result": "unknown"}
-    assert result["aggregate"] == rl.VERDICT_FAIL and [f["seat_id"] for f in result["findings"]["critical_findings"]] == [triad[0]]
+    assert result["aggregate"] == rl.VERDICT_FAIL and {f["seat_id"] for f in result["findings"]["critical_findings"]} == {triad[0]}
+    assert sorted(f["part"] for f in result["findings"]["critical_findings"]) == ["change", "coupling"]
     assert (result["enforcement"], result["enforcement_blocks"]) == ("blocking", False)
     assert (result["subject"]["base"], result["subject"]["head"], result["subject"]["root"]) == (
         base, head, str(h.project.resolve()))
@@ -404,7 +418,9 @@ def test_one_named_seat_is_the_whole_panel_of_a_foreign_root(h: Harness) -> None
     assert [row["seat_id"] for row in result["rows"]] == [triad[1]]
     assert (result["panel"]["composition"], result["panel"]["chosen_by"]) == ("composed", "author")
     assert (result["panel"]["reason"], result["panel"]["reason_missing"]) == ("one cheap check", False)
-    assert result["per_question"]["coupling"] == rl.QUESTION_NOT_PERFORMED
+    # A retrieving seat alone is asked both parts: the one seat IS the wave's quorum.
+    assert result["rows"][0]["parts"] == ["change", "coupling"] and result["per_question"]["coupling"] == rl.VERDICT_PASS
+    assert result["aggregate"] == rl.VERDICT_PASS and result["quorum"]["required"] == 1
 
 
 def test_a_narrowed_panel_without_a_reason_is_recorded_not_refused(h: Harness) -> None:
@@ -432,7 +448,7 @@ def test_a_body_subset_outside_cyber_pro_is_ignored_and_recorded(h: Harness, mon
     _stage(h.system, "body.py", "x = 1\n")
     ignored = h.run(root="system_repo", subject="index", reviewers=[triad[0]])
     assert (h.wave.calls[-1].triad, h.wave.calls[-1].coupling) == (triad, scope)
-    assert (ignored["panel"]["composition"], ignored["panel"]["reviewers_subset_ignored"]) == ("configured", True)
+    assert (ignored["panel"]["composition"], ignored["panel"]["reviewers_subset_ignored"]) == ("full_pool", True)
 
     _stage(h.system, "more.py", "y = 2\n")
     named_all = h.run(root="system_repo", subject="index", reviewers=[*triad, *scope])

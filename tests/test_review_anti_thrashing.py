@@ -1,8 +1,10 @@
 """Tests for anti-thrashing behavior in pre-commit review history sections.
 
 Covers v4.35.x changes: obligation ID injection, verdict-authoritative
-instructions, and anti-rephrase guidance in `_build_review_history_section`
-(both the triad `review.py` and the scope-level `scope_review.py` copies).
+instructions, and anti-rephrase guidance in the ONE shared
+`build_review_history_section` — as the packet seat (`review.py`) and the
+two-part brief (`review_brief_coupling.py`) both render it — plus the Part-2
+coupling-history block.
 """
 import pathlib
 import subprocess
@@ -22,9 +24,9 @@ from ouroboros.tools.review_helpers import (
     _ANTI_THRASHING_RULE_ITEM_NAME,
     _HISTORY_VERIFICATION_ONLY_RULE,
 )
-from ouroboros.tools.scope_review import (
-    _build_review_history_section as scope_hist,
-    _build_scope_history_section,
+from ouroboros.tools.review_brief_coupling import (
+    build_coupling_history_section as _build_scope_history_section,
+    build_review_history_section as scope_hist,
 )
 
 
@@ -114,7 +116,7 @@ def test_history_section_obligations_only_no_history():
 
 
 # ---------------------------------------------------------------------------
-# Scope review._build_review_history_section
+# The two-part brief's Part-1 history (the same shared builder)
 # ---------------------------------------------------------------------------
 
 
@@ -138,17 +140,17 @@ def test_scope_review_history_section_empty_without_inputs():
 
 
 # ---------------------------------------------------------------------------
-# Scope review._build_scope_history_section — verdict-authoritative note
+# review_brief_coupling.build_coupling_history_section — verdict-authoritative note
 # ---------------------------------------------------------------------------
 
 
-def test_scope_history_section_verdict_authoritative():
+def test_coupling_history_section_verdict_authoritative():
     history = [
-        {"summary": "previous scope round noted a broken contract",
+        {"summary": "previous coupling round noted a broken contract",
          "status": "responded"},
     ]
     out = _build_scope_history_section(history)
-    # The shared constant is now interpolated into the scope history section.
+    # The shared constant is interpolated into the Part-2 history block.
     assert _ANTI_THRASHING_RULE_VERDICT in out
     assert _HISTORY_VERIFICATION_ONLY_RULE in out
 
@@ -366,10 +368,10 @@ def test_run_unified_review_injects_obligation_ids_with_correct_repo_key(tmp_pat
     assert '"item": "code_quality"' in out
 
 
-def test_scope_brief_loads_obligations_from_drive_root(tmp_path, monkeypatch):
-    """The retrieving scope brief with a valid `drive_root` loads obligations from
-    the persisted state and renders them into the reviewer's history section."""
-    from ouroboros.tools import scope_review_session as session
+def test_two_part_brief_loads_obligations_from_drive_root(tmp_path, monkeypatch):
+    """The two-part brief with a valid `drive_root` loads obligations from the
+    persisted state and renders them into the reviewer's history section."""
+    from ouroboros.tools import review_brief_coupling as brief_mod
 
     drive_root = tmp_path / "data"
     drive_root.mkdir()
@@ -388,7 +390,7 @@ def test_scope_brief_loads_obligations_from_drive_root(tmp_path, monkeypatch):
     )
     _write_obligation_to_state(drive_root, repo_key, persisted)
 
-    brief, _manifest = session.build_scope_session_task(repo_dir, session.ScopeBriefInputs(
+    brief, _manifest = brief_mod.build_retrieving_brief(repo_dir, brief_mod.BriefInputs(
         commit_message="fix: integration scope test",
         drive_root=drive_root,
     ))
@@ -428,8 +430,8 @@ def test_triad_history_section_backtick_in_reason_does_not_break_fence():
     assert "abc123" in result
 
 
-def test_scope_history_section_backtick_in_reason_does_not_break_fence():
-    """Same fence-safety guarantee for scope_review copy of _build_review_history_section."""
+def test_brief_history_section_backtick_in_reason_does_not_break_fence():
+    """Same fence-safety guarantee as the two-part brief renders it."""
     reason_with_backticks = "See ```json\n{\"key\": \"value\"}\n``` for details"
     ob = _make_ob("def456", "security_issues", reason_with_backticks)
     result = scope_hist([], open_obligations=[ob])

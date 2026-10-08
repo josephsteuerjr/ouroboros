@@ -104,7 +104,6 @@ _PARENT_OWNED = (
     "_run_review_preflight_tests",
     "build_blocking_findings_json_section",
     "build_goal_section",
-    "build_scope_actor_record",
     "build_scope_section",
     "build_skill_host_context",
     "cached_prompt_blocks",

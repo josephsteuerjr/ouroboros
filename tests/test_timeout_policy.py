@@ -663,7 +663,6 @@ def test_commit_pending_retry_reconciles_same_paid_attempt(tmp_path, monkeypatch
                     "efforts": ["high"],
                     "slot_ids": ["slot_1"],
                 }},
-                [],
             )
             operation_id = run_ctx._review_reserved_operations[
                 "multi_model_review"

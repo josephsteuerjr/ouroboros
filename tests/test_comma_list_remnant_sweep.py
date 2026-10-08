@@ -66,7 +66,6 @@ _RETIRED_KEY_MENTION_ALLOWLIST = {
     ("ouroboros/review_model_routes.py", "OUROBOROS_REVIEW_MODELS"): ("derived env plane reader (get_review_models)", 1),
     ("ouroboros/review_model_routes.py", "OUROBOROS_SCOPE_REVIEW_MODELS"): ("derived env plane reader (get_scope_review_models)", 1),
     ("ouroboros/review_model_routes.py", "OUROBOROS_SCOPE_REVIEW_MODEL"): ("derived env plane reader (singular fallback)", 2),
-    ("ouroboros/tools/scope_review.py", "OUROBOROS_SCOPE_REVIEW_MODEL"): ("derived env plane reader (scope model fallback)", 1),
     # -- raw-dict tolerance: direct-provider and prior-default review/scope
     #    normalization over dicts fed directly (load_settings purges the keys
     #    first; ABI-10-commented).

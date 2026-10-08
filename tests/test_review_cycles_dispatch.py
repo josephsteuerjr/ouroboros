@@ -273,8 +273,8 @@ def _stage_cycle_harness(tmp_path, monkeypatch, *, fingerprint):
         emit_progress_fn=progress.append,
         _current_review_tool_name="commit_reviewed",
         _review_advisory=[],
-        _last_triad_models=[], _last_scope_model="",
-        _last_triad_raw_results=[], _last_scope_raw_result={},
+        _last_triad_models=[],
+        _last_triad_raw_results=[],
         _review_degraded_reasons=[],
     )
     monkeypatch.setattr(git_mod, "commit_review_contract_fingerprint", lambda: "cf-1")
@@ -288,22 +288,19 @@ def _stage_cycle_harness(tmp_path, monkeypatch, *, fingerprint):
 
 
 def _overflow_wave(dispatch):
-    """A wave whose BOTH sides land infra-blocked; ``dispatch`` controls
-    whether the (real) transport seam was reached before the refusal."""
+    """A wave that lands infra-blocked at assembly (no seat answered either part);
+    ``dispatch`` controls whether the (real) transport seam was reached before
+    the refusal."""
     from ouroboros.review_dispatch import stamp_review_paid_on_dispatch
-    from ouroboros.tools.scope_review import ScopeReviewResult
+    from ouroboros.review_ledger import CouplingOutcome
 
     def _wave(ctx, commit_message, **kwargs):
         if dispatch:
             stamp_review_paid_on_dispatch(ctx)  # simulate the route-executor seam
         ctx._last_review_block_reason = "fixed_overflow"
         ctx._last_review_critical_findings = []
-        scope = ScopeReviewResult(
-            blocked=True,
-            block_message="⚠️ SCOPE_REVIEW_BLOCKED: pack did not assemble.",
-            status="fixed_overflow",
-        )
-        return "⚠️ REVIEW_BLOCKED: prompt cannot fit.", scope, "fixed_overflow", []
+        coupling = CouplingOutcome(blocked=True, status="fixed_overflow")
+        return "⚠️ REVIEW_BLOCKED: prompt cannot fit.", coupling, "fixed_overflow", []
 
     return _wave
 

@@ -692,7 +692,11 @@ def scan_data_paths(root: pathlib.Path = REPO) -> frozenset[str]:
 # 345 -> 347 (2026-10-07): the isolated review checkout of a frozen review subject,
 # ``state/review_checkouts/<token>`` and its ``repo`` worktree
 # (``ouroboros/tools/review_subject.py`` ``isolated_checkout``; one section-4 row).
-EXPECTED_SCAN_PATHS = 347
+# 347 -> 346 (2026-10-08): the scope-delivery migration disclosure
+# ``state/scope_delivery_migration.json`` is gone with the scope role — the one
+# brief has two parts and no separate scope wave to migrate (its PERSISTENCE.md row
+# was removed with the writer).
+EXPECTED_SCAN_PATHS = 346
 
 # Scanned paths that must always be present — guards the scanner itself
 # against a silent regression that would shrink coverage while keeping counts

@@ -326,6 +326,10 @@ async def _multi_model_review_async(content: str, prompt: str,
     row_ids = _row_vector("slot_ids", lambda idx: _rev().slot_id_for_row(idx + 1))
     row_actors = _row_vector("subagent_ids", lambda idx: "")
     row_local = _row_vector("use_local", lambda idx: None)
+    # One brief per seat (PR-3 B): a retrieving row carries ITS OWN two-part
+    # brief and answer policy; an absent entry keeps the shared task/policy.
+    row_tasks = _row_vector("session_tasks", lambda idx: "")
+    row_policies = _row_vector("session_policies", lambda idx: None)
     # Pack assembly follows the RETRIEVES class, not the route name: a native
     # api row retrieves with its own tools and must never trigger (or be counted
     # into) the assembled pack. The class is the plan's explicit ``retrieves``
@@ -365,10 +369,10 @@ async def _multi_model_review_async(content: str, prompt: str,
     llm_client = _rev().LLMClient()
     tasks = [
         _query_model(llm_client, m, messages, semaphore, ctx, slot_id=row_ids[idx],
-                     route=row_routes[idx], session_task=session_task, session_root=session_root,
+                     route=row_routes[idx], session_task=row_tasks[idx] or session_task, session_root=session_root,
                      effort=row_efforts[idx], session_target=row_targets[idx],
                      session_profile=row_profiles[idx], surface=surface,
-                     session_policy=session_policy, usage_attribution=usage_attribution,
+                     session_policy=row_policies[idx] or session_policy, usage_attribution=usage_attribution,
                      retry_key=retry_key, subagent_id=row_actors[idx], use_local=row_local[idx], task_evidence=task_evidence,
                      resolved_wave_id=fan_out_wave,
                      native_retrieval=row_retrieves[idx] and row_routes[idx] is ReviewRouteKind.API_CHAT)

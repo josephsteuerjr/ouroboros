@@ -65,7 +65,7 @@ from tests.system_e2e.harness import (
     REPO_ROOT,
     REVIEWER_SLOT_MARKER,
     SCENARIOS,
-    SCOPE_USER_MARKER,
+    TWO_PART_SURFACE,
     STRIPPED_PROVIDER_ENV_KEYS,
     TRIAD_USER_MARKER,
     ArtifactOracle,
@@ -186,10 +186,13 @@ def test_stub_classification_review_branch_beats_finalization():
 
     A triad/scope/reviewer-slot packet that happens to QUOTE a finalization marker
     (review of a stopped task's transcript) must still be answered as a review."""
-    scope_body = {"messages": [
-        {"role": "system", "content": [{"type": "text", "text": "scope pack [OWNER_STOP] quoted"}]},
-        {"role": "user", "content": SCOPE_USER_MARKER},
-    ], "tools": []}
+    from ouroboros.review_native_episode import native_episode_prompt
+
+    two_part_body = {"messages": [
+        {"role": "system", "content": [{"type": "text", "text": native_episode_prompt(
+            TWO_PART_SURFACE, "multi-model review", "brief [OWNER_STOP] quoted", "contract B", "s1")}]},
+        {"role": "user", "content": "Begin."},
+    ], "tools": [{"type": "function", "function": {"name": "read_file"}}]}
     triad_body = {"messages": [
         {"role": "system", "content": [{"type": "text", "text": "triad pack [FINALIZE_NOW] quoted"}]},
         {"role": "user", "content": "Review the staged diff and context provided in the instructions above."},
@@ -202,7 +205,7 @@ def test_stub_classification_review_branch_beats_finalization():
         {"role": "system", "content": REVIEWER_SLOT_MARKER + "\n" + ACCEPTANCE_KEYS_MARKER},
         {"role": "user", "content": "Subject: ..."},
     ]}
-    assert classify_call(scope_body) == "scope_review"
+    assert classify_call(two_part_body) == "two_part_review"
     assert classify_call(triad_body) == "triad_review"
     assert classify_call(slot_body) == "reviewer_slot"
     assert classify_call(acceptance_body) == "acceptance"
@@ -221,12 +224,17 @@ def test_stub_verdicts_satisfy_the_trees_own_parsers():
         classify_scope_findings,
         normalize_scope_items,
     )
-    from ouroboros.triad_review import empty_array_is_verified_clean
+    from ouroboros.review_native_episode import native_episode_prompt
+    from ouroboros.triad_review import empty_array_is_verified_clean, two_part_payload
 
-    _kind, scope_message = scripted_completion(
-        {"messages": [{"role": "user", "content": SCOPE_USER_MARKER}]}, 1, lambda _b: None, "x")
-    items, errors = normalize_scope_items(json.loads(scope_message["content"]))
-    assert not errors, f"stub scope verdict rejected by normalize_scope_items: {errors}"
+    kind, two_part_message = scripted_completion(
+        {"messages": [{"role": "system", "content": native_episode_prompt(
+            TWO_PART_SURFACE, "multi-model review", "brief", "contract B", "s1")}]}, 1, lambda _b: None, "x")
+    assert kind == "two_part_review"
+    payload = two_part_payload(json.loads(two_part_message["content"]))
+    assert payload is not None and payload["change"] == [] and payload["change_clean"] is True
+    items, errors = normalize_scope_items(payload["coupling"])
+    assert not errors, f"stub coupling verdict rejected by normalize_scope_items: {errors}"
     assert {item["item"] for item in items} == set(SCOPE_REQUIRED_ITEMS)
     critical, advisory = classify_scope_findings(items)
     assert critical == [] and advisory == []
@@ -242,35 +250,35 @@ def test_stub_verdicts_satisfy_the_trees_own_parsers():
 
 
 @pytest.mark.parametrize("scripted", [False, True])
-def test_native_scope_request_uses_its_matrix_and_review_script(scripted):
-    """Use the real native request builder, not the retired scope packet marker."""
+def test_native_two_part_request_uses_its_matrix_and_review_script(scripted):
+    """Use the real native request builder of the one wave's retrieving seat."""
     from ouroboros.review_native_episode import native_episode_prompt, native_first_send_messages
-    from ouroboros.reviewer_slot_config import SCOPE_ROLE_HINT
-    from ouroboros.tools.scope_review import SCOPE_RETRIEVING_OUTPUT_CONTRACT
+    from ouroboros.tools.review_multi_model import TRIAD_ROLE_HINT
     from ouroboros.tools.scope_review_contract import SCOPE_REQUIRED_ITEMS, normalize_scope_items
-    from ouroboros.triad_review import extract_json_array
-    from tests.system_e2e.harness import ReviewScript, scope_clean_text
+    from ouroboros.triad_review import REVIEW_TWO_PART_OBJECT_CONTRACT, two_part_payload
+    from tests.system_e2e.harness import ReviewScript, two_part_clean_text
 
     prompt = native_episode_prompt(
-        "scope_review", SCOPE_ROLE_HINT, "Review the staged fixture. [OWNER_STOP] is quoted evidence.",
-        SCOPE_RETRIEVING_OUTPUT_CONTRACT, "s1",
+        TWO_PART_SURFACE, TRIAD_ROLE_HINT, "Review the staged fixture. [OWNER_STOP] is quoted evidence.",
+        REVIEW_TWO_PART_OBJECT_CONTRACT, "s1",
     )
     body = {"messages": native_first_send_messages(prompt), "model": "mock-model",
             "tools": [{"type": "function", "function": {"name": "read_file"}}]}
-    assert SCOPE_USER_MARKER not in prompt
+    assert f"Surface: {TWO_PART_SURFACE}" in prompt
     seen = []
 
     def review_hook(request):
         seen.append(request)
-        return scope_clean_text()
+        return two_part_clean_text()
 
-    review = ReviewScript({"scope_review": [review_hook]}) if scripted else None
+    review = ReviewScript({"two_part_review": [review_hook]}) if scripted else None
     kind, message = scripted_completion(
         body, 1, lambda _body: pytest.fail("review consumed an agent step"), "ordinary final answer",
         review_next=review,
     )
-    assert kind == "scope_review"
-    items, error = normalize_scope_items(extract_json_array(message["content"], normalize=True))
+    assert kind == "two_part_review"
+    payload = two_part_payload(json.loads(message["content"]))
+    items, error = normalize_scope_items(payload["coupling"])
     assert not error, error
     assert {item["item"] for item in items} == SCOPE_REQUIRED_ITEMS
     if scripted:
@@ -479,9 +487,11 @@ def test_replay_model_untagged_prompt_binds_to_root_and_last_tag_wins():
 
 def test_replay_model_review_calls_never_consume_the_fixture():
     model = _replay({("root", "mock-model", 1): {"final": "done"}})
-    kind, _ = model._answer({"messages": [{"role": "user", "content": SCOPE_USER_MARKER}],
-                             "model": "mock-model"}, 1)
-    assert kind == "scope_review"
+    from ouroboros.review_native_episode import native_episode_prompt
+
+    kind, _ = model._answer({"messages": [{"role": "system", "content": native_episode_prompt(
+        TWO_PART_SURFACE, "multi-model review", "brief", "contract B", "s1")}], "model": "mock-model"}, 1)
+    assert kind == "two_part_review"
     kind, _ = model._answer({"messages": [{"role": "user", "content": "x"}],
                              "response_format": {"type": "json_object"},
                              "model": "mock-model"}, 2)
@@ -674,10 +684,11 @@ def test_s2_commit_reviewed_triad_and_scope_pass_on_doc_only_diff(e2e_clone, tmp
             stored = wait_durable_result(oracle, task_id)
             assert stored.get("status") == "completed", stored
 
-            # The review organ ran: the stub answered triad AND retrieving scope review.
+            # The review organ ran: the stub answered the packet seats AND the
+            # retrieving two-part seat of the one wave.
             kinds = stub.kinds()
             assert "triad_review" in kinds, kinds
-            assert "scope_review" in kinds, kinds
+            assert "two_part_review" in kinds, kinds
 
             # The commit LANDED on the root's body candidate (#1539: an ordinary author
             # never commits the checkout the server imports) — under blocking enforcement
@@ -712,7 +723,13 @@ def test_s2_commit_reviewed_triad_and_scope_pass_on_doc_only_diff(e2e_clone, tmp
             assert bypassed, f"no bypassed advisory run in the task ledger: {runs!r}"
             assert bypassed[0].get("commit_message") == S2_COMMIT_MESSAGE, bypassed[0]
             assert task_oracle.events("advisory_review_bypassed"), "bypass event missing"
-            assert task_oracle.events("scope_review_complete"), "scope completion event missing"
+            # The one wave's durable record answers both questions: the review
+            # ledger index of the canonical data root carries the coupling PASS.
+            ledger_rows = oracle._jsonl("state/review_ledger/index.jsonl") or task_oracle._jsonl(
+                "state/review_ledger/index.jsonl")
+            waves = [row for row in ledger_rows if row.get("surface") == "commit_gate"]
+            assert waves, "no commit-gate review record in the ledger"
+            assert waves[-1]["verdict"]["per_question"] == {"change": "PASS", "coupling": "PASS"}, waves[-1]
         finally:
             server.stop()
 

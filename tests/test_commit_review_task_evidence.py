@@ -372,9 +372,14 @@ def test_session_copy_lifetime_follows_existing_review_custody(evidence_context,
 
 
 @pytest.mark.parametrize("delivery", ["native", "session"])
-def test_scope_request_preserves_selected_source(evidence_context, monkeypatch, delivery):
-    from ouroboros.tools import scope_review
-    from ouroboros.review_records import ReviewRouteKind, ReviewSlot
+def test_retrieving_seat_request_preserves_selected_source(evidence_context, monkeypatch, delivery):
+    """A retrieving seat of the one wave (native episode or hosted session)
+    carries the frozen task-execution evidence in its request; only the native
+    episode gets the data root to page it from."""
+    import asyncio
+
+    from ouroboros.review_records import ReviewRouteKind
+    from ouroboros.tools.review_multi_model import _query_model
     import ouroboros.review_substrate as substrate
 
     ctx = evidence_context
@@ -387,12 +392,11 @@ def test_scope_request_preserves_selected_source(evidence_context, monkeypatch, 
         captured.append(request)
         return SimpleNamespace(actors=[{"status": "ok", "raw_text": "[]", "usage": {}}])
     monkeypatch.setattr(substrate, "run_review_request", receive)
-    monkeypatch.setattr(scope_review, "scope_reviewer_slots", lambda *a, **kw: [ReviewSlot(slot_id="scope", model="fixture")])
-    monkeypatch.setattr(scope_review, "_scope_window", lambda *a, **kw: SimpleNamespace(sizing_window=lambda *a: 1000000))
-    scope_review._call_scope_llm("packet", ctx=ctx, scope_model="fixture", slot_id="scope",
-                                route=ReviewRouteKind.AGENT_SESSION if delivery == "session" else ReviewRouteKind.API_CHAT,
-                                session_root=str(ctx.repo_dir), session_task="review",
-                                subagent_id="native" if delivery == "native" else "", task_evidence=evidence)
+    asyncio.run(_query_model(
+        None, "fixture", [], asyncio.Semaphore(1), ctx, slot_id="seat",
+        route=ReviewRouteKind.AGENT_SESSION if delivery == "session" else ReviewRouteKind.API_CHAT,
+        session_root=str(ctx.repo_dir), session_task="two-part brief",
+        native_retrieval=delivery == "native", task_evidence=evidence, use_local=False))
     request = captured[0]
     assert request.evidence["task_execution"] == evidence
     assert evidence["source_ref"] in request.evidence_refs
@@ -455,9 +459,8 @@ def test_pending_preflight_selection_survives_reconciliation_then_stage_dispatch
     evidence_context, monkeypatch, recorded, current_trace,
 ):
     from ouroboros.review_state import AdvisoryRunRecord, compute_snapshot_hash, make_repo_key, update_state
-    from ouroboros.tools import claude_advisory_review as advisory, git, preflight_review_run as preflight, scope_review
+    from ouroboros.tools import claude_advisory_review as advisory, git, preflight_review_run as preflight
     from ouroboros.tools.review_multi_model import _query_model
-    from ouroboros.review_records import ReviewSlot
     import ouroboros.review_substrate as substrate
 
     ctx = evidence_context
@@ -506,18 +509,19 @@ def test_pending_preflight_selection_survives_reconciliation_then_stage_dispatch
         sent.append((request.surface, request.evidence.get("task_execution", {}).get("source_ref", {})))
         return SimpleNamespace(actors=[{"status": "ok", "raw_text": "[]", "usage": {}}])
     monkeypatch.setattr(substrate, "run_review_request", receive)
-    monkeypatch.setattr(scope_review, "scope_reviewer_slots", lambda *a, **kw: [ReviewSlot(slot_id="scope", model="fixture")])
-    monkeypatch.setattr(scope_review, "_scope_window", lambda *a, **kw: SimpleNamespace(sizing_window=lambda *a: 1000000))
     def dispatch(_ctx, *args, **kwargs):
+        # One wave: a packet seat and a retrieving two-part seat.
         asyncio.run(_query_model(None, "fixture", [{"role": "user", "content": "packet"}], asyncio.Semaphore(1),
                                  _ctx, task_evidence=_ctx._commit_review_evidence, use_local=False))
-        scope_review._call_scope_llm("packet", ctx=_ctx, scope_model="fixture", slot_id="scope",
-                                    task_evidence=_ctx._commit_review_evidence)
+        asyncio.run(_query_model(None, "fixture", [], asyncio.Semaphore(1), _ctx, slot_id="slot_2",
+                                 native_retrieval=True, session_task="two-part brief", session_root=str(_ctx.repo_dir),
+                                 task_evidence=_ctx._commit_review_evidence, use_local=False))
         return None, None, "", []
     monkeypatch.setattr(git, "_run_parallel_review", dispatch)
     outcome = git._run_reviewed_stage_cycle(ctx, "candidate", time.time(), paths=["README.md"], require_release_tag=False)
     assert outcome["status"] == "passed", outcome
-    assert sent == [(surface, frozen.get("source_ref", {})) for surface in ("preflight", "multi_model_review", "scope_review")]
+    assert sent == [(surface, frozen.get("source_ref", {}))
+                    for surface in ("preflight", "multi_model_review", "multi_model_review")]
     if not recorded:
         assert ctx._commit_review_evidence == {}
 

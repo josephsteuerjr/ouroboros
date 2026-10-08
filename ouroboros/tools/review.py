@@ -18,9 +18,8 @@ from ouroboros.owner_words import owner_words_text
 from ouroboros.review_substrate import SLOT_ID_PREFIX, TYPED_FAILURE_FACT_KEYS, slot_id_for_row  # noqa: F401 -- facade import surface; leaves read it through the call-time handle
 from ouroboros.tools.registry import ToolEntry, ToolContext
 from ouroboros.triad_review import (
-    REVIEW_JSON_ARRAY_CONTRACT,
+    REVIEW_JSON_ARRAY_CONTRACT,  # noqa: F401 -- facade import surface (tests and leaves read it here)
     extract_json_array,
-    parse_model_review_results,
     review_query_error_payload as _review_query_error_payload,  # noqa: F401 -- facade import surface; leaves read it through the call-time handle
 )
 from ouroboros.tools.review_response import (
@@ -47,9 +46,9 @@ from ouroboros.tools.review_helpers import (
     build_scope_section,
     review_drive_root,  # noqa: F401 -- facade import surface; leaves read it through the call-time handle
     build_rebuttal_section,
-    CRITICAL_FINDING_CALIBRATION,
-    anti_pattern_lock_guard,
-    review_preamble,
+    CRITICAL_FINDING_CALIBRATION,  # noqa: F401 -- facade import surface (devtools/measure_review_pack.py reads the packet parts here)
+    anti_pattern_lock_guard,  # noqa: F401 -- facade import surface (same)
+    review_preamble,  # noqa: F401 -- facade import surface (same)
     build_self_verification_template,
     build_review_history_section as _build_review_history_section,
     calibrated_input_token_limit,  # noqa: F401 — patchable seam (see note above)
@@ -508,67 +507,12 @@ def _load_checklist_section(layer: str = "body") -> str:
     return section
 
 
-# The triad prompt is assembled STABLE-FIRST for provider prompt caching:
-# fixed instructions plus the tier-1 governance rules (the layered Change Review
-# Checklist, the standing disclosures, and BIBLE.md through the constitutional head) form a
-# byte-stable prefix reused across review rounds AND across commits (marked with
-# a cache breakpoint at dispatch). The change-class governance selection
-# (`tools/governance_context.py` tiers 2 and 3) and the navigation maps open the
-# dynamic tail, ahead of goal/scope/files/diff/history.
-_REVIEW_PROMPT_TEMPLATE_STABLE = """\
-{preamble}
-
-## Review instructions
-
-Read the staged diff and the supplied post-change file context (both appear
-AFTER the governance documents below). On very large changes, the fit note may
-replace duplicated full-file snapshots with a path manifest; in that case the
-complete added/deleted lines remain in the staged diff. Review every checklist
-item, report every distinct current problem, and make every FAIL actionable
-with file/symbol evidence and a concrete remedy — deleting a mechanism or
-disclosing a residual are remedies too.
-
-{critical_calibration}
-
-{json_contract}
-
-If an open obligation record below already names an `obligation_id` for this root cause,
-reuse that exact `obligation_id`. Do NOT invent a new id when the same root cause persists.
-
-## Anti pattern-lock guard
-
-Run the shared semantic-breadth guard before returning:
-{anti_pattern_lock_guard}
-
-{checklist_section}
-
-- Output ONLY a valid JSON array.  No markdown fences, no text outside the JSON.
-
-The governance documents this change activates follow below, then its evidence.
-Navigation maps identify sources not delivered to this tool-free packet row;
-state uncertainty where the supplied evidence cannot establish a rule.
-"""
-
-_REVIEW_PROMPT_TEMPLATE_DYNAMIC = """\
-{goal_section}
-
-{scope_section}
-
-## Current touched files (full content)
-
-{current_files_section}
-
-## Staged diff
-
-{diff_text}
-
-## Changed files
-
-{changed_files}
-
-{rebuttal_section}{review_history_section}
-{task_evidence_section}
-"""
+# The packet prompt's templates live with the brief builders (one brief, two
+# parts); the module-level names stay importable and patchable here.
+from ouroboros.tools.review_admission import (  # noqa: E402, F401 -- intentional public re-exports
+    PACKET_TEMPLATE_DYNAMIC as _REVIEW_PROMPT_TEMPLATE_DYNAMIC,
+    PACKET_TEMPLATE_STABLE as _REVIEW_PROMPT_TEMPLATE_STABLE,
+)
 
 
 def _parse_review_json(raw: str) -> Optional[list]:
@@ -790,8 +734,17 @@ def _record_advisory_override(ctx: ToolContext, blocked_msg: str) -> None:
         log.warning("Failed to persist advisory override visibility", exc_info=True)
 
 
-def _collect_review_findings(ctx: ToolContext, model_results: list) -> tuple[list[str], list[str], list[str], list[dict]]:
-    parsed = parse_model_review_results({"results": model_results})
+def _collect_review_findings(ctx: ToolContext, model_results: list, row_plan: Optional[dict] = None) -> tuple[list[str], list[str], list[str], list[dict]]:
+    """Parse every seat's answer by the parts it was asked (contract A for a
+    packet seat, contract B for a seat asked ``coupling``) and sort the FAIL
+    items into critical/advisory findings. Returns ``(critical_fails,
+    advisory_warns, errored_models, triad_raw_results)``."""
+    from ouroboros.triad_review import parse_seat_answers
+
+    plan = row_plan or {}
+    slot_ids, parts_vec = list(plan.get("slot_ids") or []), list(plan.get("parts") or [])
+    row_parts = {str(slot_ids[i]): tuple(parts_vec[i]) for i in range(min(len(slot_ids), len(parts_vec)))}
+    parsed = parse_seat_answers({"results": model_results}, row_parts)
     critical_fails: List[str] = []
     advisory_warns: List[str] = []
     structured_critical: List[dict] = []
@@ -839,19 +792,26 @@ def _collect_review_findings(ctx: ToolContext, model_results: list) -> tuple[lis
                 model=record.model_id,
             ))
             continue
-        for item in record.parsed_items:
-            if str(item.get("verdict", "")).upper() != "FAIL":
+        if record.status != "responded":
+            continue
+        for part, answer in (record.answers or {}).items():
+            if answer.get("status") != "responded":
+                if answer.get("error"):
+                    advisory_warns.append(f"[{record.model_id}] Part '{part}' unanswered: {answer['error']}")
                 continue
-            desc = f"[{record.model_id}] {item.get('item', '?')}: {item.get('reason', '')}"
-            target = structured_critical if item.get("severity") == "critical" else structured_advisory
-            target.append(_review_entry(
-                severity="critical" if target is structured_critical else "advisory",
-                item=str(item.get("item", "?")),
-                reason=str(item.get("reason", "")),
-                model=record.model_id,
-                obligation_id=str(item.get("obligation_id", "") or ""),
-            ))
-            (critical_fails if target is structured_critical else advisory_warns).append(desc)
+            for item in answer.get("findings") or []:
+                if str(item.get("verdict", "")).upper() != "FAIL":
+                    continue
+                desc = f"[{record.model_id}] {item.get('item', '?')}: {item.get('reason', '')}"
+                target = structured_critical if item.get("severity") == "critical" else structured_advisory
+                target.append(_review_entry(
+                    severity="critical" if target is structured_critical else "advisory",
+                    item=str(item.get("item", "?")),
+                    reason=str(item.get("reason", "")),
+                    model=record.model_id,
+                    obligation_id=str(item.get("obligation_id", "") or ""),
+                ))
+                (critical_fails if target is structured_critical else advisory_warns).append(desc)
 
     ctx._last_review_critical_findings = structured_critical
     ctx._last_review_advisory_findings = structured_advisory
@@ -1067,6 +1027,19 @@ def _review_history_with_open_obligations(ctx: ToolContext, frozen: Any) -> str:
     return _build_review_history_section(ctx._review_history, open_obligations=open_obligations)
 
 
+def _gate_governance_root(ctx: ToolContext) -> pathlib.Path:
+    """The installed body governs the gate's subject: a project-aware context
+    (serving/system repo, or a workspace) names it apart from the repository it
+    commits — ``review_substrate.review_repo_dirs_for``'s first root — and an
+    ambiguous workspace is refused there (a fail-closed assembly block); a plain
+    context governs itself."""
+    from ouroboros.review_substrate import review_repo_dirs_for
+
+    project_aware = getattr(ctx, "workspace_root", None) is not None or bool(
+        getattr(ctx, "serving_repo_dir", None) or getattr(ctx, "system_repo_dir", None))
+    return review_repo_dirs_for(ctx)[0] if project_aware else pathlib.Path(ctx.repo_dir)
+
+
 def _prepare_unified_review(ctx: ToolContext, commit_message: str,
                             review_rebuttal: str = "",
                             repo_dir=None,
@@ -1086,7 +1059,7 @@ def _prepare_unified_review(ctx: ToolContext, commit_message: str,
     frozen = subject
     layer = str(frozen.spec.layer or "body") if frozen is not None else "body"
     target_repo = frozen.review_root if frozen is not None else (repo_dir or ctx.repo_dir)
-    governance_root = pathlib.Path(frozen.spec.governance_root) if frozen is not None else pathlib.Path(ctx.repo_dir)
+    governance_root = pathlib.Path(frozen.spec.governance_root) if frozen is not None else _gate_governance_root(ctx)
     # The core layer indexes the SUBJECT's own documents where the reviewers read
     # them (the isolated checkout of a base..head subject); the body layer's
     # navigation is the body's own and names no subject root.
@@ -1156,9 +1129,14 @@ def _prepare_unified_review(ctx: ToolContext, commit_message: str,
     # receive a packet at all, and their windows size its governance share.
     from ouroboros.review_execution import ReviewRouteKind
     from ouroboros.reviewer_slot_config import commit_triad_delivery, row_plan_retrieves
+    from ouroboros.tools.review_admission import (
+        assemble_packet_prompt, fold_coupling_only_seats, prepare_retrieving_seats,
+    )
 
     try:
-        row_plan = commit_triad_delivery()
+        # TRANSITIONAL: rows still configured under the old scope role join the
+        # one wave as coupling-only seats (explicit read, never fail-open).
+        row_plan = fold_coupling_only_seats(commit_triad_delivery())
     except ValueError as exc:
         ctx._last_review_block_reason = "infra_failure"
         return None, _handle_review_block_or_warning(
@@ -1226,36 +1204,19 @@ def _prepare_unified_review(ctx: ToolContext, commit_message: str,
         task_evidence = materialize_commit_review_session_view(task_evidence, target_repo)
         ctx._commit_review_evidence = task_evidence
     task_evidence_compact = False
-    goal_section = build_goal_section(goal, scope, commit_message, owner_words_text(ctx))
+    owner_words = owner_words_text(ctx)
+    goal_section = build_goal_section(goal, scope, commit_message, owner_words)
     scope_section = build_scope_section(scope)
 
-    # The change-class governance block opens the DYNAMIC half: tier 1 stays in
-    # the cache-marked prefix (byte-stable across commits), the selection and the
-    # navigation maps travel with the change they were chosen for.
-    governance_tail = "\n\n".join(
-        part for part in (governance.selected_inline, governance.navigation) if part.strip())
-
     def _assemble_prompt(files_section: str, staged_diff: str) -> tuple:
-        """Return (prompt, stable_prefix_len): the stable governance prefix is
-        byte-identical across rounds and becomes the cache-marked block."""
-        stable = _REVIEW_PROMPT_TEMPLATE_STABLE.format(
-            preamble=review_preamble(layer),
-            critical_calibration=CRITICAL_FINDING_CALIBRATION,
-            json_contract=REVIEW_JSON_ARRAY_CONTRACT,
-            anti_pattern_lock_guard=anti_pattern_lock_guard(layer),
-            checklist_section=checklist_section,
-        ) + (f"\n{governance.stable_inline}\n" if governance.stable_inline.strip() else "")
-        dynamic = (f"{governance_tail}\n\n" if governance_tail else "") + _REVIEW_PROMPT_TEMPLATE_DYNAMIC.format(
-            goal_section=goal_section,
-            scope_section=scope_section,
-            current_files_section=files_section,
-            rebuttal_section=rebuttal_section,
+        """Return (prompt, stable_prefix_len) — the packet seat's Part-1 prompt."""
+        return assemble_packet_prompt(
+            layer=layer, checklist_section=checklist_section, governance=governance,
+            goal_section=goal_section, scope_section=scope_section, files_section=files_section,
+            diff_text=staged_diff, changed_files=review_changed, rebuttal_section=rebuttal_section,
             review_history_section=review_history_section,
-            diff_text=staged_diff,
-            changed_files=review_changed,
             task_evidence_section=commit_review_evidence_section(task_evidence, delivery="packet", compact=task_evidence_compact),
         )
-        return stable + "\n" + dynamic, len(stable) + 1
 
     def _compact_task_evidence():
         nonlocal task_evidence_compact
@@ -1264,7 +1225,7 @@ def _prepare_unified_review(ctx: ToolContext, commit_message: str,
         _assemble_prompt.compact_optional_evidence = _compact_task_evidence
 
     # P3 stays one-pass. The api pack, its fit ladder and the fixed_overflow
-    # gate exist ONLY for the api rows (5.2/5.7): a session row retrieves with
+    # gate exist ONLY for the api rows (5.2/5.7): a retrieving row reads with
     # its own tools, so it neither constrains the fit limit nor is blocked by
     # it, and a panel with no api rows skips pack assembly entirely.
     prompt, stable_prefix_len = "", 0
@@ -1282,9 +1243,9 @@ def _prepare_unified_review(ctx: ToolContext, commit_message: str,
             session_count = len(models) - len(api_models)
             if session_count >= _cfg.adaptive_quorum(len(models)):
                 # Q28-A: packet limits gate only the api subset. Enough
-                # agent-session rows remain for the quorum, so the api rows are
+                # retrieving rows remain for the quorum, so the api rows are
                 # DROPPED (recorded loudly, never silent) and the panel proceeds
-                # on session delivery alone.
+                # on retrieving delivery alone.
                 from ouroboros.tools.review_admission import (
                     drop_api_rows,
                     triad_not_dispatched_records,
@@ -1295,7 +1256,7 @@ def _prepare_unified_review(ctx: ToolContext, commit_message: str,
                 ctx._triad_withheld_seat_records = triad_not_dispatched_records(
                     row_plan,
                     "Q28-A oversize drop: this api seat could not receive the "
-                    "irreducible packet; the panel's agent-session rows "
+                    "irreducible packet; the panel's retrieving rows "
                     "satisfied the quorum without it ($0 spent).", only_api=True)
                 row_plan = drop_api_rows(row_plan)
                 models, row_routes = row_plan["models"], row_plan["routes"]
@@ -1303,7 +1264,7 @@ def _prepare_unified_review(ctx: ToolContext, commit_message: str,
                 note = (
                     f"triad_api_rows_dropped_oversize_pack: {len(api_models)} api row(s) "
                     f"({', '.join(api_models)}) could not receive the irreducible packet; "
-                    f"{session_count} agent-session row(s) satisfy the quorum and proceed"
+                    f"{session_count} retrieving row(s) satisfy the quorum and proceed"
                 )
                 ctx._review_degraded_reasons.append(note)
                 log.warning("%s", note)
@@ -1317,34 +1278,23 @@ def _prepare_unified_review(ctx: ToolContext, commit_message: str,
                 ctx._last_review_block_reason = "fixed_overflow"
                 return None, fit_error, True
 
-    session_task = ""
-    session_governance = None
-    if len(api_models) < len(models):
-        retrieving_indices = [i for i in range(len(models)) if i not in api_indices]
-        if not api_models:  # Packet seats may have yielded to the retrieving quorum.
-            retrieving_indices = list(range(len(models)))
-        retrieving_slots = [ReviewSlot(
-            slot_id=row_plan["slot_ids"][i], model=models[i], route=row_routes[i],
-            session_profile=row_plan["session_profiles"][i], use_local=row_plan["use_local"][i],
-            native_retrieval_override=True if row_plan_retrieves(row_plan, i) else None)
-            for i in retrieving_indices]
-        session_governance = _triad_governance_context(
-            ctx, touched_paths, checklist_section,
-            [models[i] for i in retrieving_indices], retrieving_slots, delivery="retrieving",
-            governance_root=governance_root, layer=layer, subject_root=subject_root)
-        session_task = _triad_session_task(
-            ctx,
-            governance_root=governance_root,
-            goal_section=goal_section,
-            scope_section=scope_section,
-            checklist_section=checklist_section,
-            rebuttal_section=rebuttal_section,
-            review_history_section=review_history_section,
-            governance=session_governance,
-            subject=subject,
-            layer=layer,
-            subject_root=subject_root,
-        )
+    # Every retrieving seat receives ITS OWN two-part brief; one seat's missing
+    # context is the whole wave's typed assembly failure (one wave, $0 spent).
+    row_plan, retrieving_manifests, brief_texts, brief_failure = prepare_retrieving_seats(
+        ctx, row_plan, models, row_routes, target_repo=target_repo, governance_root=governance_root,
+        subject=subject, frozen=frozen, diff_text=diff_text, layer=layer, checklist_section=checklist_section,
+        commit_message=commit_message, goal=goal, scope=scope, review_rebuttal=review_rebuttal,
+        owner_words=owner_words, task_evidence=task_evidence)
+    if brief_failure is not None:
+        failed_slot, exc = brief_failure
+        ctx._last_review_block_reason = "infra_failure"
+        return None, _handle_review_block_or_warning(
+            ctx, blocking_review,
+            "⚠️ REVIEW_BLOCKED: Failed to build the review brief — commit blocked.\n"
+            f"Seat {failed_slot}: {exc}\n"
+            "Ensure git is available and the repository is in a valid state.",
+            "Review enforcement=Advisory: review brief assembly failed; an explicit author decision is required. ",
+        ), True
 
     # The governance manifest is the packet's disclosure record: which rules were
     # inlined, which arrived as navigation and why (BIBLE P1). It rides the
@@ -1354,12 +1304,13 @@ def _prepare_unified_review(ctx: ToolContext, commit_message: str,
     return {
         "prompt": prompt, "stable_prefix_len": stable_prefix_len,
         "models": models, "routes": row_routes, "row_plan": row_plan,
-        "session_task": session_task, "target_repo": target_repo,
+        "session_task": "", "target_repo": target_repo,
         "blocking_review": blocking_review, "task_evidence": task_evidence,
         "layer": layer,
         "governance_manifest": list(governance.manifest),
         "governance_packet_slots": [slot.slot_id for slot in api_slots],
-        "governance_retrieving_manifest": list(session_governance.manifest) if session_governance else [],
+        "retrieving_manifests": retrieving_manifests,
+        "brief_texts": brief_texts,
     }, None, False
 
 
@@ -1368,8 +1319,15 @@ def _review_actor_label(row: dict) -> str:
 
 
 def _dispatch_unified_review(ctx: ToolContext, commit_message: str, prepared: dict) -> Optional[str]:
-    """Dispatch an assembled triad packet and post-process the panel verdict."""
+    """Dispatch the one wave and post-process the panel verdict in the §1.7
+    order: NOT_DISPATCHED/pending → QUORUM_FAILED → NOT_PERFORMED (coupling)
+    → FAIL → PASS, through ``review_ledger.reduce_verdict`` — the same function
+    the durable record reduces with."""
+    from ouroboros.review_ledger import coupling_outcome, reduce_verdict, rows_from_plan
+
     blocking_review = prepared["blocking_review"] and review_enforcement_blocks("blocking")
+    ctx._last_review_verdict = {}
+    ctx._last_coupling_result = None
     try:
         result_json = _handle_multi_model_review(
             ctx,
@@ -1378,7 +1336,7 @@ def _dispatch_unified_review(ctx: ToolContext, commit_message: str, prepared: di
             models=prepared["models"],
             stable_prefix_len=prepared["stable_prefix_len"],
             routes=prepared["routes"],
-            session_task=prepared["session_task"],
+            session_task=prepared.get("session_task") or "",
             session_root=str(prepared["target_repo"]),
             row_plan=prepared["row_plan"],
             retry_key=str(prepared.get("retry_key") or ""),
@@ -1425,20 +1383,32 @@ def _dispatch_unified_review(ctx: ToolContext, commit_message: str, prepared: di
             ctx, blocking_review, blocked_msg,
             "Review enforcement=Advisory: no model results were received; an explicit author decision is required. ")
 
-    critical_fails, advisory_warns, errored_models, _triad_raw = _collect_review_findings(ctx, model_results)
+    critical_fails, advisory_warns, errored_models, _triad_raw = _collect_review_findings(
+        ctx, model_results, prepared.get("row_plan"))
     models_total = len(model_results)
     triad_raw = getattr(ctx, "_last_triad_raw_results", []) or []
     # Every delivery records which rules were actually inlined for that row.
     _governance_manifest = list(prepared.get("governance_manifest") or [])
     _packet_slots = set(prepared.get("governance_packet_slots") or [])
+    _retrieving = {str(m.get("slot_id") or ""): m for m in prepared.get("retrieving_manifests") or []}
     for record in triad_raw:
-        if _governance_manifest and record.get("slot_id") in _packet_slots:
+        slot_id = str(record.get("slot_id") or "")
+        if _governance_manifest and slot_id in _packet_slots:
             record["governance_manifest"] = _governance_manifest
-        elif prepared.get("governance_retrieving_manifest"):
-            record["governance_manifest"] = prepared["governance_retrieving_manifest"]
+        elif slot_id in _retrieving:
+            record["governance_manifest"] = list(_retrieving[slot_id].get("governance_manifest") or [])
+            record["brief_sha"] = (_retrieving[slot_id].get("sha") or {}).get("brief", "")
     pending_models = [_review_actor_label(r) for r in triad_raw if (
         r.get("late_result_pending") or str(r.get("operation_state") or "")
         in {"in_flight", "custody_lost"})]
+    rows = rows_from_plan(prepared.get("row_plan") or {}, prepared.get("routes") or [], triad_raw)
+    verdict = reduce_verdict(rows, pending=bool(pending_models))
+    ctx._last_review_verdict = verdict
+    ctx._last_coupling_result = coupling_outcome(verdict, rows)
+    # ``blocked`` is the gate's fact, not the verdict's: under the owner's
+    # advisory enforcement a FAIL on the coupling question is recorded and
+    # surfaced, and blocks nothing.
+    ctx._last_coupling_result.blocked = ctx._last_coupling_result.blocked and bool(blocking_review)
     if pending_models:
         ctx._last_review_block_reason = "review_late_result_pending"
         blocked_msg = ("⚠️ REVIEW_PENDING: Physical review operation(s) remain unresolved: "
@@ -1449,17 +1419,16 @@ def _dispatch_unified_review(ctx: ToolContext, commit_message: str, prepared: di
         )
         if pending_block is not None:
             return pending_block
-    successful_reviewers = sum(1 for r in triad_raw if r.get("status") == "responded")
     failed_actors = [
         _review_actor_label(r) for r in triad_raw
         if r.get("status") not in ("responded", "not_dispatched")]
-    required_quorum = _cfg.adaptive_quorum(models_total)
-    if successful_reviewers < required_quorum:
+    quorum = verdict["quorum"]
+    if verdict["aggregate"] == "QUORUM_FAILED":
         ctx._last_review_block_reason = "review_quorum"
         unavailable_str = ", ".join(failed_actors) if failed_actors else ", ".join(errored_models)
         blocked_msg = (
-            f"⚠️ REVIEW_BLOCKED: Only {successful_reviewers} of {models_total} review "
-            f"models responded successfully (minimum {required_quorum} required). "
+            f"⚠️ REVIEW_BLOCKED: Only {quorum['responded']} of {quorum['assigned']} review "
+            f"models responded successfully (minimum {quorum['required']} required). "
             f"Unavailable/failed: {unavailable_str}.\n"
             "Retry the commit — transient model failures usually resolve quickly."
         )
@@ -1488,6 +1457,24 @@ def _dispatch_unified_review(ctx: ToolContext, commit_message: str, prepared: di
             f"\n\nNote: {len(all_non_responded)} of {models_total} review models "
             f"were unavailable or failed to parse ({', '.join(all_non_responded)}). "
             f"Target is {models_total} working reviewers."
+        )
+
+    if verdict["aggregate"] == "NOT_PERFORMED":
+        # Quorum stands but the gate has no answer to count: nobody answered the
+        # coupling question, or no seat answered the change at all.
+        ctx._last_review_block_reason = str(verdict["reason"] or "review_not_performed")
+        asked = [str(s.get("seat_id") or "") for s in rows if "coupling" in (s.get("parts") or [])]
+        what = ("the coupling question (Part 2) was answered by no seat"
+                f" — asked of: {', '.join(asked) or 'no seat'}" if verdict["reason"] == "coupling_not_performed"
+                else "no seat answered the change (Part 1)")
+        blocked_msg = (
+            f"⚠️ REVIEW_BLOCKED: review NOT_PERFORMED — {what}.\n"
+            "The commit gate counts only a PASS/FAIL answer; retry the commit or configure a "
+            "retrieving reviewer seat (Settings → Agents → Review lanes)." + errored_note
+        )
+        return _handle_review_block_or_warning(
+            ctx, blocking_review, blocked_msg,
+            "Review enforcement=Advisory: review was not performed; an explicit author decision is required. ",
         )
 
     if critical_fails:

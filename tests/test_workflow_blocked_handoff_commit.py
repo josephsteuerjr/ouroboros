@@ -13,7 +13,7 @@ from ouroboros.review_state import load_state
 from ouroboros.task_results import load_task_result, write_task_result
 from ouroboros.tools import git
 from ouroboros.tools.registry import ToolContext
-from ouroboros.tools.scope_review import ScopeReviewResult
+from ouroboros.review_ledger import CouplingOutcome
 from tests.test_mutation_attribution import _git, _repo
 
 
@@ -103,8 +103,7 @@ def test_second_task_reviews_and_commits_only_explicitly_selected_correction(tmp
         ctx._last_review_critical_findings = [finding] if critical else []
         ctx._last_triad_raw_results = [{"slot_id": "critic", "status": "responded", "parsed": [finding],
                                        "raw_text": finding["reason"], "operation_state": "settled"}]
-        scope = ScopeReviewResult(blocked=False, status="responded", critical_findings=[])
-        ctx._last_scope_raw_result = {"status": "responded", "critical_findings": []}
+        scope = CouplingOutcome(verdict="PASS", status="responded")
         reviews.append({"task": ctx.task_id, "fingerprint": kw["review_binding_fingerprint"], "content": content})
         return ("Draft needs correction" if critical else None), scope, "critical_findings" if critical else "", []
 

@@ -250,14 +250,18 @@ def test_raw_advisory_applies_override_before_credentials_size_and_real_dispatch
     assert ledger(root)[-1]["state"] == "settled"
 
 
-def test_scope_reservation_and_send_use_prepared_profile_not_original_slot(setup, monkeypatch):
-    from ouroboros.tools import scope_review as scope, review_admission
+def test_retrieving_seat_sends_under_the_row_plan_profile_not_the_original_slot(setup, monkeypatch):
+    """The one wave dispatches each retrieving seat with the profile its row plan
+    carries (`session_profiles`), never the configured slot object's original
+    profile: the reservation, the catalog lookup and the pinned send all name
+    that account, and the seat's output reserve is scaled by THAT account's window."""
     from ouroboros.review_execution import ReviewRouteKind
     from ouroboros.tools.registry import ToolContext
+    from ouroboros.tools.review_multi_model import _query_model, _review_output_budget
+    from ouroboros.tools.scope_review_contract import SCOPE_REQUIRED_ITEMS
     from ouroboros import config
-    from tests.test_review_session_scope_wiring import _scope_matrix_rows
 
-    root, gateway, _client = setup
+    root, gateway, client = setup
     monkeypatch.setattr(config, "DATA_DIR", root)
     catalog_profiles = []
 
@@ -269,35 +273,27 @@ def test_scope_reservation_and_send_use_prepared_profile_not_original_slot(setup
 
     monkeypatch.setattr(LLMClient, "claudexor_model_catalog", staticmethod(catalog))
     original = ReviewSlot("scope-one", MODEL, session_profile="account-a")
-    prepared = {"scope_model_id": MODEL, "prompt": "", "stable_prefix_len": 0,
-                "context_manifest": {}, "session_task": "Review the staged change", "repo_dir": root,
-                "slot_id": "scope-one", "route": ReviewRouteKind.API_CHAT, "slot_effort": "high",
-                "session_target": "", "session_profile": "account-b", "delegated": False,
-                "subagent_id": "", "use_local": False,
-                "window_binding": {"model_role": "reviewer:scope-one", "credential_profile_id": "account-b"}}
-    seats = review_admission.commit_gate_paid_seats(None, True, [{"slot": original, "prepared": prepared}])
-    assert seats[0]["max_completion_tokens"] == 50_000
     completed = result(route={**ROUTE, "credentialProfileId": "account-b", "accountFingerprint": "fingerprint-b"})
-    completed["message"] = {"content": json.dumps(_scope_matrix_rows())}
+    matrix = [{"item": item, "verdict": "PASS", "severity": "advisory", "reason": "ok"} for item in sorted(SCOPE_REQUIRED_ITEMS)]
+    completed["message"] = {"content": json.dumps({"change": [], "change_clean": True, "coupling": matrix})}
     gateway.results = [completed]
-    call_usage = []
-    real_scope_call = scope._call_scope_llm
 
-    def observe_call(*args, **kwargs):
-        assert kwargs["session_profile"] == "account-b"
-        value = real_scope_call(*args, **kwargs)
-        call_usage.append(value[1])
-        return value
+    async def seat():
+        return await _query_model(client, MODEL, [], asyncio.Semaphore(1),
+                                  ToolContext(repo_dir=root, drive_root=root, task_id="task-one"),
+                                  slot_id=original.slot_id, route=ReviewRouteKind.API_CHAT, effort="high",
+                                  session_profile="account-b", native_retrieval=True,
+                                  session_task="Review the staged change", session_root=str(root))
 
-    monkeypatch.setattr(scope, "_call_scope_llm", observe_call)
-    actual = scope.run_scope_review(ToolContext(repo_dir=root, drive_root=root, task_id="task-one"), "Review", prepared=prepared,
-                                    session_profile="ignored-original")
-    # Window size no longer decides authority: the row answers on the account it
-    # was PREPARED with, and that account's profile is what gets pinned.
-    assert actual.status == "responded"
+    _model, payload, _extra = asyncio.run(seat())
+    # Window size no longer decides authority: the seat answers on the account
+    # its row was PREPARED with, and that account's profile is what gets pinned.
+    assert "error" not in payload and payload["choices"][0]["message"]["content"]
     assert gateway.uploads[0][0]["account"] == {"mode": "pin", "profileId": "account-b"}
     assert catalog_profiles and set(catalog_profiles) == {"account-b"}
-    assert actual.tokens_in == 20 and ledger(root)[-1]["state"] == "settled"
-    assert actual.prompt_ref  # The real substrate persisted its actual request.
-    assert call_usage[0]["claudexor"]["output_reserve_tokens"] == 50_000
+    assert payload["usage"]["prompt_tokens"] == 20 and ledger(root)[-1]["state"] == "settled"
+    assert payload["prompt_ref"]  # The real substrate persisted its actual request.
+    # Every seat of the one wave reserves the one review output budget
+    # (review_multi_model._review_output_budget), the retrieving seat included.
+    assert payload["usage"]["claudexor"]["output_reserve_tokens"] == _review_output_budget()
     assert original.session_profile == "account-a"
