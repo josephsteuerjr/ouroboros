@@ -37,6 +37,8 @@ export function panelFactsText(facts) {
         ...[['seats', 'seats'], ['distinct_models', 'distinct models'], ['distinct_engines', 'distinct engines']]
             .filter(([key]) => facts[key] !== undefined && facts[key] !== null)
             .map(([key, label]) => `${label}=${String(facts[key])}`),
+        // `seats` is the quorum's denominator; a critic added beside the pool is counted apart.
+        count(facts.additional_seats) ? `additional seats=${count(facts.additional_seats)}` : '',
         count(facts.observed_unknown_seats) ? `model not observed on ${count(facts.observed_unknown_seats)} seat(s)` : '',
         facts.single_model_panel ? 'one model on every seat (repeated runs, not independent reviewers)' : '',
     ].filter(Boolean);

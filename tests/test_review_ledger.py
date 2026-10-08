@@ -189,6 +189,28 @@ def test_panel_composition_facts_follow_the_author_not_the_seat_count():
     # three copies of one model are one distinct model, however many seats sat
     copies = rl.build_rows(_facts(_three(("openai/gpt-5",) * 3)))
     assert rl.panel_facts(copies)["distinct_models"] == 1 and rl.panel_facts(copies)["single_model_panel"] is True
+    assert (full["seats"], full["additional_seats"], full["additional"]) == (3, 0, []), "a plain pool has no added seat"
+
+
+def test_w3_panel_seats_count_the_assigned_seats_and_an_added_critic_apart(tmp_path):
+    """A critic the author added beside the pool is heard, not counted: ``panel.seats``
+    is the assigned count the quorum divides by, the added seat is ``additional_seats``,
+    and the quorum facts are the same as for the pool alone."""
+    raws = [*_three(), _raw("critic", "openai/gpt-5", parts=("coupling",), raw_text="matrix")]
+    plans = [_plan(r["slot_id"], r["model_id"], parts=r.get("parts") or CHANGE) for r in raws]
+    plans[3]["additional"] = True
+    with_critic = rl.build_commit_gate_record(_facts(raws, rows=plans)).to_dict()
+    alone = rl.build_commit_gate_record(_facts(_three())).to_dict()
+    panel = with_critic["panel"]
+    assert panel["seats"] == 3, "the added critic is not among the seats the quorum divides by"
+    assert panel["additional_seats"] == 1
+    assert panel["assigned"] == ["s1", "s2", "s3"] and panel["additional"] == ["critic"]
+    assert panel["distinct_models"] == 3 and panel["distinct_engines"] == alone["panel"]["distinct_engines"]
+    assert with_critic["verdict"]["quorum"] == alone["verdict"]["quorum"], "the denominator is the assigned seats'"
+    assert with_critic["verdict"]["quorum"]["required"] == 2 and with_critic["verdict"]["quorum"]["assigned"] == 3
+    assert with_critic["verdict"]["per_row"]["critic"] == "PASS", "the added seat's own answer is still recorded"
+    indexed = rl.index_row(tmp_path, with_critic)["panel"]
+    assert (indexed["seats"], indexed["additional_seats"]) == (3, 1)
 
 
 def test_unobserved_seat_is_unknown_never_a_distinct_model():

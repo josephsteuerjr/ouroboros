@@ -364,7 +364,7 @@ def index_row(drive_root: Any, payload: Dict[str, Any]) -> Dict[str, Any]:
         "subject": {k: subject.get(k) for k in ("root_kind", "kind", "base", "head", "tree_sha", "diff_sha")},
         "enforcement": payload.get("enforcement"),
         "verdict": {k: verdict.get(k) for k in ("aggregate", "per_question", "quorum", "degraded_reasons")},
-        "panel": {k: panel.get(k) for k in ("seats", "distinct_models", "distinct_engines", "single_model_panel")},
+        "panel": {k: panel.get(k) for k in ("seats", "additional_seats", "distinct_models", "distinct_engines", "single_model_panel")},
         "cost": payload.get("cost"), "dispatch_refusal": payload.get("dispatch_refusal"),
         "reuse_key": str((payload.get("fingerprints") or {}).get("reuse_key") or ""),
         "source_ref": {"kind": "review_ledger_record", "path": f"state/{LEDGER_SUBDIR}/{payload['record_id']}.json"},
@@ -494,7 +494,10 @@ def panel_facts(rows: List[Dict[str, Any]], *, composition: str = "full_pool", r
     sat) or ``composed`` (the author narrowed the pool and owes a reason);
     ``reason_missing`` is a fact only about a composed panel without one. Older
     records spelled the owner's whole pool ``configured``; readers treat it as
-    ``full_pool``."""
+    ``full_pool``. ``seats`` counts the ASSIGNED seats — the quorum's denominator
+    (``build_wave_record`` reduces over them); a critic the author added beside the
+    pool is ``additional_seats`` and never widens that count. The distinct-model and
+    engine facts describe everyone who sat."""
     handles = set()
     for seat in rows:
         try:
@@ -504,12 +507,13 @@ def panel_facts(rows: List[Dict[str, Any]], *, composition: str = "full_pool", r
     facts = distinct_model_facts(item.get("observed_model") for item in rows)
     composition = "full_pool" if str(composition or "") in ("", "configured") else str(composition)
     reason = str(reason or "")
-    return {"seats": len(rows), "distinct_models": facts["distinct_models"],
+    assigned = [str(seat.get("seat_id") or "") for seat in rows if not seat.get("additional")]
+    additional = [str(seat.get("seat_id") or "") for seat in rows if seat.get("additional")]
+    return {"seats": len(assigned), "additional_seats": len(additional), "distinct_models": facts["distinct_models"],
             "observed_unknown_seats": facts["observed_unknown_seats"], "distinct_engines": len(handles),
             "single_model_panel": facts["single_model_panel"], "composition": composition, "reason": reason,
             "reason_missing": composition == "composed" and not reason.strip(), "chosen_by": str(chosen_by or "owner"),
-            "assigned": [str(seat.get("seat_id") or "") for seat in rows if not seat.get("additional")],
-            "additional": [str(seat.get("seat_id") or "") for seat in rows if seat.get("additional")]}
+            "assigned": assigned, "additional": additional}
 
 
 def seat_parts(slot: Any, *, coupling_only: bool = False) -> tuple:

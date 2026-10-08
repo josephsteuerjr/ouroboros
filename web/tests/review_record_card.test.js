@@ -44,6 +44,14 @@ test('panel facts name the pool, who chose it and how many distinct models sat o
     assert.equal(panelFactsText({}), '');
 });
 
+test('w3: seats is the assigned count and an added critic is said apart, never folded in', () => {
+    const withCritic = { ...POOL_FACTS, seats: 3, additional_seats: 1 };
+    assert.equal(panelFactsText(withCritic),
+        'whole review pool · chosen by owner · seats=3 · distinct models=3 · distinct engines=3 · additional seats=1');
+    assert.doesNotMatch(panelFactsText({ ...POOL_FACTS, additional_seats: 0 }), /additional/);
+    assert.equal(panelFactsText({ ...POOL_FACTS, additional_seats: 0 }), panelFactsText(POOL_FACTS));
+});
+
 test('three runs of one model are said to be repeats, not independent reviewers', () => {
     const text = panelFactsText({ ...POOL_FACTS, distinct_models: 1, distinct_engines: 1, single_model_panel: true });
     assert.match(text, /distinct models=1/);
