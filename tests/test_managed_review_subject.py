@@ -668,7 +668,7 @@ def test_fit_error_without_session_quorum_is_typed_zero_spend_with_guidance(
     assert "irreducible one-pass triad prompt" in early
     assert MANAGED_SPLIT_IMPOSSIBLE in early
     assert MANAGED_OVERSIZE_GUIDANCE in early  # managed resolver carries Q28-A guidance
-    assert "Settings → Agents → Review lanes" in early
+    assert "Settings → Agents, Reviewer rows" in early
     assert "Split or shrink the staged change" not in early
     assert ctx._last_review_block_reason == "fixed_overflow"
 
