@@ -100,8 +100,22 @@ _PROVIDER_CATALOG_PRISTINE = {
 
 
 def _provider_catalog_class():
-    module = sys.modules.get("ouroboros.llm")
-    return getattr(module, "LLMClient", None)
+    """The real ``LLMClient``, found from the capability mixin that owns the catalog state.
+
+    Not ``ouroboros.llm.LLMClient`` read blindly: a test may monkeypatch that name with a
+    stand-in (a function, a fake class), and its patch can still be in force when the
+    autouse teardown below runs.
+    """
+    module = sys.modules.get("ouroboros.llm_capability_policy")
+    mixin = getattr(module, "_CapabilityPolicyMixin", None)
+    if mixin is None:
+        return None
+    current = getattr(sys.modules.get("ouroboros.llm"), "LLMClient", None)
+    if isinstance(current, type) and current.__module__ == "ouroboros.llm" and issubclass(current, mixin):
+        return current
+    real = [cls for cls in mixin.__subclasses__()
+            if cls.__name__ == "LLMClient" and cls.__module__ == "ouroboros.llm"]
+    return real[-1] if real else None
 
 
 def _provider_catalog_snapshot(cls):

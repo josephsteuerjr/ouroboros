@@ -56,3 +56,25 @@ def test_a_class_imported_during_the_test_is_found_pristine():
     }
     assert conftest._PROVIDER_CATALOG_PRISTINE["_SUPPORTED_PARAMS_CACHE"] == {}  # the template stayed empty
     conftest._restore_provider_catalog(LLMClient, saved)
+
+
+def test_the_guard_finds_the_real_class_while_a_test_has_patched_the_name(monkeypatch):
+    """Many tests monkeypatch `ouroboros.llm.LLMClient` with a stand-in (a function or a
+    fake class) and the patch can still be in force when the autouse teardown runs: the
+    guard must still reach the real class, never the stand-in (an AttributeError there
+    turned 52 ordinary tests into teardown errors)."""
+    import ouroboros.llm as llm_module
+    from ouroboros.llm import LLMClient
+
+    assert conftest._provider_catalog_class() is LLMClient  # the ordinary case
+
+    class FailingLight:  # a stand-in without the catalog state
+        pass
+
+    for stand_in in (lambda *a, **k: None, FailingLight):
+        monkeypatch.setattr(llm_module, "LLMClient", stand_in)
+        assert conftest._provider_catalog_class() is LLMClient
+    saved = conftest._provider_catalog_snapshot(conftest._provider_catalog_class())
+    _fetched_like_the_live_catalog(LLMClient)
+    conftest._restore_provider_catalog(conftest._provider_catalog_class(), saved)
+    assert conftest._provider_catalog_snapshot(LLMClient) == saved
