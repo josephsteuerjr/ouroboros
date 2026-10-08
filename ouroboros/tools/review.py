@@ -1129,8 +1129,8 @@ def _prepare_unified_review(ctx: ToolContext, commit_message: str,
     # its governance share.
     from ouroboros.review_execution import ReviewRouteKind
     from ouroboros.reviewer_slot_config import commit_triad_delivery, row_plan_retrieves
-    from ouroboros.tools.review_admission import assemble_packet_prompt, prepare_retrieving_seats, seat_vectors
-
+    from ouroboros.tools.review_admission import (
+        assemble_packet_prompt, counted_retrieving_seats, prepare_retrieving_seats, seat_vectors)
     try:
         row_plan = seat_vectors(commit_triad_delivery())
     except ValueError as exc:
@@ -1246,12 +1246,12 @@ def _prepare_unified_review(ctx: ToolContext, commit_message: str,
             models[i], row_plan["session_profiles"][i], row_plan["use_local"][i] = slot.model, slot.session_profile, slot.use_local
         ctx._last_triad_models = list(models)
         if fit_error:
-            session_count = len(models) - len(api_models)
-            if session_count >= _cfg.adaptive_quorum(len(models)):
-                # Q28-A: packet limits gate only the api subset. Enough
-                # retrieving rows remain for the quorum, so the api rows are
-                # DROPPED (recorded loudly, never silent) and the panel proceeds
-                # on retrieving delivery alone.
+            session_count, required = counted_retrieving_seats(row_plan, api_indices)
+            if session_count >= required:
+                # Q28-A: packet limits gate only the api subset. Enough COUNTED
+                # retrieving rows remain for the counted quorum (an added critic
+                # is heard, never a vote), so the api rows are DROPPED (recorded
+                # loudly, never silent) and the panel proceeds on retrieving delivery.
                 from ouroboros.tools.review_admission import (
                     drop_api_rows,
                     triad_not_dispatched_records,

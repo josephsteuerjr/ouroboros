@@ -312,12 +312,28 @@ def drop_api_rows(row_plan: dict) -> dict:
     filtered = dict(row_plan)
     vectors = ["models", "routes", "efforts", "session_targets", "session_profiles", "slot_ids",
                "subagent_ids", "retrieves", "use_local"]
-    # The per-seat brief vectors ride along when the plan already carries them.
-    vectors += [key for key in ("parts", "session_tasks", "session_policies", "brief_shas") if key in row_plan]
+    # The per-seat brief vectors and the added-seat bit ride along when the plan
+    # already carries them — by the SAME indices, so a critic the author added
+    # beside the pool stays an added (uncounted) seat after the drop.
+    vectors += [key for key in ("parts", "session_tasks", "session_policies", "brief_shas", "additional")
+                if key in row_plan]
     for key in vectors:
         rows = list(row_plan.get(key) or [])
         filtered[key] = [rows[i] for i in keep if i < len(rows)]
     return filtered
+
+
+def counted_retrieving_seats(row_plan: dict, api_indices: Sequence[int]) -> Tuple[int, int]:
+    """``(retrieving counted seats, counted quorum)`` — the Q28-A yield arithmetic over
+    the seats that VOTE. A seat the author added beside the pool (``additional``) is
+    heard, never counted: it can neither supply the quorum the dropped api rows leave
+    behind nor widen the quorum the counted seats owe (``adaptive_quorum``)."""
+    from ouroboros.review_model_routes import adaptive_quorum
+
+    extra = list(row_plan.get("additional") or [])
+    counted = [i for i in range(len(row_plan.get("models") or [])) if not (i < len(extra) and extra[i])]
+    packet = set(api_indices)
+    return sum(1 for i in counted if i not in packet), adaptive_quorum(len(counted))
 
 
 # ---------------------------------------------------------------------------

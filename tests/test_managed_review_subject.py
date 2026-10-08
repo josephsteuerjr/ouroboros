@@ -699,6 +699,77 @@ def test_a_retrieving_seat_is_never_refused_for_the_packet_it_does_not_receive(t
     assert [r["model_id"] for r in withheld] == ["m/0-api"]
 
 
+@pytest.mark.parametrize("additional", [False, True], ids=["counted_control", "outside_quorum"])
+def test_an_oversize_drop_never_promotes_an_added_critic_into_the_quorum(tmp_path, monkeypatch, additional):
+    """D2-NEW: a pool of two marked seats (packet + reading) plus a critic the author
+    added beside the pool; the patch does not fit the packet seat. The Q28-A yield is
+    decided over the COUNTED seats and their own quorum: with the added critic outside
+    the pool only ONE counted retrieving seat remains, so the wave is the typed $0
+    ``fixed_overflow`` terminal — the critic is heard, never the second vote. The
+    control marks the same third row: it IS a counted seat, the packet row is dropped
+    and the two retrieving seats carry the wave to PASS. Composed through the REAL
+    ``compose_panel`` and the REAL fit ladder on the managed repo; only the model
+    answers are supplied."""
+    import json
+
+    from ouroboros import review_ledger as ledger
+    from ouroboros import reviewer_slot_config as slots
+    from ouroboros.tools.review_change import ReviewChangeRequest, compose_panel
+    from tests.review_pool_rosters import pool_roster, pool_seat, set_review_pool
+    from tests.test_workflow_review_outcomes import _seat, _two_part
+
+    monkeypatch.setenv("OUROBOROS_RUNTIME_MODE", "pro")
+    monkeypatch.setenv("OUROBOROS_REVIEW_ENFORCEMENT", "blocking")
+    set_review_pool(monkeypatch, pool_roster(
+        pool_seat("packet", "openai/gpt-5"),
+        pool_seat("reading", "anthropic/claude-opus-4.1", delivery="native"),
+        pool_seat("extra", "google/gemini-2.5-pro", delivery="native", marked=not additional),
+    ))
+    panel = compose_panel(ReviewChangeRequest(root="system_repo", subject="index", reviewers=("extra",)), adds_only=True)
+    with slots.composed_review_pool(panel.seats):
+        plan = slots.commit_triad_delivery()
+    assert plan["additional"] == [False, False, additional]
+    review_mod, ctx = _triad_real_fit_env(tmp_path, monkeypatch, plan)
+
+    prepared, early, exited = review_mod._prepare_unified_review(ctx, "resolve the managed update")
+
+    if additional:
+        assert exited and prepared is None, "one counted retrieving seat cannot make the quorum of two"
+        assert ctx._last_review_block_reason == "fixed_overflow" and "irreducible one-pass triad prompt" in early
+        assert ctx._triad_withheld_seat_records == [] and ctx._last_triad_raw_results == []
+        return
+    assert not exited and early is None
+    post = prepared["row_plan"]
+    assert (post["slot_ids"], post["additional"]) == (["reading", "extra"], [False, False])
+    results = [_seat(row_id, model, _two_part()) for row_id, model in zip(post["slot_ids"], post["models"])]
+    monkeypatch.setattr(review_mod, "_handle_multi_model_review", lambda *_a, **_kw: json.dumps({"results": results}))
+    error = review_mod._dispatch_unified_review(ctx, "resolve the managed update", prepared)
+    rows = ledger.rows_from_plan(post, post["routes"], ctx._last_triad_raw_results)
+    assert error is None and [(r["seat_id"], r["additional"]) for r in rows] == [("reading", False), ("extra", False)]
+    verdict = ctx._last_review_verdict
+    assert verdict["aggregate"] == "PASS" and (verdict["quorum"]["assigned"], verdict["quorum"]["required"]) == (2, 2)
+    assert [r["model_id"] for r in ctx._triad_withheld_seat_records] == ["openai/gpt-5"]
+
+
+def test_drop_api_rows_keeps_the_added_seat_bit_aligned_with_the_surviving_rows():
+    """The aligned ``additional`` vector is filtered by the same indices as ``slot_ids``
+    and ``parts``: after the packet rows leave, the added critic is still the added one."""
+    from ouroboros.review_execution import ReviewRouteKind
+    from ouroboros.tools.review_admission import counted_retrieving_seats, drop_api_rows
+
+    plan = _row_plan(["api", "session", "session"])
+    plan.update(retrieves=[False, True, True], additional=[False, False, True],
+                parts=[("change",), ("change", "coupling"), ("change", "coupling")])
+    kept = drop_api_rows(plan)
+    assert kept["slot_ids"] == ["slot_1", "slot_2"] and kept["additional"] == [False, True]
+    assert kept["routes"] == [ReviewRouteKind.AGENT_SESSION] * 2 and kept["parts"] == [("change", "coupling")] * 2
+    # The yield arithmetic: two counted seats owe a quorum of two; one of them is the packet row.
+    assert counted_retrieving_seats(plan, [0]) == (1, 2)
+    # Without the added bit the same rows are three counted seats: two retrieving ones meet the 2-of-3 quorum.
+    assert counted_retrieving_seats({**plan, "additional": [False, False, False]}, [0]) == (2, 2)
+    assert counted_retrieving_seats({k: v for k, v in plan.items() if k != "additional"}, [0]) == (2, 2)
+
+
 # ---------------------------------------------------------------------------
 # Panel fix round (R2-R9): S-consistent fallback, loud tx failure, M0-aware
 # binary deletion, typed withheld-seat records, n/a counters, friendly reason
