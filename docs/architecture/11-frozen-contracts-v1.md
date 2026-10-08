@@ -82,7 +82,10 @@ Add the field to the active frozen owner — `ouroboros/contracts/` for the pack
     before the purge) reads a stored document ONCE per read with frozen copies of the lane readers and marks or
     mints reviewer rows of `OUROBOROS_SUBAGENTS` (`review_eligible: true`; effort and delivery as row properties;
     no seat loses its effort) — nothing partial: an unreadable lane leaves the document untouched with the error
-    disclosed. The process that first SAVES the migrated document writes the snapshot
+    disclosed. A document without lanes of its own (the key absent, or the `""` every 6.90+ document saved)
+    gets EXACTLY `subscription_install_presets.factory_review_rows(document)`: the frozen factory panel
+    (`review_pool_migration.factory_lanes`) is those rows, one source, never a second provider table minting
+    seats beside them. The process that first SAVES the migrated document writes the snapshot
     `state/review_migrations/<ts>-slots-to-pool.json` and the `state.json:review_pool_migrations` record before
     its write (`review_pool_receipts.persist_receipts`, from the persistence prologue and the Colab writer; the
     boot writes them when it read the document first), and the first boot with an owner chat posts one message

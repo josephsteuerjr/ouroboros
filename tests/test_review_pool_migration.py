@@ -178,16 +178,15 @@ ANTON_EXPECTED_EXECUTIONS = {
 }
 
 # The N-1 fixture (6.113.4, no provider keys, lanes "" and catalog ""): the shipped
-# OpenRouter panel at the document's "high", plus the deep row the legacy key synthesized.
+# OpenRouter panel at the document's "high" — the factory rows themselves (one factory
+# source: no scope seat beside them), plus the deep row the legacy key synthesized.
 N1_EXPECTED_EXECUTIONS = {
     "triad": [
         _seat("slot_1", "api_chat", "google/gemini-3.8-flash", "high", "document", "native", authored=False),
         _seat("slot_2", "api_chat", "openai/gpt-5.6-terra", "high", "document", "native", authored=False),
         _seat("slot_3", "api_chat", "anthropic/claude-opus-5", "high", "document", "native", authored=False),
     ],
-    "scope": [
-        _seat("scope_slot_1", "api_chat", "openai/gpt-5.6-terra", "high", "document", "native", authored=False),
-    ],
+    "scope": [],
     "advisory": _seat("advisory_slot_1", "api_chat", "", "low", "row", "native", authored=False, enabled=True),
     "deep_review": _seat("deep_review_slot_1", "api_chat", "openai/gpt-5.6-sol-pro", "high", "document", "native"),
 }
@@ -298,12 +297,13 @@ def test_the_nminus1_fixture_migrates_to_the_contract_catalog():
          "route": {"kind": "api_model", "target_id": "openai/gpt-5.6-sol-pro"},
          "effort": "high", "minted_from": "review_lane"},
     ]}
-    assert outcome.snapshot["summary"] == {"seats_before": 4, "rows_marked_after": 3, "distinct_models": 3,
+    assert outcome.snapshot["summary"] == {"seats_before": 3, "rows_marked_after": 3, "distinct_models": 3,
                                            "helper_rows_minted": 1}
     rows = {entry["subagent_id"]: entry for entry in outcome.snapshot["rows"]}
-    assert rows["review-2"]["from_seats"] == ["slot_2", "scope_slot_1"], "scope terra merged into review-2"
+    assert [rows[f"review-{n}"]["from_seats"] for n in (1, 2, 3)] == [["slot_1"], ["slot_2"], ["slot_3"]]
     assert outcome.snapshot["not_in_effect"] == []
-    assert "shipped default review lanes" in m.owner_message(outcome, "x")
+    message = m.owner_message(outcome, "x")
+    assert "shipped default review lanes" in message and "Before: the shipped default panel (3 seats)" in message
     # The retired comma keys never entered the panel (ABI-10) and are not read.
     assert set(N1_DOC) & set(RETIRED_COMMA_LIST_SETTING_KEYS)
     stripped = {k: v for k, v in N1_DOC.items() if k not in RETIRED_COMMA_LIST_SETTING_KEYS}
@@ -714,14 +714,15 @@ def test_f6_c0_is_the_ordinary_upgrade_of_antons_catalog_without_lanes():
     assert len(after["items"]) == 12 and _marked(after["items"]) == ["review-1", "review-2", "review-3"]
     assert [r["route"]["target_id"] for r in after["items"][9:]] == list(OPENROUTER_REVIEW_DEFAULTS["triad"])
     rows = {entry["subagent_id"]: entry for entry in outcome.snapshot["rows"]}
-    assert rows["review-2"]["from_seats"] == ["slot_2", "scope_slot_1"]
+    assert rows["review-2"]["from_seats"] == ["slot_2"]  # one factory source: no scope seat beside the rows
     assert "advisory" in " ".join(outcome.snapshot["notes"]) and outcome.snapshot["summary"]["helper_rows_minted"] == 0
     # The panel at the document's "medium" coincides with an existing terra@medium row:
     # that row is marked (at most once) instead of a new one, the other two are minted.
     doc["OUROBOROS_EFFORT_REVIEW"] = doc["OUROBOROS_EFFORT_SCOPE_REVIEW"] = "medium"
     outcome, after = _migrated(doc)
     assert len(after["items"]) == 11 and _marked(after["items"]) == ["subagent_a2", "review-1", "review-2"]
-    assert {e["subagent_id"]: e["from_seats"] for e in outcome.snapshot["rows"]}["subagent_a2"] == ["slot_2", "scope_slot_1"]
+    assert {e["subagent_id"]: e["from_seats"] for e in outcome.snapshot["rows"]}["subagent_a2"] == ["slot_2"]
+    assert outcome.snapshot["not_in_effect"] == [], "the shipped scope reader ran the scope effort: retired, not idle"
 
 
 @pytest.mark.parametrize("document", [
@@ -1046,10 +1047,12 @@ def test_a_referenced_row_with_divergent_processing_or_pin_mints_from_the_source
     assert "review_eligible" not in after["items"][0]
 
 
-def test_package_a_factory_rows_seam_is_adopted_when_bound(monkeypatch):
+def test_package_a_factory_rows_seam_is_the_one_factory_source(monkeypatch):
     """``factory_review_rows(doc)`` (package A) mints the rows a fresh install's onboarding
-    writes; when it is bound, the factory cell adopts those rows and only mints what they
-    do not cover — the seam is a module attribute so the two packages meet without an import."""
+    writes; the factory cell adopts EXACTLY those rows — the frozen factory seats are the
+    same rows (``factory_lanes``), so no second table mints a seat beside them (D1-V04:
+    a one-row seam gives a one-row pool, not that row plus the OpenRouter panel). The
+    seam is a module attribute so the two packages meet without an import."""
     calls = []
 
     def factory_rows(document):
@@ -1059,12 +1062,14 @@ def test_package_a_factory_rows_seam_is_adopted_when_bound(monkeypatch):
                  "review_eligible": True, "minted_from": "factory_default"}]
 
     monkeypatch.setattr(m, "factory_review_rows", factory_rows)
+    assert [row.target_id for row in m.factory_lanes(N1_DOC).triad] == ["google/gemini-3.8-flash"]
     outcome, after = _migrated(N1_DOC)
     assert calls, "the seam was consulted"
     assert after["items"][0]["recommended_use"] == "A's row" and after["items"][0]["effort"] == "high"
-    assert [r["route"]["target_id"] for r in after["items"][:3]] == list(OPENROUTER_REVIEW_DEFAULTS["triad"])
-    assert _marked(after["items"]) == ["review-1", "review-2", "review-3"]
-    assert outcome.snapshot["summary"]["rows_marked_after"] == 3
+    assert _marked(after["items"]) == ["review-1"]
+    assert [r["route"]["target_id"] for r in after["items"]] == ["google/gemini-3.8-flash", "openai/gpt-5.6-sol-pro"]
+    assert outcome.snapshot["summary"] == {"seats_before": 1, "rows_marked_after": 1, "distinct_models": 1,
+                                           "helper_rows_minted": 1}
 
 
 @pytest.mark.parametrize("install, main", [
@@ -1093,6 +1098,31 @@ def test_factory_cells_of_a_one_model_install_mint_the_three_runs_of_main(instal
     _outcome, after = _migrated({SLOTS: "", "OPENROUTER_API_KEY": "present"})
     assert [r["route"]["target_id"] for r in after["items"] if r.get("review_eligible")] == list(
         OPENROUTER_REVIEW_DEFAULTS["triad"])
+
+
+@pytest.mark.parametrize("install, document", [
+    ("local Main behind a dead OPENAI_BASE_URL (D1-V04)",
+     {"USE_LOCAL_MAIN": True, "OUROBOROS_MODEL": "local-demo", "OPENAI_BASE_URL": "http://127.0.0.1:9/v1"}),
+    ("one direct key beside an OpenRouter-style Main (the Colab re-run over N-1)",
+     {"OPENAI_API_KEY": "present", "OUROBOROS_MODEL": "anthropic/claude-opus-5"}),
+])
+def test_d1_v04_a_document_without_lanes_gets_exactly_the_factory_rows_from_one_source(install, document):
+    """D1-V04 / D1-V06: ``factory_lanes`` and ``factory_review_rows`` are ONE source. A
+    second provider table once read these documents differently (a bare base URL made
+    the panel "remote"; a Main not on the provider kept the OpenRouter ids), so the
+    frozen seats minted three OpenRouter rows BESIDE the factory rows: six marked rows
+    for the ``""`` lanes key against three for the absent key. Both cells are the same
+    pool now — exactly the factory rows, no second table."""
+    from ouroboros.subscription_install_presets import factory_review_rows
+
+    templates = factory_review_rows(document)
+    targets = [row["route"]["target_id"] for row in templates]
+    assert len(targets) == 3 and [row.target_id for row in m.factory_lanes(document).triad] == targets, install
+    for lanes_cell in ({}, {SLOTS: ""}):
+        outcome, after = _migrated({**document, **lanes_cell})
+        marked = [row for row in after["items"] if row.get("review_eligible")]
+        assert [row["route"]["target_id"] for row in marked] == targets, (install, lanes_cell)
+        assert len(after["items"]) == 3 and outcome.snapshot["summary"]["seats_before"] == 3, (install, lanes_cell)
 
 
 # --- 5. the read seam -----------------------------------------------------------------
@@ -1326,12 +1356,13 @@ def test_a_document_migrated_and_saved_by_another_process_still_gets_its_receipt
     root, sent = boot  # the kernel's own process state is bound to ``root``, not to the Drive root
     drive = _other_root(root, "drive")
     kernel_view = build_colab_settings({"OPENROUTER_API_KEY": "present"}, existing=dict(N1_DOC))
+    kernel_document = dict(N1_DOC)
     assert [o.trigger for o in cfg.review_pool_migrations_seen()] == [m.TRIGGER_LANES_KEY]
     write_colab_settings(drive, kernel_view)
     (snapshot_file,) = _snapshots(drive)
     assert _snapshots(root) == [] and server_maintenance.review_pool_migration_records() == {}
     snapshot = json.loads(snapshot_file.read_text(encoding="utf-8"))
-    assert snapshot["input_sha256"] == m.input_sha256(N1_DOC) and snapshot["before"][SLOTS] == ""
+    assert snapshot["input_sha256"] == m.input_sha256(kernel_document) and snapshot["before"][SLOTS] == ""
     assert SLOTS not in json.loads((drive / "settings.json").read_text(encoding="utf-8"))
 
     # The server: a fresh process on the Drive root.
@@ -1350,7 +1381,7 @@ def test_a_document_migrated_and_saved_by_another_process_still_gets_its_receipt
     assert (record["trigger"], record["outcome"], record["error"]) == (m.TRIGGER_LANES_KEY, "factory", "")
     assert record["reported"]
     assert len(sent) == 1 and sent[0][0] == 7
-    assert sent[0][1] == m.owner_message(m.migrate_review_lanes(dict(N1_DOC)), record["snapshot"])
+    assert sent[0][1] == m.owner_message(m.migrate_review_lanes(kernel_document), record["snapshot"])
 
 
 def test_the_saving_process_writes_the_receipts_before_its_write_and_the_boot_adds_nothing(boot, monkeypatch):

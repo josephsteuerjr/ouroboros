@@ -36,13 +36,14 @@ Rules (contract §1.5, counter-examples §2 F4-F8):
    engine merge is the scope seat's alone — triad seats never fold;
 5. advisory and deep-review rows become helper rows WITHOUT the mark; a
    reference needs no row at all (preflight is chosen per commit);
-6. no lanes (the shipped default panel ran) -> the factory rows
-   (``factory_review_rows(document)``, ``minted_from: factory_default``); the
-   frozen panel's seats land on them (an existing row of the engine first). The
+6. no lanes of the owner's (the key absent, or the ``""`` every 6.90+ document
+   saved for "the default lanes ran") -> EXACTLY the factory rows
+   (``factory_review_rows(document)``, ``minted_from: factory_default``, the ONE
+   factory source: the frozen panel's seats ARE those rows, ``factory_lanes``), an
+   existing catalog row of a row's engine marked instead of a twin. The
    never-configured install — neither the lanes key nor a catalog
    (``OUROBOROS_SUBAGENTS`` missing or ``""``: Docker / Colab / a mounted
-   volume without the wizard, or no settings file at all) — takes EXACTLY the
-   factory rows and no frozen seat beside them (nothing of the owner's ran);
+   volume without the wizard, or no settings file at all) — is the same cell;
    never a structural catalog the owner saved empty: empty is not never-configured;
 7. invalid lanes, unresolvable references or an invalid catalog -> NO partial
    migration: the catalog is untouched, ``MigrationOutcome.error`` carries the
@@ -75,7 +76,6 @@ from ouroboros.route_spec import (
 )
 from ouroboros.settings_defaults import (
     OPENROUTER_DEFAULTS,
-    OPENROUTER_REVIEW_DEFAULTS,
     RETIRED_COMMA_LIST_SETTING_KEYS,
     REVIEW_POOL_MIGRATED_SETTING_KEYS,
 )
@@ -485,83 +485,9 @@ def parse_reviewer_slots(document: Mapping[str, Any], raw: Any) -> ReviewLanes:
 # Frozen shipped-default panel, derived from the document (what _default_config ran).
 # ---------------------------------------------------------------------------
 
-_DIRECT_PROVIDER_KEYS = (
-    ("openai", ("OPENAI_API_KEY",)), ("anthropic", ("ANTHROPIC_API_KEY",)),
-    ("minimax", ("MINIMAX_API_KEY",)), ("cloudru", ("CLOUDRU_FOUNDATION_MODELS_API_KEY",)),
-    ("gigachat", ("GIGACHAT_CREDENTIALS",)), ("deepseek", ("DEEPSEEK_API_KEY",)), ("zai", ("ZAI_API_KEY",)),
-)
-_ROUTER_STACK_KEYS = ("OPENROUTER_API_KEY", "OPENAI_BASE_URL", "OPENAI_COMPATIBLE_BASE_URL")
-
 
 def _text(document: Mapping[str, Any], key: str) -> str:
     return str(document.get(key) or "").strip()
-
-
-def _document_provider_profile(document: Mapping[str, Any]) -> tuple[str, bool]:
-    """``(exclusive_direct_provider, has_remote_provider)`` of a settings document.
-
-    Mirrors the env readers the shipped panel used (``_exclusive_direct_remote_provider_env``,
-    ``has_remote_provider``) on the document plane: anything on the OpenRouter-style
-    stack disqualifies exclusivity; GigaChat also counts through user/password.
-    """
-    present = {
-        provider: any(_text(document, key) for key in keys) for provider, keys in _DIRECT_PROVIDER_KEYS
-    }
-    if _text(document, "GIGACHAT_USER") and _text(document, "GIGACHAT_PASSWORD"):
-        present["gigachat"] = True
-    remote = any(present.values()) or any(_text(document, key) for key in _ROUTER_STACK_KEYS)
-    if not remote:
-        from ouroboros.provider_models import parse_claudexor_model, provider_for_model
-
-        main = _text(document, "OUROBOROS_MODEL")
-        if provider_for_model(main) == "claudexor":
-            try:
-                parse_claudexor_model(main)
-                remote = True
-            except ValueError:
-                pass
-    if any(_text(document, key) for key in _ROUTER_STACK_KEYS):
-        return "", remote
-    direct = [provider for provider, flag in present.items() if flag]
-    return (direct[0] if len(direct) == 1 else ""), remote
-
-
-def _factory_models(document: Mapping[str, Any]) -> tuple[list[str], list[str], str]:
-    """``(triad_models, scope_models, advisory_target)`` the shipped default panel ran.
-
-    The document view the retired comma keys have already left (ABI-10: they never
-    enter the panel), so this is ``get_review_models``/``get_scope_review_models``
-    without their env-override plane: shipped OpenRouter ids; a local-only Main
-    repeats Main; one direct provider compiles its role panel; an OpenAI-compatible-
-    only install repeats the one model it can reach (also its advisory).
-    """
-    from ouroboros.provider_models import (
-        compatible_only_main_model,
-        compute_direct_review_models_fallback,
-        migrate_model_value,
-    )
-
-    triad = list(OPENROUTER_REVIEW_DEFAULTS["triad"])
-    scope = list(OPENROUTER_REVIEW_DEFAULTS["scope"])
-    provider, remote = _document_provider_profile(document)
-    main = _text(document, "OUROBOROS_MODEL")
-    if not remote and _text(document, "USE_LOCAL_MAIN").lower() in {"1", "true", "yes", "on"}:
-        return [main] * len(triad), [main] * len(scope), ""
-    if provider:
-        prefix = f"{provider}::"
-        migrated_main = migrate_model_value(provider, main)
-        if migrated_main.startswith(prefix):
-            fallback = compute_direct_review_models_fallback(
-                provider, migrated_main, _text(document, "OUROBOROS_MODEL_LIGHT"), review_runs=3)
-            if fallback:
-                triad = fallback
-            migrated_scope = migrate_model_value(provider, scope[0])
-            scope = [migrated_scope] if migrated_scope.startswith(prefix) else (fallback[:1] or scope)
-        return triad, scope, ""
-    compatible = compatible_only_main_model(document)
-    if compatible:
-        return [compatible] * len(triad), [compatible] * len(scope), compatible
-    return triad, scope, ""
 
 
 def _frozen_deep_default(document: Mapping[str, Any]) -> str:
@@ -576,24 +502,26 @@ def _frozen_deep_default(document: Mapping[str, Any]) -> str:
 
 
 def factory_lanes(document: Mapping[str, Any]) -> ReviewLanes:
-    """The shipped default panel as frozen lanes: direct api rows over the effective
-    default models (triad reads natively, scope always reads), the default advisory,
-    and NO deep row (the legacy model key stood for it)."""
+    """The shipped default panel as frozen lanes, from the ONE factory source: the triad
+    is ``factory_review_rows(document)`` seat by seat (the provider the document holds
+    credentials for; a one-model install repeats Main), no scope seat and no authored
+    advisory (the pool asks every retrieving row the coupling question), and NO deep
+    row (the legacy model key stood for it). A seat's effort is the document's surface
+    effort, as the panel ran it — the row's own ``effort`` is that same value minted.
+    A second provider table here once read the document differently from the rows and
+    minted OpenRouter seats beside a direct provider's or a local Main's rows (D1-V04)."""
     view = {key: value for key, value in document.items() if key not in RETIRED_COMMA_LIST_SETTING_KEYS}
-    triad, scope, advisory_target = _factory_models(view)
     processing = _row_processing(view)
-
-    def rows(models: list[str], prefix: str, delivery: str) -> Tuple[LaneRow, ...]:
-        return tuple(
-            LaneRow(slot_id=slot_id_for_row(idx + 1, prefix=prefix), kind=ROUTE_KIND_API, target_id=str(model),
-                    processing_preference=processing, delivery=delivery)
-            for idx, model in enumerate(m for m in models if str(m or "").strip())
-        )
-
+    templates = factory_review_rows(view) if factory_review_rows is not None else []
     return ReviewLanes(
-        triad=rows(triad, SLOT_ID_PREFIX, DEFAULT_TRIAD_DELIVERY),
-        scope=rows(scope, SCOPE_SLOT_ID_PREFIX, ""),
-        advisory=AdvisoryLane(target_id=advisory_target, processing_preference=processing),
+        triad=tuple(
+            LaneRow(slot_id=slot_id_for_row(idx + 1, prefix=SLOT_ID_PREFIX), kind=ROUTE_KIND_API,
+                    target_id=_row_route(row).target_id, processing_preference=processing,
+                    delivery=DEFAULT_TRIAD_DELIVERY)
+            for idx, row in enumerate(templates)
+        ),
+        scope=(),
+        advisory=AdvisoryLane(target_id="", processing_preference=processing),
     )
 
 
@@ -1156,7 +1084,10 @@ def _not_in_effect(document: Mapping[str, Any], executions: Dict[str, Any], lane
     lines = []
     for lane, key in _SURFACE_EFFORT_KEYS.items():
         value = _text(document, key)
-        if not value:
+        if not value or (lane == "scope" and not lanes.scope):
+            # The shipped panel's scope reader ran at the document's scope effort; the
+            # factory rows carry no scope seat, so the key is retired with the lane —
+            # it was in effect, not idle.
             continue
         seats = executions[lane] if lane != "deep_review" else [executions["deep_review"]]
         if not any(seat.effort_source == "document" for seat in seats):
@@ -1246,41 +1177,32 @@ def migrate_review_lanes(loaded: Mapping[str, Any]) -> Optional[MigrationOutcome
         minted_from = MINTED_FROM_FACTORY
     executions = effective_executions(document, lanes, authored=authored)
     pool = _Pool(document, catalog)
-    never_configured = not authored and migration_trigger(document) == TRIGGER_NEVER_CONFIGURED
-    if never_configured and factory_review_rows is not None:
-        # The both-absent cell owns EXACTLY the factory pool (canon 07): no lane of the
-        # owner's ran, so no frozen seat is placed beside the rows. The frozen panel's
-        # reading of a document whose Main is absent (OpenRouter ids beside a direct
-        # provider's rows) is not a seat anyone ran — it is what the startup
-        # normalization would have rewritten before the first review.
+    if not authored and factory_review_rows is not None:
+        # A document without lanes of its own gets EXACTLY the factory rows (canon 07):
+        # the frozen factory seats ARE those rows, one source. A template whose engine a
+        # catalog row already runs is not adopted — its seat marks that row (F6, merge);
+        # the remaining templates keep the first free ``review-<n>`` ids.
+        claimed: set = set()
         for template in factory_review_rows(document):
+            existing = pool.unmarked_existing_engine(_row_engine(document, template), excluding=claimed)
+            if existing is not None:
+                claimed.add(existing)
+                continue
             pool.adopt({**template, "subagent_id": ""})
-    else:
-        if not authored and factory_review_rows is not None:
-            claimed: set = set()
-            for template in factory_review_rows(document):
-                existing = pool.unmarked_existing_engine(_row_engine(document, template), excluding=claimed)
-                if existing is not None:
-                    # F6: a catalog row already runs this engine — its seat below marks
-                    # it (merge) instead of a twin row; the remaining templates keep
-                    # the first free ``review-<n>`` ids.
-                    claimed.add(existing)
-                    continue
-                pool.adopt({**template, "subagent_id": ""})
-            for seat in executions["triad"]:
-                # One frozen seat lands on one row: an existing row of its engine first
-                # (F6), else a template of its engine that no seat has landed on yet
-                # (twins stay twins, F5), else the ordinary placement.
-                vacant = None if pool.unmarked_existing_match(seat) is not None else pool.vacant_template(seat)
-                if vacant is not None:
-                    pool.attach(vacant, seat)
-                else:
-                    _place_triad(pool, seat, minted_from)
-        else:
-            for seat in executions["triad"]:
+        for seat in executions["triad"]:
+            # One frozen seat lands on one row: an existing row of its engine first
+            # (F6), else a template of its engine that no seat has landed on yet
+            # (twins stay twins, F5), else the ordinary placement.
+            vacant = None if pool.unmarked_existing_match(seat) is not None else pool.vacant_template(seat)
+            if vacant is not None:
+                pool.attach(vacant, seat)
+            else:
                 _place_triad(pool, seat, minted_from)
-        for seat in executions["scope"]:
-            _place_scope(pool, seat, minted_from)
+    else:
+        for seat in executions["triad"]:
+            _place_triad(pool, seat, minted_from)
+    for seat in executions["scope"]:
+        _place_scope(pool, seat, minted_from)
     helper_lines = _place_helpers(pool, executions, lanes, factory=not authored)
     rows_after = pool.rows_after()
     from ouroboros.configured_subagents import MAX_CONFIGURED_SUBAGENTS
@@ -1448,8 +1370,11 @@ def owner_message(outcome: MigrationOutcome, snapshot_path: str) -> str:
     if deep.get("authored", True):
         extras.append("deep review row")
     triad_n, scope_n = len(before.get("triad") or []), len(before.get("scope") or [])
-    counts = (f"Before: {triad_n} triad seat{'s' if triad_n != 1 else ''} + {scope_n} scope seat"
-              f"{'s' if scope_n != 1 else ''}" + (f" (+ {', '.join(extras)})" if extras else "") +
+    if outcome.slots_state == "absent":
+        seats = f"the shipped default panel ({triad_n} seat{'s' if triad_n != 1 else ''})"
+    else:
+        seats = f"{triad_n} triad seat{'s' if triad_n != 1 else ''} + {scope_n} scope seat{'s' if scope_n != 1 else ''}"
+    counts = (f"Before: {seats}" + (f" (+ {', '.join(extras)})" if extras else "") +
               f". After: {summary.get('rows_marked_after', 0)} reviewer rows, "
               f"{summary.get('distinct_models', 0)} distinct models.")
     bullets = []

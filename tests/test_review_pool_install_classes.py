@@ -72,11 +72,13 @@ def _wizard_document() -> dict:
 def _lane_era_quorum(document: dict) -> int:
     """What the install's commit review required before PR-3: ``adaptive_quorum`` over
     its triad, read by the frozen lane readers (the shipped panel when nothing was
-    authored)."""
+    authored — the factory rows themselves, which carry no scope seat: the pool asks
+    every retrieving row the coupling question)."""
     raw = document.get(SLOTS)
     authored = isinstance(raw, str) and bool(raw.strip())
     lanes = m.parse_reviewer_slots(document, raw) if authored else m.factory_lanes(document)
-    assert lanes.scope, "every lane-era install carried a scope seat (mandatory in the lane format)"
+    if authored:
+        assert lanes.scope, "every authored lane-era install carried a scope seat (mandatory in the lane format)"
     return adaptive_quorum(len(lanes.triad))
 
 
