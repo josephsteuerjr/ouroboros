@@ -23,13 +23,16 @@ Rules (contract §1.5, counter-examples §2 F4-F8):
 
 1. a reference whose effective effort equals the referenced row's own effort
    marks that row (``review_eligible: true``; one mark per row, first by
-   catalog order);
+   catalog order); every FURTHER triad reference to that row mints a twin
+   from it (``minted_from: review_lane``) — the old wizard repeated a sole
+   harness three times, and three seats stay three runs (quorum 2 of 3);
 2. a reference whose seat ran a DIFFERENT effort mints ``review-<n>`` from the
    row (``minted_from: review_lane``), the helper itself untouched;
 3. a direct seat mints ``review-<n>``; an existing row with the identical
    engine AND delivery is marked instead;
 4. a scope seat merges into a row of the same engine and delivery produced by
-   this run ("scope seat coincided with seat N — merged"); otherwise 1-3;
+   this run ("scope seat coincided with seat N — merged"); otherwise 1-3; the
+   engine merge is the scope seat's alone — triad seats never fold;
 5. advisory and deep-review rows become helper rows WITHOUT the mark; a
    reference needs no row at all (preflight is chosen per commit);
 6. no lanes (the shipped default panel ran) -> the factory rows
@@ -1036,16 +1039,14 @@ def _place_triad(pool: _Pool, seat: Seat, minted_from: str) -> None:
             pool.mint(seat, eligible=True, minted_from=minted_from)
             return
         if pool.engines[seat.subagent_id] == seat.engine():
-            if seat.subagent_id in pool.marked:
-                pool.attach(seat.subagent_id, seat)
-                pool.note(seat.subagent_id, f"seat {seat.slot_id} ran the same engine — merged")
-            else:
+            if seat.subagent_id not in pool.marked:
                 pool.mark(seat.subagent_id, seat)
-            return
-        twin = pool.produced_match(seat)
-        if twin is not None and twin in pool.minted_seats:
-            pool.attach(twin, seat)
-            pool.note(twin, f"seat {seat.slot_id} ran the same engine — merged")
+                return
+            # A further reference to a marked row is a further independent run (the old
+            # wizard repeated a sole harness three times): a twin keeps the seat count and
+            # the quorum with it. Folding by engine belongs to the scope seat alone.
+            row_id = pool.mint(seat, eligible=True, minted_from=minted_from, source_row=row)
+            pool.note(row_id, f"seat {seat.slot_id} also referenced {seat.subagent_id} — a twin row keeps its run")
             return
         own = str(row.get("effort") or "").strip() or compound_session_effort(_row_route(row)) or "its default"
         row_id = pool.mint(seat, eligible=True, minted_from=minted_from, source_row=row)

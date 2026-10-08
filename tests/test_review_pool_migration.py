@@ -19,6 +19,7 @@ from __future__ import annotations
 import copy
 import json
 import pathlib
+from collections import Counter
 
 import pytest
 
@@ -339,8 +340,8 @@ def test_the_migration_is_idempotent_by_bytes(document):
 @pytest.mark.parametrize("document", [anton_document(), N1_DOC, N2_DOC], ids=["anton", "n-1", "n-2"])
 def test_seats_engines_and_deliveries_are_preserved(document):
     """Every engine (with its delivery) a lane seat ran is an engine of a marked row after
-    M; the only fold is the declared scope merge, so the marked rows are exactly the
-    distinct triad+scope engines."""
+    M, AS MANY TIMES as triad seats ran it; the only fold is the declared scope merge, so
+    the marked rows are the triad engines (a multiset) plus the scope engines not among them."""
     if SLOTS not in document:
         document = {**{k: v for k, v in document.items() if k not in RETIRED_COMMA_LIST_SETTING_KEYS}, SLOTS: ""}
     executions = _executions(document)
@@ -360,11 +361,12 @@ def test_seats_engines_and_deliveries_are_preserved(document):
         return (kind, route["target_id"], route.get("credential_profile_id", ""), effort, processing,
                 row.get("access", "full") if kind == "agent_session" else "", delivery)
 
-    before = {seat_engine(s) for s in executions["triad"] + executions["scope"]}
-    marked = {row_engine(r) for r in after["items"] if r.get("review_eligible")}
+    triad = Counter(seat_engine(s) for s in executions["triad"])
+    before = triad + Counter({seat_engine(s) for s in executions["scope"]} - set(triad))
+    marked = Counter(row_engine(r) for r in after["items"] if r.get("review_eligible"))
     assert before == marked
     assert outcome.snapshot["summary"]["seats_before"] == len(executions["triad"]) + len(executions["scope"])
-    assert outcome.snapshot["summary"]["rows_marked_after"] == len(marked)
+    assert outcome.snapshot["summary"]["rows_marked_after"] == sum(marked.values())
     for row in after["items"]:
         if row.get("review_eligible") or row.get("minted_from"):
             assert row.get("effort") or m.compound_session_effort(m._row_route(row)), "no seat row leaves without effort"
@@ -388,6 +390,57 @@ def test_f4_slot_ids_unique_subagent_ids_repeat_seat_effort_above_row_effort():
     assert rows["review-1"]["from_seats"] == ["r2"] and "helper keeps effort medium" in rows["review-1"]["note"]
     assert outcome.snapshot["summary"] == {"seats_before": 3, "rows_marked_after": 2, "distinct_models": 1,
                                            "helper_rows_minted": 0}
+
+
+def one_harness_wizard_document(override=""):
+    """What the previous wizard wrote for a sole connected harness (Claude): the task actor
+    row, the advisory helper it minted, and three triad references to the ONE actor row
+    (``_compile_policy_seats`` repeated the harness three times), the scope and deep review
+    referencing it too. ``override`` puts the same effort override on every triad seat."""
+    rows = [session_row("claude-code", "claude=claude-opus-5", "medium", recommended_use="Claude Code actor"),
+            session_row("review-claude", "claude=claude-sonnet-5", "low")]
+    return {SUBAGENTS: catalog(*rows), "OUROBOROS_MODEL": "openai/gpt-5.6-sol", "OPENROUTER_API_KEY": "present",
+            SLOTS: lanes(triad=[ref(f"slot_{n}", "claude-code", override) for n in (1, 2, 3)],
+                         scope=[ref("scope_slot_1", "claude-code")],
+                         advisory={"enabled": True, "subagent_id": "review-claude"},
+                         deep_review={"subagent_id": "claude-code"})}
+
+
+def test_m2_three_references_of_the_one_harness_wizard_stay_three_runs():
+    from ouroboros import reviewer_slot_config as rs
+    from ouroboros.review_model_routes import adaptive_quorum
+
+    doc = one_harness_wizard_document()
+    outcome, after = _migrated(doc)
+    assert _marked(after["items"]) == ["claude-code", "review-1", "review-2"]
+    actor = session_row("claude-code", "claude=claude-opus-5", "medium", recommended_use="Claude Code actor")
+    assert after["items"][0] == {**actor, "review_eligible": True}, "the source row is marked once, otherwise untouched"
+    assert after["items"][1] == session_row("review-claude", "claude=claude-sonnet-5", "low"), "the helper stays a helper"
+    twin = {"subagent_id": "", "recommended_use": LANE_RECOMMENDATION,
+            "route": {"kind": "agent_session", "target_id": "claude=claude-opus-5", "credential_profile_id": ""},
+            "effort": "medium", "access": "full", "review_eligible": True, "minted_from": "review_lane"}
+    assert after["items"][2:] == [{**twin, "subagent_id": "review-1"}, {**twin, "subagent_id": "review-2"}]
+    rows = {entry["subagent_id"]: entry for entry in outcome.snapshot["rows"]}
+    assert rows["claude-code"]["from_seats"] == ["slot_1", "scope_slot_1"], "the scope seat still merges"
+    assert rows["review-1"]["from_seats"] == ["slot_2"] and rows["review-2"]["from_seats"] == ["slot_3"]
+    assert "also referenced claude-code" in rows["review-1"]["note"] and "twin" in rows["review-2"]["note"]
+    assert outcome.snapshot["summary"] == {"seats_before": 4, "rows_marked_after": 3, "distinct_models": 1,
+                                           "helper_rows_minted": 0}
+    loaded = cfg.normalize_settings_raw(dict(doc))
+    pool = rs.review_pool_rows(loaded)
+    assert [row.target_id for row in pool] == ["claude=claude-opus-5"] * 3 and adaptive_quorum(len(pool)) == 2
+
+
+def test_m2_repeated_identical_effort_overrides_mint_one_row_per_seat():
+    doc = one_harness_wizard_document(override="xhigh")
+    outcome, after = _migrated(doc)
+    assert _marked(after["items"]) == ["claude-code", "review-1", "review-2", "review-3"]
+    assert after["items"][0]["effort"] == "medium", "the actor keeps its own medium (marked by the scope seat alone)"
+    assert all(r["effort"] == "xhigh" and r["route"]["target_id"] == "claude=claude-opus-5" for r in after["items"][2:])
+    rows = {entry["subagent_id"]: entry for entry in outcome.snapshot["rows"]}
+    assert [rows[f"review-{n}"]["from_seats"] for n in (1, 2, 3)] == [["slot_1"], ["slot_2"], ["slot_3"]]
+    assert rows["claude-code"]["action"] == "marked" and rows["claude-code"]["from_seats"] == ["scope_slot_1"]
+    assert outcome.snapshot["summary"]["rows_marked_after"] == 4, "three overridden runs plus the scope seat's own row"
 
 
 def test_f5a_the_pool_ceiling_is_the_catalog_ceiling():
