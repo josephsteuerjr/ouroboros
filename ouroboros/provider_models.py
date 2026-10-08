@@ -171,9 +171,9 @@ PROVIDER_CREDENTIAL_GROUPS: dict[str, tuple[str, ...]] = {
 }
 
 # Active settings keys that hold a ROUTED model identity (prefix -> provider via
-# provider_for_model). Heavy is a bounded migration/history input, not a live
-# route selector; keeping the split here prevents new consumers (including
-# Provider Test) from accidentally resurrecting it.
+# provider_for_model). Heavy and the retired review scalars are migration/history
+# inputs, not live route selectors; the active set keeps consumers (including
+# Provider Test) from accidentally resurrecting them.
 # Superset of the live slots; a key absent from settings still declares whatever
 # ``config.SETTINGS_DEFAULTS`` will hand the runtime, which is why declared_model_settings()
 # fills the defaults in rather than treating "unset" as "unused".
@@ -181,9 +181,7 @@ ACTIVE_MODEL_SETTING_KEYS: tuple[str, ...] = (
     "OUROBOROS_MODEL", "OUROBOROS_MODEL_LIGHT",
     "OUROBOROS_MODEL_VISION", "OUROBOROS_MODEL_CONSCIOUSNESS",
     "OUROBOROS_MODEL_FALLBACKS", "OUROBOROS_MODEL_FALLBACK",
-    "OUROBOROS_MODEL_DEEP_SELF_REVIEW", "OUROBOROS_WEBSEARCH_MODEL",
-    "OUROBOROS_REVIEW_MODELS", "OUROBOROS_SCOPE_REVIEW_MODELS",
-    "OUROBOROS_SCOPE_REVIEW_MODEL",
+    "OUROBOROS_WEBSEARCH_MODEL",
 )
 LEGACY_MODEL_SETTING_KEYS: tuple[str, ...] = ("OUROBOROS_MODEL_HEAVY",)
 # Compatibility import name. Its meaning is now explicitly the active set.

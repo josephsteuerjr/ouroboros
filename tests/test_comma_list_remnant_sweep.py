@@ -64,12 +64,6 @@ _RETIRED_KEY_MENTION_ALLOWLIST = {
     ("ouroboros/server_runtime.py", "OUROBOROS_REVIEW_MODELS"): ("raw-dict review normalization", 5),
     ("ouroboros/server_runtime.py", "OUROBOROS_SCOPE_REVIEW_MODELS"): ("raw-dict scope review normalization", 7),
     ("ouroboros/server_runtime.py", "OUROBOROS_SCOPE_REVIEW_MODEL"): ("raw-dict scope review normalization", 7),
-    # -- declaration surface over the derived plane (Provider Test resolves a
-    #    deterministic model from declared model settings incl. the projected
-    #    comma lists; never a route selector).
-    ("ouroboros/provider_models.py", "OUROBOROS_REVIEW_MODELS"): ("declared-model surface over derived plane", 1),
-    ("ouroboros/provider_models.py", "OUROBOROS_SCOPE_REVIEW_MODELS"): ("declared-model surface over derived plane", 1),
-    ("ouroboros/provider_models.py", "OUROBOROS_SCOPE_REVIEW_MODEL"): ("declared-model surface over derived plane", 1),
     # -- retirement prose (names the key to say it is retired/ignored).
     ("ouroboros/review_execution.py", "OUROBOROS_REVIEW_ROUTES"): ("retirement prose", 1),
     ("ouroboros/review_execution.py", "OUROBOROS_SCOPE_REVIEW_ROUTES"): ("retirement prose", 1),
