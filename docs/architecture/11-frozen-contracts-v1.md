@@ -81,8 +81,10 @@ Add the field to the active frozen owner — `ouroboros/contracts/` for the pack
     They are MIGRATED, not dropped: `review_pool_migration.apply_at_read_seam` (in `config.normalize_settings_raw`,
     before the purge) reads a stored document ONCE per read with frozen copies of the lane readers and marks or
     mints reviewer rows of `OUROBOROS_SUBAGENTS` (`review_eligible: true`; effort and delivery as row properties;
-    no seat loses its effort) — nothing partial: an unreadable lane leaves the document untouched with the error
-    disclosed. A document without lanes of its own (the key absent, or the `""` every 6.90+ document saved)
+    no seat loses its effort) — nothing partial and nothing dropped in silence: an unreadable lane, a non-string
+    lane value, a catalog the parser rejects (marked rows do not excuse it) or authored lanes beside a catalog
+    that already holds pool rows leave the document untouched with the error disclosed (only the `""` lanes key
+    beside a pool catalog is a no-op). A document without lanes of its own (the key absent, or the `""` every 6.90+ document saved)
     gets EXACTLY `subscription_install_presets.factory_review_rows(document)`: the frozen factory panel
     (`review_pool_migration.factory_lanes`) is those rows, one source, never a second provider table minting
     seats beside them. The process that first SAVES the migrated document writes the snapshot

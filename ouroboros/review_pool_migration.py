@@ -45,10 +45,12 @@ Rules (contract §1.5, counter-examples §2 F4-F8):
    (``OUROBOROS_SUBAGENTS`` missing or ``""``: Docker / Colab / a mounted
    volume without the wizard, or no settings file at all) — is the same cell;
    never a structural catalog the owner saved empty: empty is not never-configured;
-7. invalid lanes, unresolvable references or an invalid catalog -> NO partial
-   migration: the catalog is untouched, ``MigrationOutcome.error`` carries the
-   text, and every lane key stays in the document until the owner saves the
-   catalog.
+7. invalid lanes (a non-string value included), unresolvable references, an
+   invalid catalog (marked rows do not excuse it), or authored lanes beside a
+   catalog that already holds pool rows -> NO partial migration and nothing
+   dropped in silence: the catalog is untouched, ``MigrationOutcome.error``
+   carries the text, and every lane key stays in the document until the owner
+   saves the catalog. Only the ``""`` lanes key beside a pool catalog is a no-op.
 
 No seat loses its effort: every minted or marked row carries a non-empty
 ``effort`` (a seat's effort is its row's, else a compound slug's, else the
@@ -700,15 +702,13 @@ def _catalog_view(document: Mapping[str, Any]) -> _Catalog:
         payload = json.loads(raw)
     except ValueError as exc:
         return _Catalog("invalid", error=f"{SUBAGENTS_KEY} is not valid JSON: {exc}")
-    items = [dict(row) for row in (payload.get("items") or []) if isinstance(row, Mapping)] if isinstance(payload, Mapping) else []
-    # A catalog that already carries pool rows is read structurally: the live parser
-    # of a tree where the pool fields are not yet known would call it invalid.
-    if any("review_eligible" in row for row in items):
-        enabled = bool(payload.get("enabled"))
-        return _Catalog("configured" if (enabled and items) else ("disabled" if items else "empty"), enabled, items)
+    # Validity first, the pool marker second (VD3-05): this tree's parser knows the pool
+    # fields, so a catalog it calls invalid IS invalid, marked rows or not — a marker
+    # beside a broken row must not pass the document off as "already a pool".
     if resolution.source == SOURCE_INVALID:
         return _Catalog("invalid", error=resolution.diagnostic or f"{SUBAGENTS_KEY} is invalid")
-    enabled = bool(payload.get("enabled"))
+    items = [dict(row) for row in (payload.get("items") or []) if isinstance(row, Mapping)] if isinstance(payload, Mapping) else []
+    enabled = bool(payload.get("enabled")) if isinstance(payload, Mapping) else False
     if not items:
         return _Catalog("empty", enabled, items)
     return _Catalog("disabled" if not enabled else "configured", enabled, items)
@@ -1146,23 +1146,39 @@ def migrate_review_lanes(loaded: Mapping[str, Any]) -> Optional[MigrationOutcome
     document = dict(loaded)
     catalog = _catalog_view(document)
     raw_lanes = document.get(REVIEWER_SLOTS_KEY)
+    if raw_lanes is not None and not isinstance(raw_lanes, str):
+        # The lane key held JSON text; any other shape is not "no lanes" but garbage the
+        # frozen reader never accepted — it stays in the document, named (VD3-11).
+        return _error_outcome(document, catalog, "invalid",
+                              f"{REVIEWER_SLOTS_KEY} must be a JSON string, not {type(raw_lanes).__name__}")
     authored = isinstance(raw_lanes, str) and bool(raw_lanes.strip())
+
+    def authored_slots_state() -> str:
+        if not authored:
+            return "absent"
+        try:
+            return _slots_state(parse_reviewer_slots(document, raw_lanes), raw_lanes)
+        except ValueError:
+            return "invalid"  # references cannot resolve against this catalog
+
     if catalog.state == "invalid":
-        slots_state = "absent"
-        if authored:
-            try:
-                slots_state = _slots_state(parse_reviewer_slots(document, raw_lanes), raw_lanes)
-            except ValueError:
-                slots_state = "invalid"  # references cannot resolve against an invalid catalog
-        return _error_outcome(document, catalog, slots_state,
+        return _error_outcome(document, catalog, authored_slots_state(),
                               f"the subagent catalog is invalid, so the review lanes cannot be migrated: {catalog.error}")
     if any(isinstance(row, Mapping) and "review_eligible" in row for row in catalog.items):
+        if authored:
+            # Two review configurations in one document (a hand edit, a downgrade's save
+            # beside a pool catalog): the catalog's pool is what runs, and the lanes are
+            # not dropped in silence — the key stays, the snapshot keeps both, the owner
+            # decides in Settings → Agents (saving the catalog retires the lanes).
+            return _error_outcome(document, catalog, authored_slots_state(),
+                                  "the document carries review lanes AND a subagent catalog that already holds "
+                                  "review pool rows; the catalog's pool is in force and the lanes were not applied")
         present = tuple(key for key in REVIEW_POOL_MIGRATED_SETTING_KEYS if key in document)
-        snapshot = _snapshot_base(document, catalog.state, "absent" if not authored else "direct")
+        snapshot = _snapshot_base(document, catalog.state, "absent")
         snapshot.update({"after": None, "rows": [], "not_in_effect": [], "summary": None,
                          "error": "", "noop": "the catalog already carries review pool rows"})
         return MigrationOutcome(input_sha256=input_sha256(document), catalog_state=catalog.state,
-                                slots_state=snapshot["before"]["slots_state"], snapshot=snapshot,
+                                slots_state="absent", snapshot=snapshot,
                                 consumed_keys=present, noop=True, trigger=snapshot["before"]["trigger"])
     if authored:
         try:

@@ -1012,15 +1012,57 @@ def test_m1_a_retired_comma_keys_document_is_distinguished_from_a_fresh_install(
     assert lanes_outcome.trigger == m.TRIGGER_LANES_KEY
 
 
-def test_a_pool_catalog_that_still_carries_the_lanes_key_drops_it_without_a_rewrite():
+def test_a_pool_catalog_beside_the_empty_lanes_key_drops_it_without_a_rewrite():
     pool = catalog(api_row("r", "x/y", "high", review_eligible=True, minted_from="factory_default"))
-    doc = {SUBAGENTS: pool, SLOTS: ANTON_LANES, "OUROBOROS_EFFORT_REVIEW": "medium"}
+    doc = {SUBAGENTS: pool, SLOTS: "", "OUROBOROS_EFFORT_REVIEW": "medium"}
     outcome = m.migrate_review_lanes(doc)
     assert outcome.noop and not outcome.error and outcome.catalog_after is None
     assert outcome.consumed_keys == (SLOTS, "OUROBOROS_EFFORT_REVIEW")
     loaded = cfg.normalize_settings_raw(dict(doc))
     assert loaded[SUBAGENTS] == pool and SLOTS not in loaded and "OUROBOROS_EFFORT_REVIEW" not in loaded
     assert m.owner_message(outcome, "x") == ""
+
+
+def test_authored_lanes_beside_a_pool_catalog_are_refused_not_dropped_in_silence():
+    """VD3-11 (P5b): two review configurations in one document. The catalog's pool is what
+    runs; the lanes are neither applied nor consumed — the key stays, the snapshot holds
+    both, the owner hears it, and the Settings → Agents save retires the lanes."""
+    pool = catalog(api_row("r", "x/y", "high", review_eligible=True, minted_from="factory_default"))
+    doc = {SUBAGENTS: pool, SLOTS: ANTON_LANES, "OUROBOROS_EFFORT_REVIEW": "medium"}
+    outcome = m.migrate_review_lanes(doc)
+    assert outcome.error and not outcome.noop and outcome.catalog_after is None
+    assert "review lanes AND a subagent catalog that already holds review pool rows" in outcome.error
+    assert outcome.retained_keys == (SLOTS, "OUROBOROS_EFFORT_REVIEW") and outcome.consumed_keys == ()
+    assert (outcome.snapshot["before"][SLOTS], outcome.snapshot["before"][SUBAGENTS]) == (ANTON_LANES, pool)
+    loaded = cfg.normalize_settings_raw(dict(doc))
+    assert loaded[SUBAGENTS] == pool and loaded[SLOTS] == ANTON_LANES and loaded["OUROBOROS_EFFORT_REVIEW"] == "medium"
+    assert "could not be migrated automatically" in m.owner_message(outcome, "x")
+
+
+@pytest.mark.parametrize("value", [{"triad": []}, ["x/y"], 7, True])
+def test_a_non_string_lanes_value_is_refused_with_the_key_retained(value):
+    """VD3-11 (P4): the lane key held JSON text; a dict, list or number is garbage the
+    frozen reader never accepted — not "no lanes" to be replaced by the factory rows."""
+    doc = {SLOTS: value, "OPENROUTER_API_KEY": "present"}
+    outcome = m.migrate_review_lanes(doc)
+    assert outcome.error == f"{SLOTS} must be a JSON string, not {type(value).__name__}", outcome
+    assert outcome.retained_keys == (SLOTS,) and outcome.catalog_after is None and outcome.slots_state == "invalid"
+    loaded = cfg.normalize_settings_raw(dict(doc))
+    assert loaded[SLOTS] == value and SUBAGENTS not in loaded, "nothing minted, nothing dropped"
+
+
+def test_an_invalid_catalog_with_a_pool_marker_is_refused_not_passed_off_as_a_pool():
+    """VD3-05 (P5): ``review_eligible`` on a row does not excuse a catalog this tree's
+    parser rejects (two rows with one id); the lanes keys stay, the owner hears why."""
+    broken = catalog(api_row("r", "x/y", "high", review_eligible=True), api_row("r", "x/z", "high", review_eligible=True))
+    doc = {SUBAGENTS: broken, SLOTS: ""}
+    outcome = m.migrate_review_lanes(doc)
+    assert outcome.error.startswith("the subagent catalog is invalid, so the review lanes cannot be migrated: ")
+    assert not outcome.noop and outcome.catalog_state == "invalid" and outcome.retained_keys == (SLOTS,)
+    loaded = cfg.normalize_settings_raw(dict(doc))
+    assert loaded[SUBAGENTS] == broken and loaded[SLOTS] == ""
+    # The control: the same shape, valid, IS a pool — the "" key is dropped, nothing rewritten.
+    assert m.migrate_review_lanes({SUBAGENTS: catalog(api_row("r", "x/y", "high", review_eligible=True)), SLOTS: ""}).noop
 
 
 def test_a_deep_review_reference_and_a_disabled_advisory_mint_nothing():
