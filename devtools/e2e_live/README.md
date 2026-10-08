@@ -60,6 +60,10 @@ Paid runs use `scenarios.STAND_PANEL_SETTINGS`: Gemini 3.8 Flash / GPT-5.6
 Luna / DeepSeek v4 Pro triad, DeepSeek v4 Pro scope, Claude Sonnet 5 advisory;
 reviewers at low effort, task/evolution at medium. `--production-panel` selects
 the tree's defaults instead; neither choice changes installed product defaults.
+A scenario's overrides are applied over that template, and the lane reviews with
+the document they produce: SW1 composes its catalog as the scout beside the
+template's reviewers (the stand panel's lane rows, the factory rows under
+`--production-panel`, the stub lane's keyless rows), so every lane has a pool.
 The default `full` profile retains each scenario's enforcement; `wiring` sets
 advisory enforcement and must be reported as such.
 

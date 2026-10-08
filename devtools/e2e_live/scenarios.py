@@ -698,13 +698,35 @@ def sm1_stub_script(clone: pathlib.Path) -> dict:
 # SW1 — Swarm: force_plan + roster, >=2 children, fanout receipt, cost rollup, no orphans
 # --------------------------------------------------------------------------- #
 
-def sw1_roster(child_model: str) -> str:
-    return json.dumps({"enabled": True, "items": [{
+def sw1_roster(child_model: str, template: dict | None = None) -> str:
+    """SW1's catalog: the scout row BESIDE the lane template's reviewers — both roles kept.
+
+    The catalog is one document key, so replacing it with the scout alone made the lane's
+    pool: a structural catalog with no marked row is a loud EMPTY pool (no reviewer runs,
+    nothing is minted — that rule stands), which under ``--production-panel`` and in the stub
+    lane left SW1 without the reviewers every other lane has (T2b). A template that carries a
+    catalog (the stub lane's keyless reviewers) keeps its rows and the catalog is switched on
+    for the scout; a template with neither a catalog nor the lanes key (``--production-panel``:
+    the never-configured document) gets exactly the factory reviewer rows the tree would mint
+    for it (``factory_review_rows``); the stand panel (lanes key) migrates its own rows beside
+    the scout at the read seam, as before."""
+    from ouroboros.subscription_install_presets import factory_review_rows
+
+    template = dict(template or {})
+    stored = str(template.get("OUROBOROS_SUBAGENTS") or "").strip()
+    if stored:
+        reviewers = [dict(row) for row in json.loads(stored).get("items") or []]
+    elif "OUROBOROS_REVIEWER_SLOTS" in template:
+        reviewers = []
+    else:
+        reviewers = factory_review_rows(template)
+    scout = {
         "subagent_id": SW1_ROSTER_ID,
         "recommended_use": "Read-only scout for parallel repository surveys.",
         "route": {"kind": "api_model", "target_id": child_model},
         "effort": "low",
-    }]})
+    }
+    return json.dumps({"enabled": True, "items": [scout, *reviewers]})
 
 
 def _find_root_task(ctx: LaneContext, marker: str) -> str:
@@ -949,10 +971,13 @@ class Scenario:
     # scenario that commits nothing (SW1, SK1) has no absorb to wait for or to confirm.
     expects_absorb: bool = False
 
-    def overrides(self, model: str) -> dict:
+    def overrides(self, model: str, template: dict | None = None) -> dict:
+        """The scenario's keys over the lane ``template`` (the document the runner wrote so
+        far: run template, or the stub lane's keyless settings); SW1 composes its catalog
+        from that template's reviewers (:func:`sw1_roster`)."""
         out = dict(self.settings_overrides)
         if self.id == "SW1":
-            out["OUROBOROS_SUBAGENTS"] = sw1_roster(model)
+            out["OUROBOROS_SUBAGENTS"] = sw1_roster(model, template)
         if not self.expects_absorb:
             # A lane that commits nothing must not promote either: under --self-mod its one-shot cycle could
             # commit and re-exec the server in the middle of the lifecycle under test (SK1 review/grants/
