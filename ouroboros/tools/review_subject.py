@@ -760,12 +760,19 @@ def _rev_parse(root, rev: str) -> str:
 
 def _patch(root, *refs: str) -> Tuple[bytes, str]:
     """The binary patch between two tree-ish (or ``--cached``) and its identity:
-    sha256 of the patch TEXT, stripped — the digest ``_fingerprint_staged_diff``
-    binds (``run_cmd`` strips its text), so one subject has one identity."""
+    sha256 of the patch bytes decoded as UTF-8, stripped."""
     rc, raw, err = _git_bytes(root, ["diff", *_BINARY_PATCH_FLAGS, *refs])
     if rc != 0:
         raise StagedDiffUnavailable(f"binary patch capture failed (rc {rc}): {err or 'no detail'}")
     return raw, hashlib.sha256(raw.decode("utf-8", "replace").strip().encode("utf-8")).hexdigest()
+
+
+def staged_patch(root) -> Tuple[bytes, str]:
+    """The staged binary patch and its identity: ONE capture behind both the commit
+    gate's binding (``diff_sha256``) and a system ``index`` subject's ``diff_sha``,
+    so one subject has one identity. Bytes, never locale text: a text-mode capture
+    translates CRLF and decodes in the platform code page (cp1252 on Windows)."""
+    return _patch(root, "--cached")
 
 
 def _tree_parent(root, spec: ReviewSubjectSpec) -> Tuple[str, bool]:
@@ -848,7 +855,7 @@ def _frozen(ctx: Any, spec: ReviewSubjectSpec, checkout: str) -> FrozenSubject:
             tree_sha = managed.staged_tree if managed is not None else _real_index_tree(root)
             diff_text = (managed.render_prompt_diff() if managed is not None
                          else _rbc.capture_staged_diff(pathlib.Path(root)))
-            patch, diff_sha = _patch(root, "--cached")
+            patch, diff_sha = staged_patch(root)
             name_status = (managed.name_status if managed is not None
                            else _tree_delta_name_status(root, parent_sha, tree_sha))
         else:

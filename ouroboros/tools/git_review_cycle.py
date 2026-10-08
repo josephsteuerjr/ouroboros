@@ -61,13 +61,13 @@ def _fingerprint_staged_diff(repo_dir: pathlib.Path) -> Dict[str, Any]:
     MERGE_HEAD row is the exact parent vector. VERSION is read from the index,
     and a staged VERSION bump binds the expected release tag and any pre-existing
     tag target. The existing durable fingerprint fields remain the review-state
-    mechanism; only their input becomes complete.
+    mechanism; only their input becomes complete. ``diff_sha256`` is the frozen
+    subject's own patch identity (``review_subject.staged_patch``).
     """
+    from ouroboros.tools.review_subject import staged_patch
+
     try:
-        diff_text = _git().run_cmd(
-            ["git", "diff", "--cached", "--binary", "--no-ext-diff"],
-            cwd=repo_dir,
-        )
+        patch, diff_sha256 = staged_patch(repo_dir)
         tree_sha = _git().run_cmd(["git", "write-tree"], cwd=repo_dir).strip()
         head_sha = _git().run_cmd(["git", "rev-parse", "HEAD^{commit}"], cwd=repo_dir).strip()
         merge_heads: list[str] = []
@@ -129,9 +129,7 @@ def _fingerprint_staged_diff(repo_dir: pathlib.Path) -> Dict[str, Any]:
         "version_staged": version_staged,
         "expected_tag": expected_tag,
         "existing_tag_target": existing_tag_target,
-        "diff_sha256": hashlib.sha256(
-            diff_text.encode("utf-8", errors="replace")
-        ).hexdigest(),
+        "diff_sha256": diff_sha256,
     }
     encoded_binding = json.dumps(
         binding, sort_keys=True, separators=(",", ":"), ensure_ascii=True
@@ -142,7 +140,7 @@ def _fingerprint_staged_diff(repo_dir: pathlib.Path) -> Dict[str, Any]:
         "fingerprint": digest,
         "status": "ok",
         "reason": "",
-        "chars": len(diff_text),
+        "chars": len(patch.decode("utf-8", "replace").strip()),
         "binding": binding,
     }
 

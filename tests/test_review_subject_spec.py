@@ -40,23 +40,25 @@ def _out(repo, *args):
     return _git(repo, *args).stdout.strip()
 
 
-def _repo(path, *, files):
+def _repo(path, *, files, newline=None):
     path.mkdir(parents=True)
     _git(path, "init", "-q")
     _git(path, "config", "user.email", "t@example.com")
     _git(path, "config", "user.name", "t")
     _git(path, "config", "commit.gpgsign", "false")
     for name, text in files.items():
-        (path / name).write_text(text, encoding="utf-8")
+        (path / name).write_text(text, encoding="utf-8", newline=newline)
     _git(path, "add", "-A")
     _git(path, "commit", "-q", "-m", "base")
     return path
 
 
-def _system_repo(tmp_path):
-    """The installed body stand-in: HEAD plus one staged hunk (the gate's subject)."""
-    repo = _repo(tmp_path / "system", files={"x.txt": "x\n"})
-    (repo / "x.txt").write_text("y\n", encoding="utf-8")
+def _system_repo(tmp_path, *, newline=None):
+    """The installed body stand-in: HEAD plus one staged hunk (the gate's subject).
+    ``newline="\\r\\n"`` writes what a Windows checkout writes: the hermetic test git
+    ignores the runner's ``core.autocrlf``, so the blobs carry CRLF."""
+    repo = _repo(tmp_path / "system", files={"x.txt": "x\n"}, newline=newline)
+    (repo / "x.txt").write_text("y\n", encoding="utf-8", newline=newline)
     _git(repo, "add", "-A")
     return repo
 
@@ -109,6 +111,29 @@ def test_system_index_subject_is_the_gate_binding(tmp_path):
     # The -U0 fit rung re-renders the same subject, never a different capture.
     assert frozen.render_prompt_diff(unified=0) == capture_staged_diff(pathlib.Path(repo), unified=0)
     assert frozen.staged_tree == frozen.tree_sha and frozen.m0_tree == frozen.parent_sha
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n"], ids=["lf", "crlf"])
+def test_the_gate_binding_hashes_the_patch_bytes_the_subject_froze(tmp_path, newline):
+    """One subject, one identity on every OS. A Windows checkout writes CRLF and
+    decodes child output in its ANSI code page, so a gate that hashed ``git diff``
+    as locale TEXT (newlines translated, bytes re-decoded — or refused, for the
+    UTF-8 bytes of a Cyrillic с or И) named another digest than the patch bytes
+    the subject froze."""
+    from ouroboros.tools.git_review_cycle import _fingerprint_staged_diff
+
+    repo = _system_repo(tmp_path, newline=newline)
+    (repo / "x.txt").write_text("y сИ\n", encoding="utf-8", newline=newline)
+    _git(repo, "add", "-A")
+    frozen = freeze_subject(_ctx(repo, tmp_path), _index_spec(repo))
+    fingerprint = _fingerprint_staged_diff(pathlib.Path(repo))
+    patch = subprocess.run(["git", "-C", str(repo), "diff", "--cached", "--binary", "--no-ext-diff", "--no-textconv"],
+                           capture_output=True, check=True).stdout
+
+    assert frozen.patch == patch and (b"\r\n" in patch) == (newline == "\r\n")
+    assert fingerprint["ok"] is True, fingerprint
+    assert fingerprint["binding"]["diff_sha256"] == frozen.diff_sha == hashlib.sha256(
+        patch.decode("utf-8").strip().encode("utf-8")).hexdigest()
 
 
 def test_spec_validation_fails_closed(tmp_path):
