@@ -18,6 +18,7 @@ import types
 
 import pytest
 
+from ouroboros import review_ledger
 from ouroboros.review_evidence import collect_review_evidence
 from ouroboros.review_state import (
     AdvisoryReviewState,
@@ -329,3 +330,102 @@ def test_registered_writer_persists_identity_without_changing_shared_freshness(t
         panel = _panel(drive, shared, task_id)
         assert panel["repo_commit_ready"] and not panel["stale_reason"]
         assert all(panel[key] == "" for key in _ATTRIBUTION_KEYS)
+
+
+# --- the author's preflight look (decision 3A, D5-002) ----------------------------------
+#
+# The look is a ``surface=preflight`` review-ledger record, not a legacy advisory run;
+# CHECKLISTS "Finish all edits first" promises that a worktree mutation after it marks
+# the recorded preflight stale and ``review_status`` reports ``stale_from_edit`` and
+# its editor. Real repository, real ``review_change``; only the paid seats are golden.
+
+
+def _installed_body(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from tests import _contributor_packet_shared as shared
+    from tests.review_pool_rosters import set_review_pool
+
+    repo = Path(shared.init_installed_body(tmp_path)["repo"])
+    set_review_pool(monkeypatch, shared.golden_pool())
+    monkeypatch.setenv("OUROBOROS_REVIEW_ENFORCEMENT", "blocking")
+    monkeypatch.setenv("OUROBOROS_RUNTIME_MODE", "pro")
+    return repo
+
+
+def _look(ctx, monkeypatch) -> str:
+    """The author's early look at the live worktree: ``review_change(subject=worktree,
+    surface=preflight, reviewers=[one row])``, the record's id."""
+    import ouroboros.review_substrate as substrate
+    from ouroboros.tools.review_change import run_review_change
+    from tests import _contributor_packet_shared as shared
+
+    monkeypatch.setattr(substrate, "run_review_request", shared.golden_substrate([]))
+    result = run_review_change(ctx, root="system_repo", subject="worktree", surface="preflight",
+                               reviewers=["s1"], goal="An early look before the commit")
+    assert result["state"] == "settled", result
+    assert review_ledger.load_record(ctx.drive_root, result["record_id"])["surface"] == "preflight"
+    return result["record_id"]
+
+
+def _status(drive, repo, reader):
+    from ouroboros.tools.preflight_review import _handle_review_status
+
+    return json.loads(_handle_review_status(_ctx(drive, repo, reader)))
+
+
+def test_an_edit_after_the_preflight_look_marks_it_stale_and_names_the_editor(tmp_path, monkeypatch):
+    from ouroboros.tools.registry import ToolContext
+
+    repo, drive = _installed_body(tmp_path, monkeypatch), _drive(tmp_path)
+    (repo / "README.md").write_text("# Fixture project\n\nEdited before the look.\n", encoding="utf-8")
+    record_id = _look(ToolContext(repo_dir=repo, drive_root=drive, task_id="task-a"), monkeypatch)
+
+    before = _status(drive, repo, "task-b")
+    assert (before["stale_from_edit"], before["latest_advisory_status"]) == (False, "fresh")
+    assert before["preflight"]["record_id"] == record_id and before["preflight"]["reviewer"] == "s1"
+    assert before["stale_reason"] is None and all(before[key] == "" for key in _ATTRIBUTION_KEYS)
+
+    (repo / "README.md").write_text("# Fixture project\n\nEdited AFTER the look.\n", encoding="utf-8")
+    _edit_through_the_tool_path(drive, repo, "task-a", changed=["README.md"])
+
+    after = _status(drive, repo, "task-b")
+    assert (after["stale_from_edit"], after["latest_advisory_status"]) == (True, "stale")
+    assert "edit_text mutated the worktree" in after["stale_reason"] and after["stale_from_edit_ts"]
+    assert (after["stale_task_id"], after["stale_attribution"]) == ("task-a", "other_task")
+    assert after["preflight"]["record_id"] == record_id and after["preflight"]["marked"] is True
+    assert _status(drive, repo, "task-a")["stale_attribution"] == "this_task"
+    # As for runs: the marker names the mutation that invalidated the look, not the latest editor.
+    _edit_through_the_tool_path(drive, repo, "task-b", changed=["README.md"])
+    assert _status(drive, repo, "task-b")["stale_task_id"] == "task-a"
+
+
+def test_a_marker_older_than_the_look_does_not_stale_it_and_an_unrecorded_move_still_shows(tmp_path, monkeypatch):
+    from ouroboros.tools.registry import ToolContext
+
+    repo, drive = _installed_body(tmp_path, monkeypatch), _drive(tmp_path)
+    (repo / "README.md").write_text("# Fixture project\n\nEdited before the look.\n", encoding="utf-8")
+    # A legacy marker from before the look (a state file with history) is not about it.
+    update_state(drive, lambda state: state.mark_look_stale(
+        "2026-01-01T00:00:00+00:00", reason_ts="2026-01-01T00:00:01+00:00", reason="an old edit",
+        stale_repo_key=make_repo_key(repo), stale_task_id="task-z"))
+    record_id = _look(ToolContext(repo_dir=repo, drive_root=drive, task_id="task-a"), monkeypatch)
+
+    fresh = _status(drive, repo, "task-a")
+    assert (fresh["stale_from_edit"], fresh["latest_advisory_status"]) == (False, "fresh")
+    assert fresh["preflight"]["record_id"] == record_id and fresh["stale_task_id"] == ""
+
+    # A move no tool recorded (an editor outside Ouroboros): the tree speaks, the editor is unknown.
+    (repo / "README.md").write_text("# Fixture project\n\nMoved by hand.\n", encoding="utf-8")
+    moved = _status(drive, repo, "task-a")
+    assert (moved["stale_from_edit"], moved["latest_advisory_status"]) == (True, "stale")
+    assert moved["stale_from_edit_ts"] == "now (worktree moved)"
+    assert moved["stale_reason"] == "The worktree no longer matches the tree the preflight read."
+    assert moved["preflight"] == {**fresh["preflight"], "tree_moved": True, "stale_from_edit": True}
+    assert all(moved[key] == "" for key in _ATTRIBUTION_KEYS)
+
+
+def _edit_through_the_tool_path(drive, repo, task_id, *, changed):
+    from ouroboros.tools.commit_gate import _invalidate_advisory
+
+    _invalidate_advisory(_ctx(drive, repo, task_id), changed_paths=changed, source_tool="edit_text")

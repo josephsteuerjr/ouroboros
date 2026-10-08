@@ -421,12 +421,14 @@ def archived_segments_exist(drive_root: Any) -> bool:
     return bool(_index_segments(drive_root))
 
 
-def recent_records(drive_root: Any, task_id: str = "", limit: int = 20, *, hot_only: bool = False) -> List[Dict[str, Any]]:
+def recent_records(drive_root: Any, task_id: str = "", limit: int = 20, *, hot_only: bool = False,
+                   surface: str = "") -> List[Dict[str, Any]]:
     """Newest-first index rows (junction for context assembly): the hot index, then
     archived segments newest-first, one row per record at its highest revision.
-    ``task_id`` matches the record's task OR root task; empty matches all.
-    ``hot_only`` reads the bounded hot index alone (``INDEX_MAX_BYTES``) and never
-    opens an archived segment: the read a per-task context capture can afford."""
+    ``task_id`` matches the record's task OR root task; empty matches all; ``surface``
+    keeps one surface's records. ``hot_only`` reads the bounded hot index alone
+    (``INDEX_MAX_BYTES``) and never opens an archived segment: the read a per-task
+    context capture can afford."""
     wanted = max(1, int(limit))
     seen: Dict[str, int] = {}
     out: List[Dict[str, Any]] = []
@@ -434,6 +436,8 @@ def recent_records(drive_root: Any, task_id: str = "", limit: int = 20, *, hot_o
     for row in _newest_rows(paths):
         record_id = str(row.get("record_id") or "")
         if not record_id or (task_id and task_id not in (row.get("task_id"), row.get("root_task_id"))):
+            continue
+        if surface and str(row.get("surface") or "") != surface:
             continue
         prior = seen.get(record_id)
         if prior is None:
@@ -444,6 +448,28 @@ def recent_records(drive_root: Any, task_id: str = "", limit: int = 20, *, hot_o
         if len(out) >= wanted:
             break
     return out[:wanted]
+
+
+def latest_preflight_record(drive_root: Any, *, repo_key: str = "") -> Optional[Dict[str, Any]]:
+    """The newest ``surface=preflight`` record of one checkout — the look
+    ``review_status`` reports fresh or ``stale_from_edit`` and a worktree mutation
+    marks stale (D5-002). ``repo_key`` is ``review_state.make_repo_key`` of the
+    checkout; empty matches any. Reads the hot index only; a record that cannot be
+    read or names no root is skipped, never reported as a look."""
+    from ouroboros.review_state import make_repo_key
+
+    for row in recent_records(drive_root, limit=50, hot_only=True, surface="preflight"):
+        try:
+            record = load_record(drive_root, str(row.get("record_id") or ""))
+        except ValueError:
+            continue
+        root = str(((record or {}).get("subject") or {}).get("root") or "")
+        if not record or not root:
+            continue
+        if repo_key and make_repo_key(pathlib.Path(root)) != repo_key:
+            continue
+        return record
+    return None
 
 
 def normalize_model_name(text: Any) -> str:

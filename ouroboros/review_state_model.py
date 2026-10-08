@@ -255,6 +255,30 @@ class AdvisoryReviewState:
             self._sync_commit_readiness_debts(repo_key=stale_repo_key or repo_key or None)
         return len(target_runs)
 
+    def marker_postdates(self, look_ts: str, repo_key: str = "") -> bool:
+        """Whether the stale marker already covers a look recorded at ``look_ts``
+        on ``repo_key``: written at or after the look and scoped to that checkout
+        (an unscoped marker applies to every checkout)."""
+        return bool(self.last_stale_from_edit_ts and look_ts
+                    and self.last_stale_repo_key in ("", repo_key)
+                    and self.last_stale_from_edit_ts >= look_ts)
+
+    def mark_look_stale(
+        self, look_ts: str, *, reason_ts: str = "", reason: str = "", stale_repo_key: str = "", stale_task_id: str = "",
+    ) -> bool:
+        """Write the stale marker for a preflight look — a ``surface=preflight``
+        review-ledger record, which no legacy run carries (D5-002). As for runs, the
+        FIRST mutation after the look writes the marker and later ones keep it, so the
+        marker names the mutation that invalidated the look, never the latest editor.
+        Returns whether this call wrote it."""
+        if not look_ts or self.marker_postdates(look_ts, stale_repo_key):
+            return False
+        self.last_stale_from_edit_ts = reason_ts or _rs()._utc_now()
+        self.last_stale_reason = reason
+        self.last_stale_repo_key = stale_repo_key
+        self.last_stale_task_id = stale_task_id
+        return True
+
     def stale_marker_provenance(self, task_id: str = "") -> Dict[str, str]:
         """Whose mutation or review wrote the stale marker, and for which checkout.
 

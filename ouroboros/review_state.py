@@ -533,10 +533,23 @@ def invalidate_advisory_after_mutation(
         reason = _build_invalidation_reason(source_tool, mutation_root, changed_paths, resolved_repo_keys)
         # Exactly one resolved checkout scopes the invalidation; none or several stale all.
         repo_key = resolved_repo_keys[0] if len(resolved_repo_keys) == 1 else ""
-        update_state(drive_root, lambda state: state.mark_repo_stale(
+        invalidated = update_state(drive_root, lambda state: state.mark_repo_stale(
             repo_key=repo_key, reason_ts=reason_ts, reason=reason,
             stale_repo_key=repo_key, stale_task_id=mutating_task_id,
         ))
+        if isinstance(invalidated, int) and invalidated > 0:
+            return
+        # The author's preflight is a review-ledger record, not a legacy run: with no
+        # run left to invalidate, the newest look on the checkout is what the mutation
+        # makes stale (CHECKLISTS "Finish all edits first", D5-002).
+        from ouroboros.review_ledger import latest_preflight_record
+
+        look_ts = str((latest_preflight_record(drive_root, repo_key=repo_key) or {}).get("ts") or "")
+        if look_ts:
+            update_state(drive_root, lambda state: state.mark_look_stale(
+                look_ts, reason_ts=reason_ts, reason=reason,
+                stale_repo_key=repo_key, stale_task_id=mutating_task_id,
+            ))
     except Exception as e:
         log.debug("invalidate_advisory_after_mutation failed (non-fatal): %s", e)
 

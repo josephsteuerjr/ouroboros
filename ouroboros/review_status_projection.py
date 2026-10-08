@@ -79,6 +79,23 @@ def build_review_projection(
     stale_matches_repo = state.last_stale_repo_key in ("", repo_filter)
     stale_from_edit = bool(hash_mismatch or (state.last_stale_from_edit_ts and stale_matches_repo))
     effective_status = matching_run.status if matching_run else ("stale" if latest else "none")
+    stale_ts = (state.last_stale_from_edit_ts if state.last_stale_from_edit_ts and stale_matches_repo
+                else ("now (hash mismatch)" if hash_mismatch else None))
+    stale_reason = ((state.last_stale_reason if stale_matches_repo else "")
+                    or ("Current snapshot hash no longer matches the latest advisory run." if hash_mismatch else None))
+    marker_attributed = stale_matches_repo
+    look = _preflight_look(state, drive_root_path, repo_dir_path, repo_filter or "")
+    if look is not None:
+        # The author's preflight is the look the legacy runs used to be (D5-002): a
+        # marker written before the look does not stale it; a worktree that moved
+        # since the look does, with the editor named when a mutation was recorded.
+        stale_from_edit = bool(look["stale_from_edit"])
+        effective_status = "stale" if stale_from_edit else "fresh"
+        marker_attributed = bool(look["marked"])
+        stale_ts = (state.last_stale_from_edit_ts if look["marked"]
+                    else ("now (worktree moved)" if look["tree_moved"] else None))
+        stale_reason = (state.last_stale_reason if look["marked"]
+                        else (_TREE_MOVED_REASON if look["tree_moved"] else None))
     open_obligations = state.get_open_obligations(repo_key=repo_filter)
     open_debts = state.get_open_commit_readiness_debts(repo_key=repo_filter)
     try:
@@ -106,16 +123,12 @@ def build_review_projection(
         "effective_hash": matching_run.snapshot_hash[:12] if matching_run and matching_run.snapshot_hash else None,
         "effective_is_fresh": effective_is_fresh,
         "stale_from_edit": stale_from_edit,
-        "stale_from_edit_ts": (
-            state.last_stale_from_edit_ts if state.last_stale_from_edit_ts and stale_matches_repo
-            else ("now (hash mismatch)" if hash_mismatch else None)
-        ),
-        "stale_reason": (
-            state.last_stale_reason if stale_matches_repo else ""
-        ) or ("Current snapshot hash no longer matches the latest advisory run." if hash_mismatch else None),
+        "stale_from_edit_ts": stale_ts,
+        "stale_reason": stale_reason,
         # Attribution of the marker only; stale_from_edit/freshness above never read it.
-        **{key: value if stale_matches_repo else "" for key, value in
+        **{key: value if marker_attributed else "" for key, value in
            state.stale_marker_provenance(reader_task_id).items()},
+        "preflight": look,
         "open_obligations": open_obligations,
         "open_debts": open_debts,
         "repo_commit_ready": advisory_commit_ready(
@@ -125,6 +138,49 @@ def build_review_projection(
         ),
         "retry_anchor": "commit_readiness_debt" if open_debts else None,
         "advisory_overrides": advisory_overrides,
+    }
+
+
+_TREE_MOVED_REASON = "The worktree no longer matches the tree the preflight read."
+
+
+def _preflight_look(state: Any, drive_root: pathlib.Path, repo_dir: pathlib.Path | None, repo_key: str) -> Dict[str, Any] | None:
+    """The checkout's newest preflight look (a ``surface=preflight`` ledger record)
+    and whether the worktree moved since it: by the stale marker a recorded mutation
+    wrote after the look, or by the live tree against the tree the record bound.
+    ``None`` when the checkout has no look; a tree that cannot be read compares as
+    unmoved (the marker still speaks)."""
+    try:
+        from ouroboros.review_ledger import latest_preflight_record
+
+        record = latest_preflight_record(drive_root, repo_key=repo_key)
+    except Exception:
+        record = None
+    if not record:
+        return None
+    look_ts = str(record.get("ts") or "")
+    recorded_tree = str((record.get("subject") or {}).get("tree_sha") or "")
+    current_tree = ""
+    if repo_dir is not None and recorded_tree:
+        try:
+            from supervisor.update_candidate import worktree_snapshot_tree
+
+            current_tree, _error = worktree_snapshot_tree("HEAD", cwd=str(repo_dir))
+        except Exception:
+            current_tree = ""
+    marked = bool(state.marker_postdates(look_ts, repo_key))
+    tree_moved = bool(current_tree and current_tree != recorded_tree)
+    rows = [row for row in (record.get("rows") or []) if isinstance(row, dict)]
+    return {
+        "record_id": str(record.get("record_id") or ""),
+        "ts": look_ts,
+        "state": str(record.get("state") or ""),
+        "aggregate": str((record.get("verdict") or {}).get("aggregate") or ""),
+        "reviewer": str(rows[0].get("seat_id") or "") if rows else "",
+        "tree_sha": recorded_tree[:12],
+        "marked": marked,
+        "tree_moved": tree_moved,
+        "stale_from_edit": marked or tree_moved,
     }
 
 
@@ -139,6 +195,7 @@ def build_review_status_payload(projection: Dict[str, Any], *, next_step: str, i
         "stale_from_edit_ts": projection["stale_from_edit_ts"],
         "stale_reason": projection["stale_reason"],
         **{key: projection.get(key, "") for key in ("stale_task_id", "stale_attribution", "stale_repo_key")},
+        "preflight": projection.get("preflight"),
         "filters": projection["filters"],
         "advisory_runs": [_review_status_run_to_dict(run) for run in reversed(projection.get("runs") or [])],
         "attempts": [_review_status_attempt_to_dict(item) for item in reversed(projection.get("attempts") or [])],
