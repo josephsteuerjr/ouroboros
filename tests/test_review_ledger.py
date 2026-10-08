@@ -667,6 +667,45 @@ def test_w2_an_empty_pool_record_names_pool_empty_as_its_dispatch_refusal(candid
     assert _attempt_rows(ctx)[-1].block_reason == "pool_empty"
 
 
+def test_w2_the_real_cycle_on_an_unmarked_catalog_records_pool_empty_and_hands_the_author_the_decision(candidate, monkeypatch):  # noqa: F811
+    """V17: one real ``_run_reviewed_stage_cycle`` under advisory enforcement over a catalog
+    with no row marked Reviewer — nothing of the review path is stubbed (the tests preflight
+    aside), so the empty pool is met where it really is, at assembly. The ledger record is
+    NOT_DISPATCHED with ``pool_empty`` as its dispatch refusal, the attempt row carries the
+    same code, nothing was paid, and the author gets the typed outcome to decide on: the
+    reviewed status with the pool-empty sentence, no block, and a review reference that
+    names the record (never a silent PASS and never a provider-key complaint)."""
+    from ouroboros.tools.review_helpers import REVIEW_POOL_EMPTY_SENTENCE
+    from tests.review_pool_rosters import FACTORY_MODELS, pool_roster, pool_seat, set_review_pool
+
+    ctx = candidate
+    monkeypatch.setenv("OUROBOROS_REVIEW_ENFORCEMENT", "advisory")
+    set_review_pool(monkeypatch, pool_roster(pool_seat("helper", FACTORY_MODELS[0], marked=False)))
+    git._reset_commit_review_state(ctx)
+    monkeypatch.setattr(git, "_run_review_preflight_tests", lambda *a, **kw: None)
+
+    result = _cycle(ctx)
+
+    assert result["status"] == "reviewed" and ctx._last_review_block_reason == "pool_empty"
+    head, payload = result["message"].split("\n", 1)
+    assert "Review outcome returned before commit" in head and "no commit, tag or push occurred" in head
+    outcome = json.loads(payload)
+    assert outcome["review_outcome"]["blocked"] is False
+    assert outcome["review_outcome"]["block_reason"] == "pool_empty"
+    said = " ".join(f["reason"] for f in outcome["review_outcome"]["advisory_findings"])
+    assert REVIEW_POOL_EMPTY_SENTENCE in said and "OPENROUTER_API_KEY" not in said
+    record_id = outcome["review_reference"]["review_record_id"]
+    record = rl.load_record(rl.ledger_root(ctx), record_id)
+    assert record["verdict"]["aggregate"] == "NOT_DISPATCHED" and record["verdict"]["reason"] == "dispatch_refusal"
+    assert record["dispatch_refusal"] == {"kind": "pool_empty", "message": REVIEW_POOL_EMPTY_SENTENCE}
+    assert record["rows"] == [] and record["panel"]["seats"] == 0 and record["cost"] == {"usd": 0.0, "unknown": False}
+    # Advisory did not block, so the record carries no gate block (the blocking test above
+    # does): the configured refusal itself is the record's fact.
+    assert record["verdict"]["degraded_reasons"] == []
+    row = _attempt_rows(ctx)[-1]
+    assert (row.status, row.block_reason, row.review_record_id) == ("reviewed", "pool_empty", record_id)
+
+
 def _advisory_push_setup(ctx, monkeypatch):
     """The Advisory/pro commit surface of ``test_commit_finish_requires_received_outcome``."""
     from ouroboros.mutation_attribution import capture_mutation_baseline
