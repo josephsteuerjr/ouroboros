@@ -990,6 +990,54 @@ def build_commit_gate_record(facts: Dict[str, Any], *, record_id: str = "", driv
     return build_wave_record(facts, surface="commit_gate", record_id=record_id, drive_root=drive_root)
 
 
+# What a pending record keeps from the attempt that DISPATCHED the wave when a later
+# attempt settles it: the subject, the brief with the checklist/rules the seats were
+# judged by, the panel, the fingerprints (reuse key over those rules), and per seat
+# the requested row, its parts and the brief it was given.
+PROVENANCE_FIELDS = ("task_id", "root_task_id", "review_wave_id", "surface", "subject", "brief", "enforcement", "mode",
+                     "enforcement_blocks", "panel", "fingerprints", "preflight", "dispatch_refusal", "author_decision")
+ROW_PROVENANCE_FIELDS = ("subagent_id", "parts", "additional", "requested", "brief_sha")
+
+
+def settle_pending_payload(prior: Dict[str, Any], fresh: Dict[str, Any]) -> Dict[str, Any]:
+    """The payload that settles a pending record: provenance is the dispatching
+    attempt's (``prior`` — ``PROVENANCE_FIELDS`` and, per seat, ``ROW_PROVENANCE_FIELDS``
+    plus its prompt refs); the settling attempt (``fresh``, built from the same wave's
+    late answers) contributes only what those answers decide — each seat's answers,
+    status, cost, observed model and response refs, the verdict, the cost, the state —
+    so a rules or brief update between dispatch and settle never rewrites what the
+    seats actually read. ``revision``/``ts`` are ``revise_record``'s."""
+    settled = {**fresh, **{key: prior[key] for key in PROVENANCE_FIELDS if key in prior}}
+    before = {str(row.get("seat_id") or ""): row for row in prior.get("rows") or [] if isinstance(row, dict)}
+    rows = []
+    for row in fresh.get("rows") or []:
+        kept = before.get(str(row.get("seat_id") or ""))
+        if kept is None:
+            rows.append(row)
+            continue
+        prompt_refs = [ref for ref in kept.get("source_refs") or [] if str(ref.get("role") or "") != "response"]
+        response_refs = [ref for ref in row.get("source_refs") or [] if str(ref.get("role") or "") == "response"]
+        rows.append({**row, **{key: kept[key] for key in ROW_PROVENANCE_FIELDS if key in kept},
+                     "source_refs": prompt_refs + response_refs})
+    settled["rows"] = rows
+    return settled
+
+
+def mark_provenance_unknown(record: ReviewLedgerRecord) -> ReviewLedgerRecord:
+    """A wave settled by an attempt that rejoined open custody WITHOUT the record of the
+    attempt that dispatched it (a wave started before the ledger existed): the rules the
+    seats were judged by and the brief they read are not this attempt's current ones,
+    and nothing retained says which — so the record says ``unknown`` in the checklist's
+    own vocabulary, names no prompt and offers no reuse key, rather than claiming the
+    current rules for answers given under others."""
+    record.brief = {**record.brief, "checklist": _empty_checklist()}
+    for seat in record.rows:
+        seat["source_refs"] = [ref for ref in seat.get("source_refs") or [] if str(ref.get("role") or "") != "prompt"]
+        seat["brief_sha"] = ""
+    record.fingerprints = {**record.fingerprints, "reuse_key": ""}
+    return record
+
+
 def rows_from_plan(plan: dict, routes: list, triad_raw: list) -> list:
     """The ledger's seat rows of one wave straight from the dispatch plan: the
     aligned row vectors (``models``, ``slot_ids``, ``routes``, ``parts``,
@@ -1059,7 +1107,8 @@ def coupling_outcome(verdict: dict, rows: list) -> CouplingOutcome:
 __all__ = [
     "REVIEW_LEDGER_SCHEMA_VERSION", "ReviewLedgerRecord", "build_commit_gate_record", "build_rows", "build_wave_record",
     "distinct_model_facts", "find_reusable", "index_path", "index_row", "ledger_dir", "ledger_root", "load_record",
-    "new_record_id", "normalize_model_name", "note_author_decision", "panel_facts", "read_source", "recent_records",
-    "record_path", "record_sources_resolvable", "reduce_verdict", "retain_text_source", "reuse_key_digest",
-    "revise_record", "row_verdict", "rows_from_plan", "CouplingOutcome", "coupling_outcome", "seat_parts", "source_ref_resolvable", "write_record",
+    "mark_provenance_unknown", "new_record_id", "normalize_model_name", "note_author_decision", "panel_facts", "read_source",
+    "recent_records", "record_path", "record_sources_resolvable", "reduce_verdict", "retain_text_source", "reuse_key_digest",
+    "revise_record", "row_verdict", "rows_from_plan", "settle_pending_payload", "CouplingOutcome", "coupling_outcome",
+    "seat_parts", "source_ref_resolvable", "write_record",
 ]

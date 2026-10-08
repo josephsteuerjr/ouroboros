@@ -1318,21 +1318,26 @@ def settle_commit_review_ledger(ctx: ToolContext, commit_message: str, *, goal: 
         # settles THAT attempt's record; the roster release already cleared the
         # reconcile flag by the time the verdict is aggregated.
         attempt, retry_key = getattr(ctx, "_pending_review_attempt", None), str(getattr(ctx, "_current_review_retry_key", "") or "")
-        prior = str(getattr(attempt, "review_record_id", "") or "") if attempt is not None and retry_key and str(
-            getattr(attempt, "review_retry_key", "") or "") == retry_key else ""
+        rejoined = attempt is not None and bool(retry_key) and str(getattr(attempt, "review_retry_key", "") or "") == retry_key
+        prior = str(getattr(attempt, "review_record_id", "") or "") if rejoined else ""
         existing = ledger.load_record(root, prior) if prior else None
-        # The composition facts the panel was built with (requested rows, added critics, the
-        # reason) ride the record's panel block as on ``review_change`` (its ``reason_missing``
-        # is the composer's: a panel that names the whole pool owes none).
-        composed = commit_panel_facts(ctx)
         if existing is not None and existing.get("state") == ledger.STATE_PENDING:
+            # Settling in place: the dispatching attempt's provenance (subject, brief with
+            # its rules, panel, fingerprints, the seats' prompt refs) stays; this attempt
+            # contributes the late answers, the verdict, the cost and the state.
             fresh = ledger.build_commit_gate_record(facts, record_id=prior, drive_root=root).to_dict()
-            fresh["panel"] = {**dict(fresh.get("panel") or {}), **composed}
-            ledger.revise_record(root, prior, lambda payload: {**fresh, "revision": payload["revision"], "ts": payload["ts"]})
+            ledger.revise_record(root, prior, lambda payload: ledger.settle_pending_payload(payload, fresh))
             ctx._current_review_record_id = prior
         else:
             record = ledger.build_commit_gate_record(facts, drive_root=root)
-            record.panel = {**dict(record.panel or {}), **composed}
+            # The composition facts the panel was built with (requested rows, added critics,
+            # the reason) ride the record's panel block as on ``review_change`` (its
+            # ``reason_missing`` is the composer's: a panel that names the whole pool owes none).
+            record.panel = {**dict(record.panel or {}), **commit_panel_facts(ctx)}
+            if rejoined and existing is None:
+                # Late answers to a wave whose dispatching attempt left no record: the
+                # rules and brief the seats saw are not this attempt's — say so.
+                ledger.mark_provenance_unknown(record)
             ctx._current_review_record_id = str(ledger.write_record(root, record)["record_id"])
         from ouroboros.reviewer_slot_config import bind_reviewer_slot_record_id
 

@@ -725,6 +725,135 @@ def test_pending_custody_record_settles_in_place_on_the_exact_retry(candidate, m
     assert rl.recent_records(rl.ledger_root(ctx), ctx.task_id, 5)[0]["revision"] == 2
 
 
+def _rules(version):
+    return {"checklist_hash": f"rules-{version}", "rules_source": {"path": "docs/CHECKLISTS.md", "sha": f"blob-{version}"}}
+
+
+def _pending_then_settled_reviewer(ctx, calls, *, brief_texts_on_settle):
+    """A one-seat wave whose first attempt leaves custody open and whose exact retry
+    settles it — with the rules and the assembled brief changed in between."""
+    from ouroboros.tools import review_checklist
+
+    def reviewer(_ctx, message, **kw):
+        from ouroboros.review_custody import prepare_frozen_review_reconciliation
+        from ouroboros.review_dispatch import invoke_review_paid_stamp
+        if ctx._review_reconcile_only:
+            prepare_frozen_review_reconciliation(ctx, ctx._pending_review_attempt)
+        invoke_review_paid_stamp(ctx._review_paid_stamp)
+        calls.append(message)
+        if len(calls) == 1:
+            review_checklist.checklist_fingerprint = lambda layer, checklist_path=None: _rules("v1")
+            rows = [_raw("critic", "openai/gpt-5", "pending", parts=BOTH, operation_state="in_flight",
+                         operation_id="pending-critic", late_result_pending=True, raw_text="")]
+            ctx._last_triad_raw_results = rows
+            ctx._last_review_structured = _structured(rows)
+            return "All reviewers still running.", CouplingOutcome(status="pending"), "infra_failure", []
+        # The install moved on between dispatch and settle: new rules, a re-assembled brief.
+        review_checklist.checklist_fingerprint = lambda layer, checklist_path=None: _rules("v2")
+        rows = [_raw("critic", "openai/gpt-5", parts=BOTH, operation_id="pending-critic", raw_text="late two-part answer")]
+        ctx._last_triad_raw_results = rows
+        ctx._last_review_structured = {**_structured(rows), "brief_texts": dict(brief_texts_on_settle)}
+        return None, _responded(), "", []
+
+    return reviewer
+
+
+def test_settling_a_pending_record_keeps_the_dispatching_attempts_provenance(candidate, monkeypatch):  # noqa: F811
+    """V6-03: the rules and brief recorded on a pending record are the ones the seats
+    were given at dispatch. When the exact retry settles the record after the install
+    changed its checklist and re-assembled the brief, the record keeps the dispatched
+    subject/brief/checklist/rules_source/prompt refs/fingerprints and takes from the
+    settling attempt only the answers, verdict, cost and state."""
+    from ouroboros.tools import review_checklist
+
+    ctx = candidate
+    _advisory_push_setup(ctx, monkeypatch)
+    monkeypatch.setattr(review_checklist, "checklist_fingerprint", review_checklist.checklist_fingerprint)
+    calls = []
+    _wire(ctx, monkeypatch, _pending_then_settled_reviewer(ctx, calls, brief_texts_on_settle={"sha-both": "RE-ASSEMBLED BRIEF"}))
+    first = _commit_reviewed(ctx, "Fix amount", skip_advisory_review=True)
+    record_id = json.loads(first.split("\n", 1)[1])["review_reference"]["review_record_id"]
+    pending = rl.load_record(rl.ledger_root(ctx), record_id)
+    assert pending["state"] == "pending" and pending["brief"]["checklist"]["checklist_hash"] == "rules-v1"
+    assert pending["rows"][0]["answers"]["coupling"]["status"] == "pending"
+    second = _commit_reviewed(ctx, "Fix amount", skip_advisory_review=True)
+    assert len(calls) == 2, second
+    settled = rl.load_record(rl.ledger_root(ctx), record_id)
+    assert settled["state"] == "settled" and settled["revision"] == 2 and settled["verdict"]["aggregate"] == "PASS"
+    # Provenance: the dispatching attempt's.
+    assert settled["brief"] == pending["brief"] and settled["brief"]["checklist"]["checklist_hash"] == "rules-v1"
+    assert settled["brief"]["checklist"]["rules_source"]["sha"] == "blob-v1"
+    assert settled["subject"] == pending["subject"] and settled["fingerprints"] == pending["fingerprints"]
+    assert settled["panel"] == pending["panel"] and settled["review_wave_id"] == pending["review_wave_id"]
+    row, was = settled["rows"][0], pending["rows"][0]
+    assert row["requested"] == was["requested"] and row["brief_sha"] == was["brief_sha"] and row["parts"] == was["parts"]
+    prompts = [ref for ref in row["source_refs"] if ref["role"] == "prompt"]
+    assert prompts == [ref for ref in was["source_refs"] if ref["role"] == "prompt"]
+    assert {rl.read_source(rl.ledger_root(ctx), ctx.task_id, ref) for ref in prompts} == {b"TWO-PART BRIEF"}
+    # The late answers: this attempt's.
+    assert row["status"] == "responded" and row["answers"]["coupling"]["status"] == "responded"
+    assert row["usd"] == 0.01 and settled["cost"] == {"usd": 0.01, "unknown": False}
+    responses = [ref for ref in row["source_refs"] if ref["role"] == "response"]
+    assert {rl.read_source(rl.ledger_root(ctx), ctx.task_id, ref) for ref in responses} == {b"late two-part answer"}
+
+
+def test_a_rejoined_wave_without_a_prior_record_has_unknown_provenance(candidate, monkeypatch):  # noqa: F811
+    """V6-03: an attempt that rejoins open custody whose dispatching attempt left no
+    ledger record (a wave started before the ledger) cannot claim the current rules or
+    this attempt's re-assembled brief for answers given under others: the new record
+    says ``unknown`` in the checklist's own vocabulary, names no prompt and offers no
+    reuse key."""
+    from ouroboros.review_state import make_repo_key, update_state
+    from ouroboros.tools import review_checklist
+
+    ctx = candidate
+    _advisory_push_setup(ctx, monkeypatch)
+    monkeypatch.setattr(review_checklist, "checklist_fingerprint", review_checklist.checklist_fingerprint)
+    calls = []
+    _wire(ctx, monkeypatch, _pending_then_settled_reviewer(ctx, calls, brief_texts_on_settle=dict(BRIEFS)))
+    first = _commit_reviewed(ctx, "Fix amount", skip_advisory_review=True)
+    record_id = json.loads(first.split("\n", 1)[1])["review_reference"]["review_record_id"]
+    # The dispatching attempt predates the ledger: no record is bound to it.
+    rl.record_path(rl.ledger_root(ctx), record_id).unlink()
+
+    def _unbind(state):
+        for row in state.attempts:
+            if row.repo_key == make_repo_key(pathlib.Path(ctx.repo_dir)) and row.tool_name == "commit_reviewed":
+                row.review_record_id = ""
+    update_state(pathlib.Path(ctx.drive_root), _unbind)
+    second = _commit_reviewed(ctx, "Fix amount", skip_advisory_review=True)
+    assert len(calls) == 2, second
+    settled_id = _attempt_rows(ctx)[-1].review_record_id
+    assert settled_id and settled_id != record_id
+    record = rl.load_record(rl.ledger_root(ctx), settled_id)
+    assert record["state"] == "settled" and record["verdict"]["aggregate"] == "PASS" and record["revision"] == 1
+    assert record["brief"]["checklist"] == {"layer": "core", "body_fact": "unknown", "how": "unknown", "checklist_hash": "",
+                                            "rules_source": {"path": "", "sha": ""}}
+    assert record["fingerprints"]["reuse_key"] == "" and record["rows"][0]["brief_sha"] == ""
+    assert [ref["role"] for ref in record["rows"][0]["source_refs"]] == ["response"]
+    assert record["rows"][0]["answers"]["coupling"]["status"] == "responded"
+
+
+def test_settle_pending_payload_takes_only_the_answers_from_the_settling_attempt(tmp_path):
+    pending_rows = [_raw("s1", "openai/gpt-5", "pending", parts=BOTH, operation_state="in_flight", late_result_pending=True)]
+    prior = rl.build_commit_gate_record(_facts(pending_rows, rows=[_plan("s1", "openai/gpt-5", parts=BOTH)], goal="dispatched goal"),
+                                        drive_root=tmp_path).to_dict()
+    assert prior["state"] == "pending" and prior["rows"][0]["observed_model"] == "unknown"
+    late = [_raw("s1", "openai/gpt-5", parts=BOTH, cost_usd=0.5)]
+    fresh = rl.build_commit_gate_record(_facts(late, rows=[_plan("s1", "openai/gpt-5", parts=BOTH, brief_sha="sha-new")],
+                                               goal="re-assembled goal"),
+                                        record_id=prior["record_id"], drive_root=tmp_path).to_dict()
+    settled = rl.settle_pending_payload(prior, fresh)
+    assert settled["brief"] == prior["brief"] and settled["brief"]["goal"] == "dispatched goal"
+    assert settled["fingerprints"] == prior["fingerprints"] and settled["subject"] == prior["subject"]
+    assert settled["state"] == "settled" and settled["verdict"]["aggregate"] == "PASS" and settled["cost"]["usd"] == 0.5
+    row = settled["rows"][0]
+    assert row["brief_sha"] == "sha-both" and row["requested"] == prior["rows"][0]["requested"]
+    assert row["status"] == "responded" and row["usd"] == 0.5 and row["observed_model"] == "openai/gpt-5"
+    assert [ref["role"] for ref in row["source_refs"]] == ["prompt", "response"]
+    assert rl.read_source(tmp_path, "task-1", row["source_refs"][0]) == b"TWO-PART BRIEF"
+
+
 def test_author_continuation_notes_its_decision_on_the_answered_record(candidate, monkeypatch):  # noqa: F811
     ctx = candidate
     _advisory_push_setup(ctx, monkeypatch)
