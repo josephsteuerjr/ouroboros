@@ -10,6 +10,8 @@ episode is sent on THAT route.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from ouroboros.deep_self_review import deep_review_route, run_deep_self_review
@@ -84,6 +86,29 @@ def test_a_bare_api_row_runs_the_native_inspection_episode(repo, drive, monkeypa
     last = reviewer_slot_last_executions()[_DEEP_SLOT_ID]
     assert last["surface"] == "deep_self_review" and last["status"] == "responded"
     assert last["effective"]["model"] == "openai/fake-deep"
+
+
+@pytest.mark.parametrize("pin", ["personal", ""])
+def test_w5_a_bare_review_on_main_sends_under_mains_pinned_account(repo, drive, monkeypatch, pin):
+    """No row named: the deep self-review runs on the direct Main row, and every send
+    of the episode carries Main's pinned account as its ``model_account_override``
+    under ``model_role=reviewer:main``. The engine treats an EMPTY override as Auto
+    (never a lookup of Main's role), so a pinned Main must ride here or the review
+    would run on whatever account the engine picked; an unpinned Main stays Auto."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+    monkeypatch.setenv("OUROBOROS_MODEL", "openai/fake-deep")
+    monkeypatch.setenv("OUROBOROS_MODEL_ACCOUNTS", json.dumps({"main": pin, "light": "someone-else"}))
+    llm = _ScriptedLLM([
+        {"tool_calls": [_tool_call("read_file", {"path": "BIBLE.md"}, "c1")]},
+        {"content": _REPORT},
+    ])
+    text, usage = run_deep_self_review(repo, drive, llm, lambda _m: None, task_id="main-pin-1")
+
+    assert text.endswith(_REPORT) and usage["native_rounds"] == 2
+    assert len(llm.calls) == 2
+    assert [call["model_role"] for call in llm.calls] == ["reviewer:main", "reviewer:main"]
+    assert [call["model_account_override"] for call in llm.calls] == [pin, pin]
+    assert reviewer_slot_last_executions()["main"]["requested"]["profile_id"] == pin
 
 
 def test_a_stored_openrouter_spelling_runs_on_the_direct_openai_route(repo, drive, monkeypatch):

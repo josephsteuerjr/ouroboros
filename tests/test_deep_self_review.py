@@ -164,6 +164,35 @@ class TestSystemReviewRow:
         with pytest.raises(ReviewChangeArgumentError, match="is not an enabled catalog row"):
             system_review_row("api-scout")
 
+    def test_w5_the_bare_main_row_carries_mains_pinned_account(self, monkeypatch):
+        """A bare ``/review`` runs where Main runs: the row's credential profile is Main's
+        saved pin (``OUROBOROS_MODEL_ACCOUNTS["main"]``), because the executor sends it as
+        ``model_account_override`` and an empty override is Auto, not Main's role. An
+        unpinned Main is Auto, as before."""
+        from ouroboros.tools.review_change import system_review_row
+
+        monkeypatch.setenv("OUROBOROS_MODEL", "openai/main-model")
+        monkeypatch.setenv("OUROBOROS_MODEL_ACCOUNTS", '{"main": "personal", "light": "other"}')
+        row = system_review_row("")
+        assert (row.slot_id, row.target_id, row.profile_id) == ("main", "openai/main-model", "personal")
+        monkeypatch.setenv("OUROBOROS_MODEL_ACCOUNTS", '{"main": ""}')
+        assert system_review_row("").profile_id == ""
+        monkeypatch.delenv("OUROBOROS_MODEL_ACCOUNTS")
+        assert main_review_row().profile_id == ""
+
+    def test_w5_a_named_row_keeps_its_own_credential_pin_not_mains(self, monkeypatch):
+        """The working side: a catalog row the call names rides its own route credential
+        (a managed-source row may pin one) or none; Main's pin never leaks onto it."""
+        from ouroboros.tools.review_change import system_review_row
+        from tests.review_pool_rosters import pool_roster, pool_seat, set_review_pool
+
+        monkeypatch.setenv("OUROBOROS_MODEL_ACCOUNTS", '{"main": "personal"}')
+        set_review_pool(monkeypatch, pool_roster(
+            pool_seat("pinned-scout", "claudexor::codex=model-x", profile_id="row-pin", marked=False),
+            pool_seat("free-scout", "openai/fake-reviewer", marked=False)))
+        assert system_review_row("pinned-scout").profile_id == "row-pin"
+        assert system_review_row("free-scout").profile_id == ""
+
 
 def _git(cwd, *args):
     subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True)

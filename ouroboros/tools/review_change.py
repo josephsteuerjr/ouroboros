@@ -743,10 +743,13 @@ def system_review_row(reviewer: str = "", effort: str = "") -> Any:
     from ouroboros import reviewer_slot_config as slots
     from ouroboros.deep_self_review import main_review_row
 
-    try:
-        row = slots.catalog_review_row(None, reviewer) if reviewer else main_review_row()
-    except ValueError as exc:
-        raise ReviewChangeArgumentError(f"reviewer {reviewer!r} is not an enabled catalog row ({exc})") from exc
+    if not reviewer:
+        row = main_review_row()  # Main's own failure (an invalid pin document) is not a catalog refusal
+    else:
+        try:
+            row = slots.catalog_review_row(None, reviewer)
+        except ValueError as exc:
+            raise ReviewChangeArgumentError(f"reviewer {reviewer!r} is not an enabled catalog row ({exc})") from exc
     return (slots.row_at_effort_order(row, effort) or row) if effort else row
 
 

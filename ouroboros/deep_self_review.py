@@ -176,13 +176,23 @@ def _session_route_reason(row: ConfiguredReviewerSlot) -> str:
 
 
 def main_review_row() -> ConfiguredReviewerSlot:
-    """The direct Main row (``OUROBOROS_MODEL`` and its local flag): ``/review``'s
-    executor when the call names none (decision 3A)."""
+    """The direct Main row — ``OUROBOROS_MODEL``, its local flag and Main's pinned
+    account (``OUROBOROS_MODEL_ACCOUNTS["main"]``): ``/review``'s executor when the
+    call names none (decision 3A) and the deep self-review default.
+
+    The pin rides as the row's credential profile because the executor sends under
+    ``model_role=reviewer:main`` with ``model_account_override=<row profile>``, and an
+    EMPTY override is Auto, never a lookup of Main's own role: without it a pinned
+    Main would review on whatever account the engine picked. An unpinned Main stays
+    Auto; an invalid pin document raises here as it does for Main's own calls.
+    """
+    from ouroboros.model_slots import MODEL_ACCOUNTS_KEY, model_role_option
     from ouroboros.subagents import _lane_model, _use_local_for_lane
 
     model = _lane_model("main")
     return ConfiguredReviewerSlot(slot_id="main", kind=ROUTE_KIND_API, target_id=model,
-                                  use_local=True if _use_local_for_lane("main", model) else None)
+                                  use_local=True if _use_local_for_lane("main", model) else None,
+                                  profile_id=str(model_role_option(MODEL_ACCOUNTS_KEY, "main") or ""))
 
 
 def deep_review_route(row: Optional[ConfiguredReviewerSlot] = None) -> Tuple[str, Optional[str]]:
