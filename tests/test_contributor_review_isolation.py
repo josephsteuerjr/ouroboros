@@ -22,6 +22,7 @@ import hashlib
 import json
 import os
 import pathlib
+import shlex
 import shutil
 import subprocess
 import sys
@@ -281,8 +282,21 @@ def _fixture_repo(root: pathlib.Path) -> pathlib.Path:
     return repo
 
 
+def _interpreter(executable: str = sys.executable, *, base: str = getattr(sys, "_base_executable", sys.executable),
+                 windows: bool = os.name == "nt") -> tuple[str, dict[str, str]]:
+    """The interpreter process itself. A Windows venv's ``python.exe`` is a redirector
+    that runs the base interpreter as its CHILD, so the started process would not be
+    the wrapper. As ``multiprocessing`` does (bpo-35797), start the base interpreter and
+    name the venv in ``__PYVENV_LAUNCHER__``, which it reads and clears: the same venv
+    interpreter, one process."""
+    if windows and os.path.normcase(executable) != os.path.normcase(base):
+        return base, {"__PYVENV_LAUNCHER__": executable}
+    return executable, {}
+
+
 def _review(repo: pathlib.Path, host: pathlib.Path, out: pathlib.Path, *extra: str,
             inherited: dict | None = None):
+    python, launcher = _interpreter()
     env = {**os.environ, "OUROBOROS_DATA_DIR": str(host),
            "OUROBOROS_SETTINGS_PATH": str(host / "settings.json"),
            "ISOLATION_PROBE_OUT": str(out / "probe.json")}
@@ -290,8 +304,9 @@ def _review(repo: pathlib.Path, host: pathlib.Path, out: pathlib.Path, *extra: s
                 "OUROBOROS_CLAUDEXOR_ATTACH_HOME", "TOTAL_BUDGET", *_INHERITED_PANEL):
         env.pop(key, None)
     env.update(inherited or {})
+    env.update(launcher)
     return subprocess.run(
-        [sys.executable, str(repo / "scripts" / "run_external_review.py"), "--contributor",
+        [python, str(repo / "scripts" / "run_external_review.py"), "--contributor",
          "--base-ref=base", "--head-ref=proposal", f"--output={out / 'packet'}",
          f"--drive-root={out / 'drive'}", *extra, "--", "PR title"],
         cwd=str(repo), env=env, capture_output=True, text=True, timeout=600,
@@ -413,6 +428,29 @@ def test_full_entrypoint_keeps_a_legacy_host_untouched(tmp_path, engine):
     changed = _review(repo, host, out, "--run-cap-usd=9", "--attach-host-engine")
     assert changed.returncode == 3 and "keeps that cap" in changed.stderr
     assert _tree_state(host) == before
+
+
+@pytest.mark.skipif(os.name == "nt", reason="on Windows the full-entrypoint test meets the real venv redirector")
+def test_the_started_process_is_the_interpreter_even_behind_a_venv_redirector(tmp_path):
+    """The full-entrypoint test names the wrapper by its parent PID. A redirector in
+    front of the interpreter (what a Windows venv's ``python.exe`` is) would be that
+    parent; the launch starts the interpreter itself and names the venv."""
+    redirector = tmp_path / "venv" / "Scripts" / "python"
+    redirector.parent.mkdir(parents=True)
+    redirector.write_text(f'#!/bin/sh\n__PYVENV_LAUNCHER__="$0" {shlex.quote(sys.executable)} "$@"\nexit $?\n',
+                          encoding="utf-8")
+    redirector.chmod(0o755)
+
+    def parent_of(python: str, env: dict[str, str]) -> int:
+        return int(subprocess.run([python, "-c", "import os; print(os.getppid())"], env={**os.environ, **env},
+                                  capture_output=True, text=True, check=True, timeout=60).stdout)
+
+    assert parent_of(str(redirector), {}) != os.getpid()  # the hazard: the redirector is the parent
+    python, launcher = _interpreter(str(redirector), base=sys.executable, windows=True)
+    assert parent_of(python, launcher) == os.getpid()
+    assert launcher == {"__PYVENV_LAUNCHER__": str(redirector)}
+    assert _interpreter(sys.executable, base=sys.executable, windows=True) == (sys.executable, {})
+    assert _interpreter(str(redirector), base=sys.executable, windows=False) == (str(redirector), {})
 
 
 def test_the_proposal_checkout_is_refused_before_any_engine_or_review(tmp_path, engine):
