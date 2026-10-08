@@ -5,8 +5,6 @@ from __future__ import annotations
 import base64
 import json
 
-import pytest
-
 import ouroboros.tools.imagegen as ig
 from ouroboros.tools.imagegen import _generate_image, _sniff_mime
 from ouroboros.gateways import claudexor_images
@@ -218,7 +216,7 @@ class TestClientFamily:
                 seen.append((method, path, kwargs))
                 return {"operationId": "op1"}
 
-        out = claudexor_images.create_image_operation(
+        claudexor_images.create_image_operation(
             GW(), {"model": "gpt-image-2", "prompt": "hi"},
             images=[(_png_bytes(16), "image/png")],
             idempotency_key="k-1",
