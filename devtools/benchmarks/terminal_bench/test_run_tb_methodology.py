@@ -802,3 +802,43 @@ def test_harbor_version_reports_a_fake_binary_and_swallows_failures(monkeypatch)
 
     monkeypatch.setattr(run_tb.subprocess, "run", _fake_run(FileNotFoundError("no such binary")))
     assert run_tb.harbor_version("does-not-exist") == ""
+
+
+def test_t3_the_methodology_describes_the_pool_adapters_container_roster_and_manifest_record(monkeypatch):
+    """The METHODOLOGY bullet on reviewer rows is a behavioral contract an auditor
+    follows into the artifacts, so it is pinned to the adapter it describes: the
+    container roster is DERIVED from the host pool (`container_subagents_setting`:
+    the host's API seats, one packet seat on the measured model when the host has
+    none, session seats excluded and disclosed), and the fixed-model manifest's
+    per-row record is `harness.fixed_model_actor.review_pool` with the projection's
+    own keys — not the retired `reviewer_slots` / `slot_id` shape, and no
+    "degrades typed" session seat inside the container."""
+    from devtools.benchmarks.common.model_slots import (
+        BENCHMARK_SUBAGENT_ID, container_subagents_setting, fixed_model_actor_snapshot,
+    )
+
+    text = (pathlib.Path(run_tb.__file__).parent / "METHODOLOGY.md").read_text(encoding="utf-8")
+    start = text.index("- **Every reviewer row the container can run is declared")
+    bullet = text[start:text.index("\n- **", start)]
+
+    model = "openai/gpt-5.5"
+    monkeypatch.setenv("OUROBOROS_SUBAGENTS", _roster(_pool_row("only-session", "codex=gpt-5.6-sol", kind="agent_session")))
+    projection = fixed_model_actor_snapshot(model, review_slots=2, review_effort="low", target={})
+    assert [row["route"]["target_id"] for row in projection["review_pool"]] == [model, model]
+    for key in projection["review_pool"][0]:  # subagent_id, route, effort, delivery
+        assert f"`{key}" in bullet, key
+    assert "`harness.fixed_model_actor.review_pool`" in bullet
+    assert "reviewer_slots" not in bullet and "`slot_id`" not in bullet and "degrades typed" not in bullet
+
+    # The derivation the bullet describes, on the adapter itself.
+    host = _roster(_pool_row("api-seat", "foreign/reviewer", effort="medium"),
+                   _pool_row("session-seat", "codex=gpt-5.6-sol", kind="agent_session"))
+    derived = json.loads(container_subagents_setting(model, host))["items"]
+    assert [(row["subagent_id"], row["route"]["target_id"]) for row in derived] == [
+        (BENCHMARK_SUBAGENT_ID, model), ("api-seat", "foreign/reviewer")]
+    none_left = json.loads(container_subagents_setting(model, _roster(
+        _pool_row("session-seat", "codex=gpt-5.6-sol", kind="agent_session"))))["items"]
+    assert [row["route"]["target_id"] for row in none_left] == [model, model] and _pool(json.dumps({"items": none_left}))
+    assert "`container_subagents_setting`" in bullet
+    assert "one packet seat on the\n  measured model when the host pool has no API seat at all" in bullet
+    assert "`extra.triad_rows_not_executable_in_container`" in bullet and "NOT forwarded" in bullet
