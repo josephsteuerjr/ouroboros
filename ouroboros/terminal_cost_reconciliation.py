@@ -18,7 +18,7 @@ log = logging.getLogger(__name__)
 _PROBING: set[tuple[str, str]] = set()
 _PROBE_LOCK = threading.Lock()
 _UNRESOLVED_LOCK = threading.Lock()
-_LAST_UNRESOLVED: dict[str, tuple] = {}
+_LAST_UNRESOLVED: dict[tuple[str, str], tuple] = {}
 
 
 class _RecoveryGateway:
@@ -69,7 +69,7 @@ def _unresolved(events, row, basis):
     events[str(row['attempt_id'])] = str(basis)
 
 
-def _publish_unresolved(root, observations):
+def _publish_unresolved(root, observations, *, duty="terminal-maintenance", id_field="attempt_ids"):
     """Publish one changed summary, without an interprocess lock or polling wait.
 
     Outstanding custody stays in the store. These log rows are observations,
@@ -81,7 +81,7 @@ def _publish_unresolved(root, observations):
     ids = tuple(sorted(observations))
     by_basis = dict(sorted(Counter(observations.values()).items()))
     signature = len(ids), tuple(by_basis.items()), ids
-    key = str(root)
+    key = str(root), duty
     path = root / "logs" / "supervisor.jsonl"
     assert_test_data_path(path)
     try:
@@ -91,8 +91,8 @@ def _publish_unresolved(root, observations):
                 return
             # 50 is the hard identifier-list size limit of one log row. Compare
             # the FULL id set above so changes beyond this display cap still emit.
-            event = {"type": "duty_unresolved", "duty": "terminal-maintenance", "ts": utc_now_iso(),
-                     "count": len(ids), "by_basis": by_basis, "attempt_ids": list(ids[:50])}
+            event = {"type": "duty_unresolved", "duty": duty, "ts": utc_now_iso(),
+                     "count": len(ids), "by_basis": by_basis, id_field: list(ids[:50])}
             path.parent.mkdir(parents=True, exist_ok=True)
             data = (json.dumps(event, ensure_ascii=False) + '\n').encode('utf-8')
             fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
@@ -101,6 +101,8 @@ def _publish_unresolved(root, observations):
             finally:
                 os.close(fd)
             _LAST_UNRESOLVED[key] = signature
+        if duty == "terminal-cost-projection" and ids:
+            log.warning("Terminal cost projection unresolved for %d owners: %s", len(ids), by_basis)
         bridge = try_get_bridge()
         if bridge is not None:
             bridge.push_log(event)
@@ -165,7 +167,7 @@ def _refresh_costs(root: pathlib.Path, reads) -> None:
 
     with usage_store.read(root) as txn:
         owners = txn.dirty_owners()
-    acknowledged = []
+    acknowledged, observations = [], {}
     for owner, revision in owners:
         try:
             task_id = validate_task_id(owner)
@@ -182,8 +184,15 @@ def _refresh_costs(root: pathlib.Path, reads) -> None:
                    and _refresh_terminal_task_cost(root, tid, current=row)
                    for tid, row in projection_targets):
                 acknowledged.append((owner, revision))
-        except Exception:
-            log.warning("Reconciled task cost refresh failed for %s", task_id, exc_info=True)
+        except Exception as exc:
+            if isinstance(exc, ValueError) and str(exc) in {
+                "owner_pause_authority_missing", "owner_pause_authority_unreadable",
+            }:
+                observations[task_id] = str(exc)
+                log.debug("Task cost authority unavailable for %s", task_id, exc_info=True)
+            else:
+                log.warning("Reconciled task cost refresh failed for %s", task_id, exc_info=True)
+    _publish_unresolved(root, observations, duty="terminal-cost-projection", id_field="task_ids")
     if acknowledged:
         # One short acknowledgement transaction after all result I/O. A crash
         # before it merely repeats successful projections; newer receipts win.

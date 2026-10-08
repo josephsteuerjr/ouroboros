@@ -474,7 +474,11 @@ def build_initial_setup_state(settings: dict, host_mode: str = "desktop") -> dic
     state["modelContextWindows"] = normalize_model_role_options(MODEL_CONTEXT_WINDOWS_KEY, settings.get(MODEL_CONTEXT_WINDOWS_KEY))[0]
     state["processingPreference"] = normalize_processing_preference(settings.get(PROCESSING_PREFERENCE_KEY))
     state["modelProcessingPreferences"] = normalize_model_role_options(MODEL_PROCESSING_PREFERENCES_KEY, settings.get(MODEL_PROCESSING_PREFERENCES_KEY))[0]
-    state.update({slot["stateKey"]: _string(settings.get(slot["settingKey"])) or defaults[slot["slot"]] for slot in _MODEL_SLOTS})
+    # A loaded settings document carries every slot (defaults-merged), so a blank one
+    # is a saved "inherit Main" and shows as saved; only a slot the document lacks
+    # takes the profile default. A fresh install's wizard proposes its defaults itself.
+    state.update({slot["stateKey"]: _string(settings[slot["settingKey"]]) if slot["settingKey"] in settings
+                  else defaults[slot["slot"]] for slot in _MODEL_SLOTS})
     return state
 
 
