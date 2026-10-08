@@ -10,7 +10,7 @@ import pytest
 from ouroboros import capability_evidence as ce
 from ouroboros.llm import LLMClient
 from ouroboros.review_records import ReviewSlot, apply_review_model_override
-from ouroboros.reviewer_slot_config import ConfiguredReviewerSlot, AdvisorySlotConfig
+from ouroboros.reviewer_slot_config import ConfiguredReviewerSlot
 from tests.test_llm_claudexor import MODEL, ROUTE, result, ledger, setup as gateway_fixture
 from tests.test_model_wait import live_wait as wait_fixture
 
@@ -32,8 +32,10 @@ def test_pure_projection_preserves_native_delivery_and_changes_only_one_role():
     assert apply_review_model_override(other, override) is other
     configured = ConfiguredReviewerSlot("critic", "api_chat", MODEL, subagent_id="actor")
     assert apply_review_model_override(configured, override).native_retrieval
-    assert apply_review_model_override(AdvisorySlotConfig(target_id=MODEL), {
-        "reviewer:advisory_slot_1": override["reviewer:critic"]}).use_local is True
+    # The override is keyed by the row's identity alone: a caller-named identity
+    # (the deep review's Main row, a preflight seat) takes the same projection.
+    assert apply_review_model_override(configured, {"reviewer:main": override["reviewer:critic"]},
+                                       slot_id="main").use_local is True
 
 
 @pytest.mark.parametrize("narrow", [False, True])

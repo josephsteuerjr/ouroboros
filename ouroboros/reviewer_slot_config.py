@@ -19,12 +19,6 @@ row with ``enabled: false`` is not in the pool. An empty pool is a configured fa
 (``review_pool_state`` → ``empty``): a save that leaves rows but no marks is refused
 unless the owner says ``allow_empty_review_pool`` (``review_pool_save_error``).
 
-The lane readers still below (``parse_reviewer_slots`` and helpers,
-``_default_config``, ``load_reviewer_slot_config``, the lane projections) are
-marked ``removed by package A after package C freezes the lane readers``: package
-C copies the document-reading versions into ``review_pool_migration.py`` first,
-then the integrator deletes them here. No review surface configures from them.
-
 Malformed configuration RAISES: a typo mapped to ``api_chat`` would silently spend
 the API money the owner moved the row off of; mapped to ``agent_session`` it would
 silently delegate a row the owner never delegated.
@@ -33,10 +27,10 @@ silently delegate a row the owner never delegated.
 from __future__ import annotations
 
 import contextlib as _contextlib
+import contextvars as _contextvars
 import json
-import os
-from ouroboros.settings_integrity import runtime_environ, runtime_setting
-from ouroboros.model_slots import normalize_processing_preference, resolve_processing_preference
+from ouroboros.settings_integrity import runtime_environ
+from ouroboros.model_slots import resolve_processing_preference
 import pathlib
 import threading
 from dataclasses import dataclass, replace
@@ -47,41 +41,17 @@ if TYPE_CHECKING:  # annotation-only; review_records imports this module's leave
 
 from ouroboros.route_spec import (
     ROUTE_KIND_AGENT_SESSION as SHARED_ROUTE_KIND_SESSION,
-    ROUTE_KIND_API_MODEL as SHARED_ROUTE_KIND_API,
     RouteSpec,
     compound_session_effort,
-    parse_route_spec,
-    validate_compound_session_effort,
 )
-
-REVIEWER_SLOTS_ENV = "OUROBOROS_REVIEWER_SLOTS"
 
 ROUTE_KIND_API = "api_chat"
 ROUTE_KIND_SESSION = "agent_session"
-# The one role hint every scope row carries (structured or default panel); the
-# commit gate's wave admission renders a native scope seat's work-order with it.
-SCOPE_ROLE_HINT = "scope reviewer"
-
-# removed by package A after package C freezes the lane readers: the per-lane
-# ceilings. The pool's one ceiling is the catalog's ``MAX_CONFIGURED_SUBAGENTS``
-# (which ``tools.review_multi_model.MAX_MODELS`` now IS); these two survive only
-# for the lane parser and ``review_change.compose_panel`` until packages C/D land.
-TRIAD_SLOT_LIMIT = 10
-SCOPE_SLOT_LIMIT = 4
-
-_SLOT_ID_MAX_CHARS = 64
 
 # The saved delivery of an api row (``ConfiguredReviewerSlot.delivery``): the
 # catalog's vocabulary (``configured_subagents.REVIEW_DELIVERIES``).
 DELIVERY_NATIVE = "native"
 DELIVERY_PACKET = "packet"
-# removed by package A after package C freezes the lane readers (the shipped
-# default panel's triad delivery; the pool has no default panel).
-DEFAULT_TRIAD_DELIVERY = DELIVERY_NATIVE
-
-# The deep self-review row is a singleton like the advisory: its identity is
-# fixed (the UI reads «Выполняется как» under this id), never owner-minted.
-DEEP_REVIEW_SLOT_ID = "deep_review_slot_1"
 
 
 @dataclass(frozen=True)
@@ -111,7 +81,7 @@ class ConfiguredReviewerSlot:
     # subject in bounded native tool rounds, "packet" receives the assembled
     # pack (the fallback for a model without tool calling). '' means native —
     # the catalog's default; the old "empty = packet" reading of a lane row
-    # lives only inside the lane reader (``_parse_slot`` writes it explicitly).
+    # lives only inside the frozen migration reader (``review_pool_migration``).
     delivery: str = ""
 
     @property
@@ -141,85 +111,6 @@ class ConfiguredReviewerSlot:
         return self.is_session or self.native_retrieval
 
 
-# removed by package A after package C freezes the lane readers.
-@dataclass(frozen=True)
-class AdvisorySlotConfig:
-    """The ONE optional advisory reviewer (D14) — on the shared row vocabulary.
-
-    ``enabled=False`` is a standing owner decision with a constitutional
-    consequence the UI must state: every reviewed commit then records an
-    AUDITED BYPASS instead of an advisory verdict (never a silent skip).
-
-    Delivery follows the shared closed kinds: an ``api_chat`` advisory row is
-    a routed catalog model that runs the bounded NATIVE inspection episode
-    (advisory is an inspection critic by definition — it never receives an
-    assembled packet), ``agent_session`` is a delegated Claudexor run, and a
-    ``subagent_id`` reference resolves the configured roster row. The retired
-    legacy ``api`` kind (Claude-Agent-SDK spellings) is migrated at parse:
-    a translatable target becomes its routed id; an untranslatable one keeps
-    the row DISABLED with a loud typed reason, never a silently swapped model.
-    """
-
-    enabled: bool = True
-    kind: str = ROUTE_KIND_API  # api_chat | agent_session
-    # agent_session: harness[=model] spec ('' = shared route). api_chat: a
-    # routed catalog model id ('' = the shipped advisory default).
-    target_id: str = ""
-    # api_chat keeps the historical low default. Session ``""`` means the
-    # route's own default; an explicit/compound route effort is materialized on
-    # legacy migration so Settings round-trips one authority.
-    effort: str = "low"
-    profile_id: str = ""  # optional manual credential pin (Q2-в); '' = rotation
-    # Configured-subagent reference ('' = direct row); resolved at parse into
-    # the execution fields above, exactly like triad/scope actor rows.
-    subagent_id: str = ""
-    # Non-empty ⇒ the row was force-disabled at parse with this typed reason
-    # (currently only the unmapped legacy Claude-SDK target migration).
-    disabled_reason: str = ""
-    use_local: Optional[bool] = None  # Runtime task override, not serialized configuration.
-    processing_preference: str = ""  # Effective preference, including a referenced actor's choice.
-
-    @property
-    def slot_id(self) -> str:
-        return "advisory_slot_1"  # The existing single advisory actor identity.
-
-
-# removed by package A after package C freezes the lane readers.
-@dataclass(frozen=True)
-class ReviewerSlotConfig:
-    triad: Tuple[ConfiguredReviewerSlot, ...]
-    scope: Tuple[ConfiguredReviewerSlot, ...]
-    advisory: AdvisorySlotConfig
-    source: str  # "structured" | "default" (ABI 7.0: the legacy read is gone)
-    # The optional deep self-review row on the shared vocabulary (no
-    # ``enabled``: a deep review is owner-triggered, never a standing gate).
-    # None = not configured; ``deep_review_slot`` then synthesizes the api
-    # row from the deep-review model key. Every deep-review api row (bare or
-    # subagent-bound) runs the native inspection episode and an agent_session
-    # row a delegated session: the surface declares retrieval for all its rows.
-    deep_review: Optional[ConfiguredReviewerSlot] = None
-
-
-def _valid_effort(value: Any, where: str) -> str:
-    if value is None:
-        return ""
-    if not isinstance(value, str):
-        raise ValueError(
-            f"{REVIEWER_SLOTS_ENV}: {where} effort must be a string"
-        )
-    effort = value.strip().lower()
-    if not effort:
-        return ""
-    from ouroboros.config import EFFORT_SCALE
-
-    if effort not in EFFORT_SCALE:
-        raise ValueError(
-            f"{REVIEWER_SLOTS_ENV}: {where} names an unknown effort {effort!r}; "
-            f"valid: {', '.join(EFFORT_SCALE)}"
-        )
-    return effort
-
-
 def _validate_concrete_session_target(route: RouteSpec, where: str) -> None:
     """A structured session row names one concrete delegated route.
 
@@ -231,26 +122,14 @@ def _validate_concrete_session_target(route: RouteSpec, where: str) -> None:
     """
     if not route.is_session or not route.target_id:
         return
+    from ouroboros.configured_subagents import SUBAGENTS_SETTING
     from ouroboros.subagents import parse_subagent_harness
 
     if parse_subagent_harness(route.target_id) is None:
         raise ValueError(
-            f"{REVIEWER_SLOTS_ENV}: {where} session target "
+            f"{SUBAGENTS_SETTING}: {where} session target "
             f"{route.target_id!r} does not name a concrete harness route"
         )
-
-
-import contextvars as _contextvars
-_ROSTER_ENV_OVERRIDE: "_contextvars.ContextVar[Optional[dict]]" = _contextvars.ContextVar(
-    "reviewer_roster_env_override", default=None)
-
-
-def _row_processing(raw: Any = None, *, role: str = "") -> str:
-    """Capture authored row/role/global precedence on the same settings plane."""
-    return resolve_processing_preference(
-        role, override=normalize_processing_preference(raw) or None,
-        settings=_ROSTER_ENV_OVERRIDE.get(),
-    )
 
 
 def _catalog_row_slot(row: Any, settings: Any, *, where: str = "") -> ConfiguredReviewerSlot:
@@ -280,12 +159,10 @@ def _catalog_row_slot(row: Any, settings: Any, *, where: str = "") -> Configured
 
 
 def _catalog_settings(snapshot: Any = None) -> Any:
-    """The settings plane the pool reads: an explicit task snapshot, else the
-    save-time roster override, else the applied runtime environment."""
-    if snapshot is not None:
-        return snapshot
-    override = _ROSTER_ENV_OVERRIDE.get()
-    return override if override is not None else runtime_environ()
+    """The settings plane the pool reads: an explicit settings snapshot (a task's,
+    a save handler's incoming document, a benchmark container's), else the
+    applied runtime environment."""
+    return snapshot if snapshot is not None else runtime_environ()
 
 
 def _parse_catalog(settings: Any) -> Any:
@@ -391,410 +268,6 @@ def review_pool_save_error(raw: Any, *, allow_empty: bool) -> str:
     return "no reviewers marked; mark at least one row or save with `allow_empty_review_pool`"
 
 
-# removed by package A after package C freezes the lane readers (the actor
-# reference of a lane row; the pool reads the catalog row itself).
-def _resolve_actor_slot(
-    slot_id: str, subagent_id: str, effort: str, where: str,
-) -> ConfiguredReviewerSlot:
-    """A lane row's configured-subagent reference as one frozen reviewer row
-    (resolved at load time; an unknown/disabled/invalid reference is the parser's
-    typed ValueError, never a silent fallback)."""
-    from ouroboros.subagent_runtime import SubagentSelectionError, select_subagent_snapshot
-
-    try:
-        # The applied env, or the save handler's incoming roster via the
-        # context-local override (never by mutating the process env).
-        _override = _ROSTER_ENV_OVERRIDE.get()
-        snapshot, _legacy = select_subagent_snapshot(
-            _override if _override is not None else runtime_environ(),
-            subagent_id=subagent_id,
-        )
-    except SubagentSelectionError as exc:
-        raise ValueError(
-            f"{REVIEWER_SLOTS_ENV}: {where} subagent_id {subagent_id!r} does "
-            f"not resolve: {exc.code}: {exc.detail}"
-        ) from exc
-    route = dict(snapshot.get("route") or {})
-    target = str(route.get("target_id") or "")
-    pin = str(route.get("credential_profile_id") or "")
-    # Explicit row effort wins; otherwise the roster row's own effort; an empty
-    # result falls through to the surface default via row_effort, as always.
-    chosen_effort = effort or _valid_effort(snapshot.get("effort"), where)
-    if str(route.get("kind") or "") == SHARED_ROUTE_KIND_SESSION:
-        shared = RouteSpec(
-            kind=SHARED_ROUTE_KIND_SESSION, target_id=target,
-            credential_profile_id=pin,
-        )
-        _validate_concrete_session_target(shared, where)
-        validate_compound_session_effort(
-            shared, chosen_effort, setting=REVIEWER_SLOTS_ENV, where=where,
-        )
-        return ConfiguredReviewerSlot(
-            slot_id=slot_id, kind=ROUTE_KIND_SESSION, target_id=target,
-            effort=chosen_effort, session_target=target, profile_id=pin,
-            subagent_id=subagent_id,
-            processing_preference=str(snapshot.get("processing_preference") or ""),
-        )
-    return ConfiguredReviewerSlot(
-        slot_id=slot_id, kind=ROUTE_KIND_API, target_id=target,
-        effort=chosen_effort, subagent_id=subagent_id, profile_id=pin,
-        processing_preference=str(snapshot.get("processing_preference") or ""),
-    )
-
-
-def _parse_delivery(row: Dict[str, Any], where: str, *, allowed: bool) -> str:
-    """A direct api_chat triad row's saved delivery; refused wherever it means nothing."""
-    if "delivery" not in row:
-        return ""
-    if not allowed:
-        raise ValueError(
-            f"{REVIEWER_SLOTS_ENV}: {where} delivery applies only to a direct api_chat triad row "
-            "(sessions, subagent references, scope, advisory and deep review rows always read)")
-    value = row["delivery"]
-    if value not in (DELIVERY_NATIVE, DELIVERY_PACKET):
-        raise ValueError(
-            f"{REVIEWER_SLOTS_ENV}: {where} delivery must be {DELIVERY_NATIVE!r} or {DELIVERY_PACKET!r}")
-    return value
-
-
-# removed by package A after package C freezes the lane readers.
-def _parse_slot(row: Any, where: str, seen_ids: set, *, delivery_allowed: bool = False) -> ConfiguredReviewerSlot:
-    if not isinstance(row, dict):
-        raise ValueError(f"{REVIEWER_SLOTS_ENV}: {where} is not an object")
-    unknown = sorted(set(row) - {"slot_id", "route", "subagent_id", "effort", "processing_preference", "delivery"})
-    if unknown:
-        raise ValueError(
-            f"{REVIEWER_SLOTS_ENV}: {where} has unknown keys: {unknown}"
-        )
-    raw_slot_id = row.get("slot_id")
-    if not isinstance(raw_slot_id, str):
-        raise ValueError(
-            f"{REVIEWER_SLOTS_ENV}: {where} slot_id must be a string"
-        )
-    slot_id = raw_slot_id.strip()
-    if not slot_id or len(slot_id) > _SLOT_ID_MAX_CHARS:
-        raise ValueError(
-            f"{REVIEWER_SLOTS_ENV}: {where} needs a stable non-empty slot_id "
-            f"(≤{_SLOT_ID_MAX_CHARS} chars) — identity is never an array index"
-        )
-    if slot_id in seen_ids:
-        raise ValueError(
-            f"{REVIEWER_SLOTS_ENV}: slot_id {slot_id!r} appears twice; a row's "
-            "receipts can only line up with ONE history"
-        )
-    seen_ids.add(slot_id)
-    raw_ref = row.get("subagent_id")
-    if raw_ref is not None and not isinstance(raw_ref, str):
-        raise ValueError(
-            f"{REVIEWER_SLOTS_ENV}: {where} subagent_id must be a string"
-        )
-    actor_ref = str(raw_ref or "").strip()
-    if raw_ref is not None and not actor_ref:
-        raise ValueError(
-            f"{REVIEWER_SLOTS_ENV}: {where} subagent_id must not be empty"
-        )
-    if actor_ref and row.get("route") is not None:
-        raise ValueError(
-            f"{REVIEWER_SLOTS_ENV}: {where} must use either route or "
-            "subagent_id, not both — the roster row is the route's SSOT"
-        )
-    if actor_ref:
-        if "processing_preference" in row:
-            raise ValueError(f"{REVIEWER_SLOTS_ENV}: {where} inherits Processing from its subagent")
-        _parse_delivery(row, where, allowed=False)
-        return _resolve_actor_slot(
-            slot_id, actor_ref, _valid_effort(row.get("effort"), where), where,
-        )
-    route = parse_route_spec(
-        row.get("route"), setting=REVIEWER_SLOTS_ENV, where=where,
-        kind_aliases={
-            ROUTE_KIND_API: SHARED_ROUTE_KIND_API,
-            ROUTE_KIND_SESSION: SHARED_ROUTE_KIND_SESSION,
-        },
-        pin_key="profile_id",
-        reject_unknown=True,
-        strict_strings=True,
-        reject_api_pin=True,
-    )
-    kind = ROUTE_KIND_SESSION if route.is_session else ROUTE_KIND_API
-    _validate_concrete_session_target(route, where)
-    effort = _valid_effort(row.get("effort"), where)
-    validate_compound_session_effort(
-        route, effort, setting=REVIEWER_SLOTS_ENV, where=where,
-    )
-    direct_api_triad = delivery_allowed and kind == ROUTE_KIND_API
-    # The lane reader's own reading of an absent delivery: a direct api triad row
-    # saved before the field existed received the packet. Written explicitly so
-    # the slot's derived facts never depend on this legacy meaning.
-    delivery = _parse_delivery(row, where, allowed=direct_api_triad) or (DELIVERY_PACKET if direct_api_triad else "")
-    return ConfiguredReviewerSlot(
-        slot_id=slot_id, kind=kind, target_id=route.target_id,
-        effort=effort,
-        session_target=route.target_id if kind == ROUTE_KIND_SESSION else "",
-        profile_id=route.credential_profile_id,
-        processing_preference=_row_processing(row.get("processing_preference")),
-        delivery=delivery,
-    )
-
-
-def _migrate_sdk_advisory_target(raw_kind: str, target: str) -> tuple[str, str]:
-    """Translate a retired Claude-SDK ``api``-kind target to ``(routed, reason)``.
-
-    The Claude-Agent-SDK advisory transport is retired (owner decision,
-    2026-08-29): its rows migrate to the routed catalog. Only translations
-    that keep the SAME model are performed; anything else keeps the row
-    DISABLED with a typed reason — a silently swapped reviewer model is the
-    exact class this parser exists to refuse.
-    """
-    if raw_kind != "api":
-        return target, ""
-    base = target.replace("[1m]", "").strip()
-    if not base or base in {"sonnet", "claude-sonnet-5"}:
-        # '' and the shipped default spelling both meant claude-sonnet-5.
-        return "", ""
-    if "/" in base or "::" in base:
-        return target, ""  # already a routed/provider-tagged id
-    if base.startswith("claude-"):
-        return f"anthropic/{base}", ""
-    return target, "legacy_claude_sdk_target_unmapped"
-
-
-def _resolve_advisory_actor(subagent_id: str, effort: str, enabled: bool) -> AdvisorySlotConfig:
-    row = _resolve_actor_slot("advisory_slot_1", subagent_id, effort, "advisory")
-    return AdvisorySlotConfig(
-        enabled=enabled, kind=row.kind, target_id=row.target_id,
-        effort=row.effort or ("low" if not row.is_session else ""),
-        profile_id=row.profile_id, subagent_id=subagent_id,
-        processing_preference=row.processing_preference,
-    )
-
-
-# removed by package A after package C freezes the lane readers.
-def _parse_advisory(raw: Any) -> AdvisorySlotConfig:
-    if raw is None:
-        return AdvisorySlotConfig(processing_preference=_row_processing())
-    if not isinstance(raw, dict):
-        raise ValueError(f"{REVIEWER_SLOTS_ENV}: advisory must be an object")
-    unknown = sorted(set(raw) - {"enabled", "route", "kind", "target_id", "effort", "subagent_id", "processing_preference"})
-    if unknown:
-        raise ValueError(
-            f"{REVIEWER_SLOTS_ENV}: advisory has unknown keys: {unknown}"
-        )
-    enabled = raw.get("enabled", True)
-    if not isinstance(enabled, bool):
-        raise ValueError(f"{REVIEWER_SLOTS_ENV}: advisory enabled must be a boolean")
-    for key in ("kind", "target_id", "subagent_id"):
-        if key in raw and not isinstance(raw[key], str):
-            raise ValueError(
-                f"{REVIEWER_SLOTS_ENV}: advisory {key} must be a string"
-            )
-    actor_ref = str(raw.get("subagent_id") or "").strip()
-    if "subagent_id" in raw and not actor_ref:
-        raise ValueError(f"{REVIEWER_SLOTS_ENV}: advisory subagent_id must not be empty")
-    route = raw.get("route")
-    if route is not None and not isinstance(route, dict):
-        # The same typed refusal _parse_slot gives; an AttributeError would
-        # escape every ``except ValueError`` that treats this parser as authority.
-        raise ValueError(f"{REVIEWER_SLOTS_ENV}: advisory route must be an object "
-                         "{kind, target_id}")
-    if actor_ref and (route is not None or ({"kind", "target_id"} & set(raw))):
-        raise ValueError(
-            f"{REVIEWER_SLOTS_ENV}: advisory must use either subagent_id or a "
-            "route, not both — the roster row is the route's SSOT"
-        )
-    if actor_ref:
-        if "processing_preference" in raw:
-            raise ValueError(f"{REVIEWER_SLOTS_ENV}: advisory inherits Processing from its subagent")
-        return _resolve_advisory_actor(
-            actor_ref, _valid_effort(raw.get("effort"), "advisory"), enabled,
-        )
-    if route is not None and ({"kind", "target_id"} & set(raw)):
-        raise ValueError(
-            f"{REVIEWER_SLOTS_ENV}: advisory must use either route or legacy "
-            "kind/target_id, not both"
-        )
-    route_payload = dict(route or {})
-    if "kind" not in route_payload:
-        route_payload["kind"] = raw.get("kind") or ROUTE_KIND_API
-    if "target_id" not in route_payload:
-        route_payload["target_id"] = raw.get("target_id") or ""
-    raw_kind = str(route_payload.get("kind") or "").strip().lower()
-    shared_route = parse_route_spec(
-        route_payload,
-        setting=REVIEWER_SLOTS_ENV,
-        where="advisory",
-        kind_aliases={
-            "api": SHARED_ROUTE_KIND_API,
-            ROUTE_KIND_API: SHARED_ROUTE_KIND_API,
-            ROUTE_KIND_SESSION: SHARED_ROUTE_KIND_SESSION,
-        },
-        pin_key="profile_id",
-        allow_empty_target=True,
-        reject_unknown=True,
-        strict_strings=True,
-        reject_api_pin=True,
-    )
-    if enabled and shared_route.is_session and not shared_route.target_id:
-        raise ValueError(
-            f"{REVIEWER_SLOTS_ENV}: enabled advisory agent_session route needs "
-            "a non-empty target_id; shared-session fallback is legacy-only"
-        )
-    _validate_concrete_session_target(shared_route, "advisory")
-    effort = _valid_effort(raw.get("effort"), "advisory")
-    if not effort and not shared_route.is_session:
-        effort = "low"
-    validate_compound_session_effort(
-        shared_route, effort, setting=REVIEWER_SLOTS_ENV, where="advisory",
-    )
-    target, disabled_reason = (
-        _migrate_sdk_advisory_target(raw_kind, shared_route.target_id)
-        if not shared_route.is_session else (shared_route.target_id, "")
-    )
-    if disabled_reason:
-        import logging
-
-        logging.getLogger(__name__).warning(
-            "advisory row disabled: legacy Claude-SDK target %r has no same-model "
-            "routed translation; pick a routed model or a configured subagent in "
-            "Settings → Review lanes", target,
-        )
-    return AdvisorySlotConfig(
-        enabled=enabled and not disabled_reason,
-        kind=ROUTE_KIND_SESSION if shared_route.is_session else ROUTE_KIND_API,
-        target_id=target,
-        effort=effort,
-        profile_id=shared_route.credential_profile_id,
-        disabled_reason=disabled_reason,
-        processing_preference=_row_processing(raw.get("processing_preference")),
-    )
-
-
-# removed by package A after package C freezes the lane readers.
-def _parse_deep_review(raw: Any, seen_ids: set) -> Optional[ConfiguredReviewerSlot]:
-    """The optional deep self-review row: the shared row vocabulary minus
-    ``slot_id`` (a singleton's identity is fixed) and minus ``enabled``."""
-    if raw is None:
-        return None
-    if not isinstance(raw, dict):
-        raise ValueError(f"{REVIEWER_SLOTS_ENV}: deep_review must be an object")
-    unknown = sorted(set(raw) - {"route", "subagent_id", "effort", "processing_preference"})
-    if unknown:
-        raise ValueError(f"{REVIEWER_SLOTS_ENV}: deep_review has unknown keys: {unknown}")
-    return _parse_slot({**raw, "slot_id": DEEP_REVIEW_SLOT_ID}, "deep_review", seen_ids)
-
-
-# removed by package A after package C freezes the lane readers.
-def parse_reviewer_slots(raw: str) -> ReviewerSlotConfig:
-    """Strict parse of the retired structured lane setting. Raises ValueError, row-precise."""
-    try:
-        payload = json.loads(raw)
-    except ValueError as exc:
-        raise ValueError(f"{REVIEWER_SLOTS_ENV} is not valid JSON: {exc}") from exc
-    if not isinstance(payload, dict):
-        raise ValueError(f"{REVIEWER_SLOTS_ENV} must be a JSON object")
-    unknown = sorted(set(payload) - {"triad", "scope", "advisory", "deep_review"})
-    if unknown:
-        raise ValueError(f"{REVIEWER_SLOTS_ENV} has unknown top-level keys: {unknown}")
-    seen_ids: set = set()
-    groups: Dict[str, List[ConfiguredReviewerSlot]] = {}
-    for group, limit in (("triad", TRIAD_SLOT_LIMIT), ("scope", SCOPE_SLOT_LIMIT)):
-        rows = payload.get(group)
-        if rows is None:
-            rows = []
-        if not isinstance(rows, list):
-            raise ValueError(f"{REVIEWER_SLOTS_ENV}: {group} must be an array")
-        if len(rows) > limit:
-            raise ValueError(
-                f"{REVIEWER_SLOTS_ENV}: {group} has {len(rows)} rows; the real "
-                f"limit is {limit} (shown in the UI, not negotiable here)"
-            )
-        groups[group] = [
-            _parse_slot(row, f"{group}[{idx}]", seen_ids, delivery_allowed=group == "triad")
-            for idx, row in enumerate(rows)
-        ]
-    if not groups["triad"]:
-        raise ValueError(f"{REVIEWER_SLOTS_ENV}: triad needs at least one slot")
-    if not groups["scope"]:
-        raise ValueError(f"{REVIEWER_SLOTS_ENV}: scope needs at least one slot")
-    return ReviewerSlotConfig(
-        triad=tuple(groups["triad"]),
-        scope=tuple(groups["scope"]),
-        advisory=_parse_advisory(payload.get("advisory")),
-        source="structured",
-        deep_review=_parse_deep_review(payload.get("deep_review"), seen_ids),
-    )
-
-
-
-# removed by package A after package C freezes the lane readers (package C's
-# startup notice reads the migration snapshot instead).
-def authored_reviewer_slots_state(raw: str) -> Tuple[str, str]:
-    """The lane setting's three states as ``(state, parse_error)``: ``absent``
-    (shipped default panel), ``authored`` (strict parse accepts), ``invalid``
-    (row-precise error; the loader RAISES, so no lane panel serves)."""
-    text = str(raw or "").strip()
-    if not text:
-        return "absent", ""
-    try:
-        parse_reviewer_slots(text)
-    except ValueError as exc:
-        return "invalid", str(exc)
-    return "authored", ""
-
-# ---------------------------------------------------------------------------
-# Shipped default panel — removed by package A after package C freezes the lane
-# readers (the pool has no default panel: the migration mints factory rows).
-# ---------------------------------------------------------------------------
-
-
-def _default_config() -> ReviewerSlotConfig:
-    """The shipped default lane panel — api_chat rows over the derived env plane
-    (`get_review_models` / `get_scope_review_models`); row effort stays '' so
-    `row_effort` resolves the surface default; deterministic per-row slot ids."""
-    from ouroboros.config import get_review_models, get_scope_review_models
-    from ouroboros.review_model_routes import compatible_only_review_model
-    from ouroboros.review_substrate import (
-        SCOPE_SLOT_ID_PREFIX,
-        SLOT_ID_PREFIX,
-        slot_id_for_row,
-    )
-
-    def _rows(models, prefix, delivery=""):
-        return tuple(
-            ConfiguredReviewerSlot(
-                slot_id=slot_id_for_row(idx + 1, prefix=prefix),
-                kind=ROUTE_KIND_API,
-                target_id=str(model),
-                processing_preference=_row_processing(),
-                delivery=delivery,
-            )
-            for idx, model in enumerate(
-                str(m) for m in (models or []) if str(m or "").strip()
-            )
-        )
-
-    # #1334: the shipped triad reads the work itself on the same models (scope
-    # rows always read); a model without tool calling is switched to Packet by
-    # the owner, never silently at dispatch.
-    return ReviewerSlotConfig(
-        triad=_rows(get_review_models(), SLOT_ID_PREFIX, DEFAULT_TRIAD_DELIVERY),
-        scope=_rows(get_scope_review_models(), SCOPE_SLOT_ID_PREFIX),
-        # An OpenAI-compatible-only install's advisory is Main's route too, shown as such.
-        advisory=AdvisorySlotConfig(target_id=compatible_only_review_model(), processing_preference=_row_processing()),
-        source="default",
-    )
-
-
-# removed by package A after package C freezes the lane readers (its remaining
-# readers are the lane consumers packages B/D/E move to ``review_pool_slots``).
-def load_reviewer_slot_config() -> ReviewerSlotConfig:
-    """The lane loader: structured when present, the shipped default panel otherwise."""
-    raw = str(runtime_setting(REVIEWER_SLOTS_ENV, "") or "").strip()
-    if raw:
-        return parse_reviewer_slots(raw)
-    return _default_config()
-
-
 # ---------------------------------------------------------------------------
 # The composed pool: one ``review_change`` wave's seats.
 # ---------------------------------------------------------------------------
@@ -857,42 +330,6 @@ def reviewer_slot_config_error() -> str:
 # ---------------------------------------------------------------------------
 # Consumer accessors.
 # ---------------------------------------------------------------------------
-
-
-# removed by package A after package C freezes the lane readers.
-def commit_triad_rows() -> List[ConfiguredReviewerSlot]:
-    """Configured triad rows shared by commit, plan, and skill review."""
-    return list(load_reviewer_slot_config().triad)
-
-
-# removed by package A after package C freezes the lane readers (package D
-# moves the preflight to ``review_change(surface=preflight, reviewers=[one])``).
-def advisory_slot_config() -> AdvisorySlotConfig:
-    return load_reviewer_slot_config().advisory
-
-
-# removed by package A after package C freezes the lane readers (package D
-# moves the self-review to ``review_change(surface=system, reviewers=[one])``).
-def deep_review_slot(config: Optional[ReviewerSlotConfig] = None) -> ConfiguredReviewerSlot:
-    """THE deep self-review row: the configured ``deep_review`` lane row, else the
-    api row synthesized from ``OUROBOROS_MODEL_DEEP_SELF_REVIEW`` (the row's own
-    effort outranks the surface key only when set; a malformed setting raises)."""
-    selected = config if config is not None else load_reviewer_slot_config()
-    row = selected.deep_review
-    return row if row is not None else synthesized_deep_review_slot(authored_panel=selected.source == "structured")
-
-
-# removed by package A after package C freezes the lane readers.
-def synthesized_deep_review_slot(*, authored_panel: bool = False) -> ConfiguredReviewerSlot:
-    """The api row the legacy model key stands for — the ONE synthesis rule shared
-    by ``deep_review_slot`` and the settings endpoint's repair placeholder."""
-    from ouroboros.config import get_deep_self_review_model
-
-    return ConfiguredReviewerSlot(
-        slot_id=DEEP_REVIEW_SLOT_ID, kind=ROUTE_KIND_API,
-        target_id=get_deep_self_review_model(authored_panel=authored_panel),
-        processing_preference=_row_processing(role="deep_review"),
-    )
 
 
 def _delivery_slot(
@@ -1017,44 +454,6 @@ def child_acceptance_slots(slots: Sequence[Any], reviewer_slot_id: str = "") -> 
     }
 
 
-# removed by package B (the positional model-list builder of the scope lane).
-def reviewer_slots(
-    models: List[str] | None = None,
-    *,
-    effort: str = "medium",
-    role_hint: str = "",
-    id_prefix: str = "",
-) -> List[Any]:
-    """The configured reviewer rows, every one pinned ``api_chat``.
-
-    Moved here from ``review_substrate`` for module altitude (P7); the
-    substrate re-exports it. Per-row delegated delivery is a structured-SSOT
-    fact (``OUROBOROS_REVIEWER_SLOTS`` rows — D14/6.1): the phase-5 per-row
-    route envs are RETIRED settings keys (ABI-10) and are ignored here, so a
-    row built from a plain model list is an api_chat call explicitly rather
-    than by accident (the scope caller that fans out a delegated row overrides
-    the route itself). Surfaces that follow the configured triad rows do not
-    come here — they use ``triad_delivery_slots``.
-    """
-    from ouroboros.config import get_review_models, resolved_review_model_target
-    from ouroboros.review_execution import ReviewRouteKind
-    from ouroboros.review_substrate import SLOT_ID_PREFIX, ReviewSlot, slot_id_for_row
-
-    id_prefix = id_prefix or SLOT_ID_PREFIX
-    raw_models = models if models is not None else get_review_models()
-    named = [str(model) for model in (raw_models or []) if str(model or "").strip()]
-    # ABI-4: the local-route fact comes off the typed target constructed at the
-    # review seam (one predicate application, at construction) instead of a
-    # per-string predicate call here.
-    return [
-        ReviewSlot(slot_id=slot_id_for_row(idx + 1, prefix=id_prefix), model=model, effort=effort,
-                   role_hint=role_hint,
-                   use_local=(resolved_review_model_target(model).provider_route == "local"),
-                   route=ReviewRouteKind.API_CHAT)
-        for idx, model in enumerate(named)
-    ]
-
-
 def commit_triad_delivery() -> Dict[str, Any]:
     """Aligned per-row delivery vectors for the commit triad and skill review.
 
@@ -1140,7 +539,8 @@ def row_effort(
     stays. Only plan review passes an order; commit, scope, skill, acceptance and
     deep review call without one, and for them an explicit row field wins, then
     a compound slug's encoded effort, then ``fallback`` — the pool's
-    ``REVIEW_POOL_DEFAULT_EFFORT`` — else the surface setting (lane rows only).
+    ``REVIEW_POOL_DEFAULT_EFFORT`` — else the surface setting (a caller-built row
+    that passes no fallback, e.g. the deep review's Main row).
     """
     if default and not _compound_effort(row):
         return default
@@ -1152,131 +552,6 @@ def row_effort(
     from ouroboros.config import resolve_effort
 
     return resolve_effort(surface)
-
-
-# ---------------------------------------------------------------------------
-# Save-time validation and the legacy comma-key projection.
-# ---------------------------------------------------------------------------
-
-
-# Measured acceptance-panel cost on the API packet delivery (plan §4.1, traces of
-# 2026-09-01): the ONE-TIME migration disclosure quotes them (owner R12) so an
-# owner whose triad now retrieves knows what each substantive task's acceptance
-# panel used to cost and what it spends instead. History, not a price table.
-_ACCEPTANCE_API_PANEL_MEASURED = (
-    "measured on the API packet panel it was ≈12 s and ≈$0.07 per model row per task "
-    "(median, OSWorld traces; a three-row panel ≈75 s / ≈$0.82 on ProgramBench; "
-    "7.5–8.9% of a run's cost)"
-)
-
-
-# removed by package A after package C freezes the lane readers.
-def acceptance_delivery_disclosure(rows: Sequence[ConfiguredReviewerSlot]) -> str:
-    """The one-time R12 disclosure for a triad that (newly) retrieves: which rows,
-    and what every substantive task's acceptance panel spends on them."""
-    named = ", ".join(
-        f"{row.slot_id} ({'agent session ' + row.session_target if row.is_session else 'native inspection'}"
-        f"{' via ' + row.subagent_id if row.subagent_id else ''} → {row.target_id})"
-        for row in rows
-    )
-    return (
-        f"Task acceptance now follows these triad rows, including the retrieving ones — {named}. "
-        f"Every substantive task's acceptance panel runs on them from the next task: {_ACCEPTANCE_API_PANEL_MEASURED}. "
-        "A native inspection row spends API money as rounds × one send; an agent-session row spends "
-        "minutes of your subscription window per task instead. A triad that also carries an "
-        "api_chat row keeps a packet panel beside them."
-    )
-
-
-# removed by package A after package C freezes the lane readers (package E
-# replaces the lane save check with ``review_pool_save_error`` in the gateway).
-def reviewer_slot_save_check(
-    raw: str, *, subagents_raw: Optional[str] = None, previous_raw: Optional[str] = None,
-) -> str:
-    """Validate an incoming structured value; return the save-time disclosure.
-
-    Raises ValueError (row-precise) on a malformed value so the save handler
-    turns it into a 400. ``subagents_raw`` threads the roster the SAME save
-    produces (S4 atomicity) through a context-local override — actor
-    references validate against it without any process-env mutation.
-
-    The disclosure is the ONE-TIME migration notice of owner R12: returned when
-    the saved triad has a retrieving row (agent session or configured-subagent
-    native inspection) and the previously stored value had none — a legacy
-    comma-key config, a packet-only triad, an unknown/malformed previous value.
-    A save that keeps an already-retrieving triad discloses nothing again. The
-    former all-delegated API-fallback warning described a task-acceptance
-    substitution that no longer exists (acceptance follows the rows, R2)."""
-    with roster_env_override(subagents_raw) if subagents_raw is not None else _contextlib.nullcontext():
-        retrieving = [row for row in parse_reviewer_slots(raw).triad if row.retrieves]
-        if not retrieving:
-            return ""
-        try:
-            # No stored value ran the shipped default panel, whose triad already
-            # reads natively (#1334; the startup notice disclosed it).
-            previous = parse_reviewer_slots(previous_raw) if previous_raw else _default_config()
-            if any(row.retrieves for row in previous.triad):
-                return ""  # already disclosed when that value was saved
-        except ValueError:
-            pass  # a malformed previous value never ran a retrieving panel: disclose
-    return acceptance_delivery_disclosure(retrieving)
-
-
-@_contextlib.contextmanager
-def roster_env_override(subagents_raw: str, *, environ=None):
-    """Parse reviewer rows against THIS roster instead of the process env —
-    the save handler's incoming roster, or a benchmark container's one-model
-    roster — without mutating the environment concurrent dispatch observes."""
-    overlay = dict(runtime_environ() if environ is None else environ)
-    overlay["OUROBOROS_SUBAGENTS"] = str(subagents_raw)
-    token = _ROSTER_ENV_OVERRIDE.set(overlay)
-    try:
-        yield
-    finally:
-        _ROSTER_ENV_OVERRIDE.reset(token)
-
-
-# removed by package A after package C freezes the lane readers (its one caller
-# is ``config.apply_settings_to_env``; the benchmarks no longer need the comma
-# projection — they pin N identical catalog rows).
-def project_reviewer_slots_into_env(*, environ=None) -> None:
-    """Project the structured lane config into the legacy comma keys at env-apply
-    time (api rows only; a runtime derivation, never a second write), and own the
-    historical default-if-empty floor of both keys. No review surface reads them;
-    a malformed structured value is logged and left unprojected (startup must not
-    die here — the surfaces re-parse strictly and block with the precise error)."""
-    from ouroboros.settings_defaults import OPENROUTER_REVIEW_DEFAULTS
-
-    environ = os.environ if environ is None else environ
-    raw = str(environ.get(REVIEWER_SLOTS_ENV, "") or "").strip()
-    if raw:
-        try:
-            with roster_env_override(str(environ.get("OUROBOROS_SUBAGENTS", "")), environ=environ):
-                config = parse_reviewer_slots(raw)
-        except ValueError:
-            import logging
-
-            logging.getLogger(__name__).error(
-                "%s is malformed; legacy env keys left unprojected — review "
-                "surfaces will block with the precise parse error",
-                REVIEWER_SLOTS_ENV, exc_info=True,
-            )
-        else:
-            api_triad = [r.target_id for r in config.triad if not r.is_session]
-            api_scope = [r.target_id for r in config.scope if not r.is_session]
-            if api_triad:
-                environ["OUROBOROS_REVIEW_MODELS"] = ",".join(api_triad)
-            else:
-                environ.pop("OUROBOROS_REVIEW_MODELS", None)
-            if api_scope:
-                environ["OUROBOROS_SCOPE_REVIEW_MODELS"] = ",".join(api_scope)
-            else:
-                environ.pop("OUROBOROS_SCOPE_REVIEW_MODELS", None)
-                environ.pop("OUROBOROS_SCOPE_REVIEW_MODEL", None)
-    if not environ.get("OUROBOROS_REVIEW_MODELS"):
-        environ["OUROBOROS_REVIEW_MODELS"] = ",".join(OPENROUTER_REVIEW_DEFAULTS["triad"])
-    if not environ.get("OUROBOROS_SCOPE_REVIEW_MODELS") and not environ.get("OUROBOROS_SCOPE_REVIEW_MODEL"):
-        environ["OUROBOROS_SCOPE_REVIEW_MODELS"] = ",".join(OPENROUTER_REVIEW_DEFAULTS["scope"])
 
 
 # ---------------------------------------------------------------------------
@@ -1484,7 +759,6 @@ __all__ = [
     "review_pool_slots",
     "review_pool_state",
     "reviewer_slot_config_error",
-    "roster_env_override",
     "row_at_effort_order",
     "row_effort",
     "row_plan_retrieves",
@@ -1493,22 +767,4 @@ __all__ = [
     "bind_reviewer_slot_record_id",
     "record_reviewer_slot_executions", "reviewer_slot_execution_rows",
     "reviewer_slot_last_executions",
-    # removed by package A after package C freezes the lane readers (and by
-    # packages B/D/E for their lane consumers): the retired lane surface.
-    "DEEP_REVIEW_SLOT_ID",
-    "REVIEWER_SLOTS_ENV",
-    "SCOPE_SLOT_LIMIT",
-    "TRIAD_SLOT_LIMIT",
-    "AdvisorySlotConfig",
-    "ReviewerSlotConfig",
-    "advisory_slot_config",
-    "commit_triad_rows",
-    "deep_review_slot",
-    "synthesized_deep_review_slot",
-    "load_reviewer_slot_config",
-    "parse_reviewer_slots",
-    "authored_reviewer_slots_state",
-    "project_reviewer_slots_into_env",
-    "acceptance_delivery_disclosure",
-    "reviewer_slot_save_check",
 ]

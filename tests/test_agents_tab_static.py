@@ -331,15 +331,14 @@ def test_the_reviewer_disclosure_stopped_advising_against_the_default() -> None:
     subscription connected, everything that can run on one does, and a triad is
     never half API and half subscription). Its carrier — the conditional
     all-delegated warning about a task-acceptance API fallback — is gone with the
-    fallback itself (owner R2/R12, 2026-09-01): acceptance follows the rows, and
-    the only server-side sentence left is the ONE-TIME migration disclosure with
-    the measured numbers, which states what the rows now cost and never advises
-    against the default."""
+    fallback itself (owner R2/R12, 2026-09-01): acceptance follows the rows. The
+    ONE-TIME packet→retrieving migration disclosure that was the last server-side
+    sentence left with the review lanes (PR-3): delivery is a field of the catalog
+    row the owner saves, so no sentence advises for or against a delivery."""
     config = (REPO_ROOT / "ouroboros" / "reviewer_slot_config.py").read_text(encoding="utf-8")
     assert "Keep at least one API reviewer row" not in config
     assert "never fall back" not in config and "stays API-only" not in config
-    assert "Task acceptance now follows these triad rows" in config
-    assert "Keep an api_chat row" not in config
+    assert "acceptance_delivery_disclosure" not in config and "Keep an api_chat row" not in config
     # Reviewers are catalog rows now; their editor carries the standing rule.
     editor = " ".join(_read("subagents_settings.js").split())
     assert "keep at least one API row" not in editor.lower()

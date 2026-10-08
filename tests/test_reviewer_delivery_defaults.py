@@ -1,44 +1,28 @@
 """#1334 / #1116 / #1335: reviewer delivery defaults and the one-time notices.
 
-A direct api_chat LANE row carries its saved ``delivery``; a row saved before
-the field keeps its packet meaning (owner 1D — PR-3 spells that reading out as
-an explicit ``packet``) and every consumer reads the one ``retrieves`` fact
-rather than inferring it from an actor id. The pool's own delivery tests live
-in ``tests/test_review_pool.py``; the lane parts here are
-removed by package A after package C freezes the lane readers. A
-compatible-only install reviews on Main (now as the factory pool row); and an
-upgraded install hears once, factually, about the default panel and any finite
-task limit it still runs under.
+A pool row's saved ``delivery`` is the one ``retrieves`` fact every consumer
+reads (F8), the triad consumer hands a native row the compact work order rather
+than the assembled packet, a compatible-only install reviews on Main (the
+factory pool rows), and an upgraded install hears once, factually, about any
+finite task limit it still runs under. The pool's own delivery/order/quorum
+tests live in ``tests/test_review_pool.py``.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-import re
 from types import SimpleNamespace
 
 import pytest
 
 from ouroboros import reviewer_slot_config as rsc
-from ouroboros.reviewer_slot_config import REVIEWER_SLOTS_ENV, parse_reviewer_slots
 from tests.test_owner_settings_write_seam import isolated_settings  # noqa: F401  (fixture)
-
-_SCOPE = [{"slot_id": "s1", "route": {"kind": "api_chat", "target_id": "m/scope"}}]
-
-
-def _panel(*triad, scope=None, **extra):
-    return json.dumps({"triad": list(triad), "scope": scope or _SCOPE, **extra})
-
-
-def _api(slot_id, model="m/one", **fields):
-    return {"slot_id": slot_id, "route": {"kind": "api_chat", "target_id": model}, **fields}
 
 
 @pytest.fixture
 def clean_env(monkeypatch):
-    for key in (REVIEWER_SLOTS_ENV, "OUROBOROS_REVIEW_MODELS", "OUROBOROS_SCOPE_REVIEW_MODELS",
-                "OUROBOROS_SCOPE_REVIEW_MODEL", "OPENROUTER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
+    for key in ("OUROBOROS_SUBAGENTS", "OUROBOROS_REVIEW_MODELS", "OPENROUTER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
                 "OPENAI_COMPATIBLE_BASE_URL", "OPENAI_BASE_URL", "OUROBOROS_MODEL", "OUROBOROS_MODEL_LIGHT",
                 "MINIMAX_API_KEY", "DEEPSEEK_API_KEY", "ZAI_API_KEY", "CLOUDRU_FOUNDATION_MODELS_API_KEY",
                 "GIGACHAT_CREDENTIALS", "USE_LOCAL_MAIN"):
@@ -47,38 +31,6 @@ def clean_env(monkeypatch):
 
 
 # --- the saved delivery field --------------------------------------------------------
-
-
-def test_a_bare_row_keeps_packet_and_an_explicit_delivery_is_the_rows_own_fact():
-    config = parse_reviewer_slots(_panel(_api("bare"), _api("native", delivery="native"),
-                                         _api("packet", delivery="packet")))
-    bare, native, packet = config.triad
-    # The lane reader's reading of an absent field is the row's packet meaning,
-    # stated explicitly (F8: every consumer reads the fact, never an absence).
-    assert (bare.delivery, bare.retrieves) == ("packet", False)
-    assert (native.delivery, native.native_retrieval, native.retrieves) == ("native", True, True)
-    assert (packet.delivery, packet.retrieves) == ("packet", False)
-    assert not native.subagent_id  # no synthetic roster actor carries it
-
-
-@pytest.mark.parametrize(("config", "where"), [
-    (_panel({"slot_id": "x", "route": {"kind": "agent_session", "target_id": "codex"}, "delivery": "native"}), "triad[0]"),
-    (_panel(_api("t"), scope=[_api("s", delivery="native")]), "scope[0]"),
-    (_panel(_api("t"), deep_review={"route": {"kind": "api_chat", "target_id": "m"}, "delivery": "packet"}), "deep_review"),
-    (_panel(_api("t", delivery="both")), "triad[0]"),
-])
-def test_delivery_is_refused_wherever_it_means_nothing(config, where):
-    with pytest.raises(ValueError, match=re.escape(where)):
-        parse_reviewer_slots(config)
-
-
-
-
-def test_the_shipped_default_triad_reads_natively_on_the_same_models(clean_env):
-    clean_env.setenv("OUROBOROS_REVIEW_MODELS", "m/a,m/b,m/c")
-    config = rsc.load_reviewer_slot_config()
-    assert config.source == "default"
-    assert [(r.target_id, r.delivery) for r in config.triad] == [("m/a", "native"), ("m/b", "native"), ("m/c", "native")]
 
 
 def test_the_triad_multi_model_row_runs_its_native_delivery(monkeypatch, tmp_path):
@@ -147,7 +99,8 @@ def test_a_pool_rows_delivery_is_native_unless_the_row_says_packet(monkeypatch, 
 
 
 def test_a_compatible_only_install_reviews_on_main(clean_env):
-    from ouroboros.review_model_routes import get_review_models, get_scope_review_models
+    from ouroboros.deep_self_review import deep_review_route
+    from ouroboros.review_model_routes import get_review_models
     from ouroboros.settings_defaults import OPENROUTER_REVIEW_DEFAULTS
     from ouroboros.subscription_install_presets import factory_review_rows
 
@@ -159,9 +112,9 @@ def test_a_compatible_only_install_reviews_on_main(clean_env):
     # ran); the env plane keeps the shipped list as-is.
     assert [row["route"]["target_id"] for row in factory_review_rows(doc)] == ["openai-compatible::glm-5.3"] * 3
     assert get_review_models() == list(OPENROUTER_REVIEW_DEFAULTS["triad"])
-    assert get_scope_review_models() == ["openai-compatible::glm-5.3"]
-    # The default panel shows the advisory on that route instead of a keyless OpenRouter default.
-    assert rsc.load_reviewer_slot_config().advisory.target_id == "openai-compatible::glm-5.3"
+    # The deep self-review runs on Main too (decision 3A), on that route.
+    clean_env.setenv("OPENAI_COMPATIBLE_API_KEY", "test-only-key")
+    assert deep_review_route() == ("", "openai-compatible::glm-5.3")
     # An explicit compatible list is the owner's and is honoured exactly.
     clean_env.setenv("OUROBOROS_REVIEW_MODELS", "openai-compatible::a,openai-compatible::b")
     assert get_review_models() == ["openai-compatible::a", "openai-compatible::b"]
@@ -178,19 +131,6 @@ def test_another_remote_route_keeps_the_existing_defaults(clean_env, other_key):
     assert models != ["openai-compatible::glm-5.3"] * 3
     if other_key == "OPENROUTER_API_KEY":
         assert models == list(OPENROUTER_REVIEW_DEFAULTS["triad"])
-
-
-def test_the_onboarding_preview_is_native_and_reachable_on_a_compatible_only_install():
-    from ouroboros.subscription_install_presets import preview_api_reviewer_slots
-
-    draft = json.loads(preview_api_reviewer_slots({
-        "OPENAI_COMPATIBLE_BASE_URL": "https://llm.example/v1", "OUROBOROS_MODEL": "openai-compatible::glm-5.3",
-    }))
-    assert {row["route"]["target_id"] for row in draft["triad"] + draft["scope"]} == {"openai-compatible::glm-5.3"}
-    assert all(row["delivery"] == "native" for row in draft["triad"])
-    assert not any("delivery" in row for row in draft["scope"])
-    assert draft["advisory"]["route"]["target_id"] == "openai-compatible::glm-5.3"
-    assert all(row.retrieves for row in parse_reviewer_slots(json.dumps(draft)).triad)
 
 
 # --- one-time notices (#1334, #1335) --------------------------------------------------
@@ -431,7 +371,7 @@ def test_notice_recovers_through_real_chat_and_state_writers(monkeypatch, tmp_pa
     monkeypatch.setattr(ss, "update_state", update)
     monkeypatch.setattr(bus, "append_jsonl", append)
     monkeypatch.setattr(bus, "get_bridge", lambda: SimpleNamespace(send_message=send))
-    settings = {"OUROBOROS_REVIEWER_SLOTS": _panel(_api("t"))}
+    settings = {}
     notices.startup_upgrade_notices(settings)
     assert not ss.load_state().get(notices.OPTIONAL_BOUNDS_NOTICE_KEY)
     notices.startup_upgrade_notices(settings)
@@ -443,24 +383,3 @@ def test_notice_recovers_through_real_chat_and_state_writers(monkeypatch, tmp_pa
     # does not erase that row or require another visible notice on restart.
     assert len(delivered) == (0 if failure == "bridge" else 1)
 
-
-def test_compatible_deep_default_and_authored_choices(clean_env):
-    from ouroboros.config import get_deep_self_review_model
-    from ouroboros.deep_self_review import deep_review_route
-    from ouroboros.settings_defaults import OPENROUTER_DEFAULTS
-
-    clean_env.delenv("OUROBOROS_MODEL_DEEP_SELF_REVIEW", raising=False)
-    clean_env.setenv("OPENAI_COMPATIBLE_BASE_URL", "https://llm.example/v1")
-    clean_env.setenv("OPENAI_COMPATIBLE_API_KEY", "test-only-key")
-    clean_env.setenv("OUROBOROS_MODEL", "openai-compatible::glm-5.3")
-    assert get_deep_self_review_model() == "openai-compatible::glm-5.3"
-    assert deep_review_route() == ("", "openai-compatible::glm-5.3")
-    clean_env.setenv("OUROBOROS_MODEL_DEEP_SELF_REVIEW", OPENROUTER_DEFAULTS["deep_self_review"])
-    assert get_deep_self_review_model() == OPENROUTER_DEFAULTS["deep_self_review"]
-    clean_env.delenv("OUROBOROS_MODEL_DEEP_SELF_REVIEW")
-    saved = parse_reviewer_slots(_panel(_api("old")))
-    assert rsc.deep_review_slot(saved).target_id == OPENROUTER_DEFAULTS["deep_self_review"]
-    clean_env.setenv(REVIEWER_SLOTS_ENV, _panel(_api("old")))
-    assert rsc.deep_review_slot().target_id == OPENROUTER_DEFAULTS["deep_self_review"]
-    clean_env.setenv(REVIEWER_SLOTS_ENV, _panel(_api("old"), deep_review={"route": {"kind": "api_chat", "target_id": "authored/model"}, "effort": "high"}))
-    assert rsc.deep_review_slot().target_id == "authored/model"

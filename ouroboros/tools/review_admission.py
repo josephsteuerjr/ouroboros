@@ -585,7 +585,7 @@ def build_two_part_brief(frozen_subject: Any, seat: Any, *, layer: Optional[str]
 
     ``frozen_subject`` is a ``review_subject.FrozenSubject`` (its ``review_root``
     is read, its ``spec.governance_root`` governs, its ``diff_text`` is the
-    change); ``seat`` is a ``ReviewSlot``/``ReviewerSlotConfig``-like object or a
+    change); ``seat`` is a ``ReviewSlot``/``ConfiguredReviewerSlot``-like object or a
     row dict (``slot_id``, ``model``, ``route``, ``retrieves``, ``subagent_id``,
     ``session_profile``, ``use_local``). ``author_questions`` ride the goal
     section as the author's own questions to the panel. Returns ``{"system",

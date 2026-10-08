@@ -362,7 +362,7 @@ RETIRED_SETTING_KEYS: tuple[str, ...] = (
     "OUROBOROS_SCOPE_REVIEW_FLOOR",
     # ABI 7.0 (ABI-10, owner 5.4=A): the reviewer comma-lists and the phase-5
     # per-row/advisory route envs are retired as SETTINGS keys — the structured
-    # OUROBOROS_REVIEWER_SLOTS is the one configuration surface. An install
+    # OUROBOROS_REVIEWER_SLOTS became the one configuration surface (retired below, PR-3). An install
     # that carried only comma keys gets the shipped default panel (the RC
     # auditor names this migration explicitly). The ENV spellings of the two
     # comma model lists live on as the derived runtime projection for the

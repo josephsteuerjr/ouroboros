@@ -19,8 +19,6 @@ from ouroboros.config import (
     get_fallback_models,
     get_review_models,
     get_review_targets,
-    get_scope_review_models,
-    get_scope_review_targets,
     resolve_model_target,
     resolved_review_model_target,
 )
@@ -278,11 +276,8 @@ def test_review_targets_match_effective_lists(monkeypatch):
     monkeypatch.delenv("USE_LOCAL_MAIN", raising=False)
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     monkeypatch.setenv("OUROBOROS_REVIEW_MODELS", "vendor/m1,vendor/m2")
-    monkeypatch.setenv("OUROBOROS_SCOPE_REVIEW_MODELS", "vendor/s1,vendor/s1")
     triad = get_review_targets()
-    scope = get_scope_review_targets()
     assert [t.model_id for t in triad] == get_review_models() == ["vendor/m1", "vendor/m2"]
-    assert [t.model_id for t in scope] == get_scope_review_models() == ["vendor/s1", "vendor/s1"]
     assert {t.provider_route for t in triad} == {"openrouter"}
 
 
@@ -297,17 +292,19 @@ def test_review_targets_pin_local_route_when_review_predicate_says_so(monkeypatc
     assert resolved_review_model_target("vendor/m1").provider_route == "local"
 
 
-def test_reviewer_slots_consume_the_typed_local_route(monkeypatch):
+def test_pool_slots_consume_the_typed_local_route(monkeypatch):
     _clear_provider_credentials(monkeypatch)
     monkeypatch.delenv("USE_LOCAL_MAIN", raising=False)
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
-    from ouroboros.reviewer_slot_config import reviewer_slots
+    from ouroboros.reviewer_slot_config import review_pool_slots
+    from tests.review_pool_rosters import set_review_pool
 
-    slots = reviewer_slots(models=["vendor/m1"], effort="high")
+    set_review_pool(monkeypatch, ["vendor/m1"])
+    slots = review_pool_slots(default_effort="high")
     assert [(s.model, s.use_local) for s in slots] == [("vendor/m1", False)]
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.setenv("USE_LOCAL_MAIN", "1")
-    assert [s.use_local for s in reviewer_slots(models=["vendor/m1"])] == [True]
+    assert [s.use_local for s in review_pool_slots()] == [True]
 
 
 # ---------------------------------------------------------------------------
@@ -342,7 +339,9 @@ def test_fallback_chain_consumer_takes_the_dataclass():
 
 def test_reviewer_slot_builders_take_the_dataclass():
     source = (REPO / "ouroboros" / "reviewer_slot_config.py").read_text(encoding="utf-8")
-    assert source.count("resolved_review_model_target(") >= 2
+    # ONE builder (the pool's delivery slot) resolves the typed target; the lane
+    # era's second builder left with the lanes.
+    assert source.count("resolved_review_model_target(") == 1
     assert "use_local=review_model_uses_local(" not in source
     assert 'split(","' not in source
 

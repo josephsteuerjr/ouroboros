@@ -23,9 +23,6 @@ _LEAVES = (settings_defaults, settings_scales, model_slots, review_model_routes,
 # New subscription capabilities belong to the same leaves, but did not exist on
 # the historical extraction's facade and need not add compatibility re-exports.
 _ADDED_OWNERS = {
-    # Compatible-only review routing belongs to the existing model-route leaf.
-    "compatible_only_review_model": review_model_routes,
-    "_compatible_only_models": review_model_routes,
     "WORKER_READY_CEILING_SEC": runtime_limits,
     # The supervisor loop's bounded events pass and the budget-projection retry interval.
     "SUPERVISOR_EVENT_BATCH_MAX_EVENTS": runtime_limits,
@@ -172,7 +169,6 @@ _MOVED_OWNERS = {
     "_main_model": model_slots,
     "_parse_model_list": model_slots,
     "get_consciousness_model": model_slots,
-    "get_deep_self_review_model": model_slots,
     "get_fallback_models": model_slots,
     "get_heavy_model": model_slots,
     "get_image_input_mode": model_slots,
@@ -185,10 +181,8 @@ _MOVED_OWNERS = {
     "adaptive_quorum": review_model_routes,
     "get_review_enforcement": review_model_routes,
     "get_review_models": review_model_routes,
-    "get_scope_review_models": review_model_routes,
     # ABI-4 (F3.2): typed views over the effective reviewer model lists.
     "get_review_targets": review_model_routes,
-    "get_scope_review_targets": review_model_routes,
     "resolved_review_model_target": review_model_routes,
     "DELEGATE_WAIT_CEILING_SEC": runtime_limits,
     "DELEGATE_WAIT_WINDOW_MAX_SEC": runtime_limits,

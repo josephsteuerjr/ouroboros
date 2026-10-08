@@ -518,9 +518,9 @@ def apply_runtime_provider_defaults(settings: dict) -> tuple[dict, bool, list[st
 
     # ABI 7.0 (ABI-10): the comma keys are RETIRED settings. A ghost value fed
     # directly still normalizes (owner-value preservation on a stale dict), but
-    # an absent key is never INTRODUCED — the read-time getters
-    # (`get_review_models`/`get_scope_review_models`) perform this same
-    # direct-provider adaptation on the derived env plane.
+    # an absent key is never INTRODUCED — the read-time getter
+    # (`get_review_models`) performs this same direct-provider adaptation on
+    # the derived env plane.
     if _setting_text(normalized, "OUROBOROS_REVIEW_MODELS"):
         review_models = _normalize_direct_review_models(normalized, provider)
         if review_models != _setting_text(normalized, "OUROBOROS_REVIEW_MODELS"):

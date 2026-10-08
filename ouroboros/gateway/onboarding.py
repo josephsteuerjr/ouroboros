@@ -885,7 +885,7 @@ async def api_onboarding_complete(request: Request) -> JSONResponse:
             if failure is not None:
                 return failure.as_response()
             preset_reason = "configured_by_owner"
-            current.update(preset.settings_keys(include_reviewer=False, include_marker=False))
+            current.update(preset.settings_keys(include_marker=False))
     else:
         preset, failure = await resolve_install_preset(
             current, subscriptions_connected=subscriptions_connected, owner_draft=owner_draft)
@@ -905,7 +905,7 @@ async def api_onboarding_complete(request: Request) -> JSONResponse:
                              400, code="model_source_unavailable")
     if install_preset_applied:  # the catalog the preview showed (``shown_catalog``)
         preset = preset_saving(preset, shown_catalog(preset, current, owner_draft, allow_empty=allow_empty_pool))
-        current.update(preset.settings_keys(include_reviewer=False, include_marker=False))
+        current.update(preset.settings_keys(include_marker=False))
 
     pool_error = review_pool_save_judgement(current.get(SUBAGENTS_SETTING), old_settings, allow_empty=allow_empty_pool)
     if pool_error:

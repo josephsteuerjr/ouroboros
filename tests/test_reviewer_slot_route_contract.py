@@ -1,84 +1,35 @@
-"""Exact structured reviewer LANE route and effort-authority regressions.
+"""Exact review-pool route and effort-authority regressions (PR-3, one transition).
 
-removed by package A after package C freezes the lane readers: the triad
-effort/identity rules now run on the review pool (``tests/test_review_pool.py``);
-what stays covers the lane parser, the advisory row and the scope lane.
+The pool's rows are catalog rows: a session row promises ONE concrete harness
+route exactly as a lane row did, the «Выполняется как» projection keeps a wave's
+declared effort apart from the row's own, and a compound session effort pins the
+commit contract fingerprint against global effort drift.
 """
-
-import json
 
 import pytest
 
-from ouroboros.reviewer_slot_config import (
-    REVIEWER_SLOTS_ENV,
-    parse_reviewer_slots,
-)
+from tests.review_pool_rosters import pool_roster, pool_seat
 
 
-def _payload() -> dict:
-    return {
-        "triad": [
-            {
-                "slot_id": "triad-route",
-                "route": {"kind": "agent_session", "target_id": "codex=gpt-5.6-sol"},
-            },
-        ],
-        "scope": [
-            {
-                "slot_id": "scope-route",
-                "route": {"kind": "api_chat", "target_id": "openai/gpt-5.6-sol"},
-            },
-        ],
-        "advisory": {"enabled": True, "route": {"kind": "api", "target_id": ""}},
-    }
+@pytest.mark.parametrize(("target", "fragment"), [
+    # ``off`` passes the catalog's spelling check but names no harness (the lane
+    # row's own rule, kept on the pool row); the malformed spellings are the
+    # catalog parser's typed refusals before the pool ever sees them.
+    ("off", "does not name a concrete harness route"),
+    ("OFF", "does not name a concrete harness route"),
+    ("=malformed", "session harness must match"),
+    (":high", "legacy ':effort'"),
+])
+def test_a_pool_session_row_must_name_a_concrete_harness(target, fragment, monkeypatch):
+    from ouroboros.reviewer_slot_config import review_pool_rows, review_pool_state
 
-
-@pytest.mark.parametrize("target", ["off", "OFF", "=malformed", ":high"])
-@pytest.mark.parametrize("surface", ["triad", "scope", "advisory"])
-def test_structured_session_target_must_name_a_concrete_harness(target, surface):
-    payload = _payload()
-    if surface == "advisory":
-        payload["advisory"] = {
-            "enabled": True,
-            "route": {"kind": "agent_session", "target_id": target},
-        }
-    else:
-        payload[surface][0]["route"] = {
-            "kind": "agent_session",
-            "target_id": target,
-        }
-
-    with pytest.raises(ValueError, match="does not name a concrete harness route"):
-        parse_reviewer_slots(json.dumps(payload))
-
-
-def test_disabled_advisory_allows_empty_session_but_not_persisted_junk():
-    payload = _payload()
-    payload["advisory"] = {
-        "enabled": False,
-        "route": {"kind": "agent_session", "target_id": ""},
-    }
-    advisory = parse_reviewer_slots(json.dumps(payload)).advisory
-    assert advisory.enabled is False and advisory.target_id == ""
-
-    payload["advisory"]["route"]["target_id"] = "off"
-    with pytest.raises(ValueError, match="does not name a concrete harness route"):
-        parse_reviewer_slots(json.dumps(payload))
-
-
-def test_malformed_advisory_target_never_consults_the_shared_route(monkeypatch):
-    from ouroboros import reviewer_slot_config
-
-    payload = _payload()
-    payload["advisory"] = {
-        "enabled": True,
-        "route": {"kind": "agent_session", "target_id": "off"},
-    }
-    monkeypatch.setenv(REVIEWER_SLOTS_ENV, json.dumps(payload))
-    monkeypatch.setenv("OUROBOROS_REVIEW_SESSION_ROUTE", "codex=gpt-5.6-sol:high")
-
-    with pytest.raises(ValueError, match="does not name a concrete harness route"):
-        reviewer_slot_config.advisory_slot_config()
+    roster = pool_roster(pool_seat("sess", target, kind="agent_session"),
+                         pool_seat("api", "openai/gpt-5.6-sol"))
+    monkeypatch.setenv("OUROBOROS_SUBAGENTS", roster)
+    with pytest.raises(ValueError, match=fragment):
+        review_pool_rows()
+    state = review_pool_state(roster)
+    assert state["state"] == "error" and fragment.replace("\\", "") in state["error"]
 
 
 def test_last_execution_projection_keeps_a_declared_effort_apart_from_the_row(tmp_path, monkeypatch):
@@ -106,7 +57,7 @@ def test_compound_effort_stabilizes_commit_fingerprint_against_global_drift(
     monkeypatch,
 ):
     from ouroboros.tools.commit_gate import commit_review_contract_fingerprint
-    from tests.review_pool_rosters import pool_roster, pool_seat, set_review_pool
+    from tests.review_pool_rosters import set_review_pool
 
     def pool(second: str) -> str:
         return pool_roster(pool_seat("grok-row", "cursor=cursor-grok-4.6-xhigh", kind="agent_session"),

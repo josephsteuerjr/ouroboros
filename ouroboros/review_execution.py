@@ -505,8 +505,8 @@ class ApiChatReviewExecutor(ReviewSlotExecutor):
 # ---------------------------------------------------------------------------
 # Route configuration.
 #
-# Per-row delivery lives in the structured reviewer-slot SSOT
-# (``OUROBOROS_REVIEWER_SLOTS`` — D14/6.1); the phase-5 per-row route envs
+# Per-row delivery lives on the catalog's reviewer rows (the review pool,
+# ``OUROBOROS_SUBAGENTS`` ``delivery`` field); the phase-5 per-row route envs
 # (``OUROBOROS_REVIEW_ROUTES`` / ``OUROBOROS_SCOPE_REVIEW_ROUTES``) are
 # RETIRED settings keys (ABI-10) and are ignored — a row built outside the
 # structured config is pinned ``api_chat`` explicitly. The one surviving key

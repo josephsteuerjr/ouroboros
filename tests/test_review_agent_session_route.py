@@ -21,7 +21,6 @@ from ouroboros.review_execution import (
 )
 from ouroboros.review_substrate import (
     ReviewSlot,
-    reviewer_slots,
     run_review_request,
 )
 from ouroboros.triad_review import empty_array_is_verified_clean
@@ -554,14 +553,18 @@ def test_mixed_panel_failed_agent_slot_does_not_shrink_n(tmp_path, fake_route, m
 def test_retired_route_envs_are_ignored(monkeypatch):
     """ABI-10: the phase-5 per-row route envs are RETIRED and IGNORED.
 
-    A row built from a plain model list is pinned api_chat even when a stale
-    environment still exports the retired spellings; delegated delivery is a
-    structured-SSOT fact (``OUROBOROS_REVIEWER_SLOTS`` rows) only.
+    A pool of api rows stays api_chat even when a stale environment still
+    exports the retired spellings; delegated delivery is a catalog-row fact
+    (``route.kind == agent_session``) only.
     """
+    from ouroboros.reviewer_slot_config import review_pool_slots
+    from tests.review_pool_rosters import set_review_pool
+
     monkeypatch.setenv("OUROBOROS_REVIEW_ROUTES", "agent_session,agent_session")
-    rows = reviewer_slots(["m1", "m2"], role_hint="commit review")
+    set_review_pool(monkeypatch, ["m1", "m2"], prefix="slot")
+    rows = review_pool_slots(role_hint="commit review")
     assert all(row.route is ReviewRouteKind.API_CHAT for row in rows)
-    assert rows[0].slot_id == "slot_1" and rows[1].slot_id == "slot_2"
+    assert rows[0].slot_id == "slot-1" and rows[1].slot_id == "slot-2"
 
 
 def _persisted_response_payloads(drive_root):
@@ -620,10 +623,9 @@ def test_acceptance_rows_follow_the_configured_triad_delivery(monkeypatch):
     triad surface reads — a delegated row included — instead of an api-pinned
     projection of them. Upstream wrote this against the legacy comma-list plus its
     per-row route env; ABI-10 retired BOTH reads, so the configured rows come from
-    the structured SSOT, which is the only configuration surface that can carry a
-    session row at all. The generic model-list builder keeps its explicit pin for
-    callers that pass no route list (a caller's own statement, never a surface
-    default), and a stale retired route env still leaks into nothing."""
+    the catalog (the review pool), which is the only configuration surface that
+    can carry a session row at all; a stale retired route env still leaks into
+    nothing."""
     from ouroboros.reviewer_slot_config import triad_delivery_slots
     from tests.review_pool_rosters import pool_roster, pool_seat
 
@@ -634,8 +636,6 @@ def test_acceptance_rows_follow_the_configured_triad_delivery(monkeypatch):
     assert [row.route for row in rows] == [ReviewRouteKind.AGENT_SESSION, ReviewRouteKind.API_CHAT]
     assert [row.slot_id for row in rows] == ["slot_1", "slot_2"]
     assert all(row.role_hint == "task acceptance" for row in rows)
-    pinned = reviewer_slots(["m1", "m2"], effort="high", role_hint="task acceptance")
-    assert all(row.route is ReviewRouteKind.API_CHAT for row in pinned)
 
 
 def test_agent_slot_without_session_task_refuses_the_api_pack(tmp_path, fake_route):

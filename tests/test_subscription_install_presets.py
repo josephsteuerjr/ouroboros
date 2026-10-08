@@ -15,7 +15,6 @@ import pytest
 from ouroboros.reviewer_slot_config import review_pool_rows
 from ouroboros.subscription_install_presets import (
     PRESET_MARKER_KEY,
-    REVIEWER_SLOTS_KEY,
     SUBSCRIPTION_PRESET_VERSION,
     HarnessDiscovery,
     compile_install_preset,
@@ -138,7 +137,6 @@ def test_every_combination_follows_the_declarative_policy(connected):
     advisory = preset.receipt["surfaces"]["advisory"]
     assert (advisory["target_id"], advisory["effort"]) == _target(primary, "advisory")
     assert preset.receipt["review_pool"] == [row.slot_id for row in _pool(preset)]
-    assert preset.reviewer_slots == ""  # no inline lane rides the preset any more
 
 
 @pytest.mark.parametrize("connected", COMBINATIONS)
@@ -189,7 +187,7 @@ def test_settings_keys_write_new_actor_ssot_and_receipt_not_legacy_singleton():
     preset = compile_install_preset(_discoveries("claude"))
 
     assert set(preset.settings_keys()) == {SUBAGENTS_SETTING, SUBAGENTS_RECEIPT_KEY, PRESET_MARKER_KEY}
-    assert REVIEWER_SLOTS_KEY not in preset.settings_keys()  # the pool rides the roster
+    assert "OUROBOROS_REVIEWER_SLOTS" not in preset.settings_keys()  # the pool rides the roster
     assert preset.settings_keys()[PRESET_MARKER_KEY] == SUBSCRIPTION_PRESET_VERSION
     assert "OUROBOROS_SUBAGENT_HARNESS" not in preset.settings_keys()
     # The API model slots are NOT among them (owner decision D-2).
@@ -209,8 +207,8 @@ def test_unresolvable_model_refuses_typed_and_emits_nothing():
     assert (preset.refusal.seat.surface, preset.refusal.seat.position) == ("subagent", 1)
     assert preset.refusal.seat.preference == "opus-5"
     assert "claude-opus-5" in preset.refusal.candidates
-    # Nothing partial: no slots, no subagent value, no settings keys at all.
-    assert preset.reviewer_slots == ""
+    # Nothing partial: no subagent value, no settings keys at all.
+    assert preset.available_subagents == ""
     assert preset.settings_keys() == {}
 
 
@@ -432,7 +430,6 @@ def test_api_only_compiles_main_and_distinct_light_without_daemon_inputs():
         ("fast-scout", "openai::gpt-5.6-luna"),
     ]
     assert all("name" not in row for row in items)
-    assert preset.reviewer_slots == ""
 
 
 def test_api_only_identical_main_and_light_deduplicate_without_fake_diversity():
@@ -635,7 +632,6 @@ def test_missing_exact_agy_flash_refuses_without_partial_actor_or_reviewer_outpu
     assert preset.refusal is not None
     assert preset.refusal.code == "model_not_in_discovery"
     assert preset.available_subagents == ""
-    assert preset.reviewer_slots == ""
 
 
 def test_valid_owner_draft_is_validated_not_recompiled_from_missing_agy_default():
@@ -660,4 +656,3 @@ def test_valid_owner_draft_is_validated_not_recompiled_from_missing_agy_default(
     assert json.loads(preset.available_subagents)["items"][0]["subagent_id"] == "owner"
     assert preset.source == "configured"
     assert preset.receipt["source"] == "configured"
-    assert preset.reviewer_slots == ""

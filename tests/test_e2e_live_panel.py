@@ -1,27 +1,32 @@
 """The stand's review panel (owner decision 2026-09-06): three model families at effort low on every reviewer,
-task and evolution at medium, written into every paid lane's settings as the ONE structured reviewer surface the
-product reads; ``--production-panel`` leaves the tree's own defaults in place and the stub lane keeps its loopback
-rows. The document must parse with the product's own parser, or the review organ would fall back silently."""
+task and evolution at medium, written into every paid lane's settings; ``--production-panel`` leaves the tree's
+own defaults in place and the stub lane keeps its loopback rows. The stand still writes the panel under the
+lane-era key, so the product's read seam (``normalize_settings_raw`` -> ``review_pool_migration``) must turn it
+into the review pool every surface runs, or the review organ would fall back silently."""
 from __future__ import annotations
 
 import json
 
 from devtools.e2e_live import run_live_lanes, scenarios
-from ouroboros.reviewer_slot_config import parse_reviewer_slots
+from ouroboros.config import normalize_settings_raw
+from ouroboros.reviewer_slot_config import review_pool_rows
 
 FAKE_KEY = "sk-or-v1-e2e-live-test-key-value-never-printed-0123456789"
 
 
-def test_the_stand_panel_parses_with_the_product_parser_and_names_three_families():
-    cfg = parse_reviewer_slots(scenarios.STAND_PANEL_SETTINGS["OUROBOROS_REVIEWER_SLOTS"])
-    triad = [(slot.target_id, slot.effort) for slot in cfg.triad]
-    assert triad == [("google/gemini-3.8-flash", "low"), ("openai/gpt-5.6-luna", "low"), ("deepseek/deepseek-v4-pro", "low")]
-    assert [(slot.target_id, slot.effort) for slot in cfg.scope] == [("deepseek/deepseek-v4-pro", "low")]
-    assert cfg.advisory is not None and cfg.advisory.target_id == "anthropic/claude-sonnet-5" and cfg.advisory.effort == "low"
-    assert {m.split("/")[0] for m, _ in triad} == {"google", "openai", "deepseek"}
-    assert scenarios.STAND_PANEL_SETTINGS["OUROBOROS_EFFORT_TASK"] == "medium"
-    assert scenarios.STAND_PANEL_SETTINGS["OUROBOROS_EFFORT_EVOLUTION"] == "medium"
-    assert scenarios.STAND_PANEL_SETTINGS["OUROBOROS_EFFORT_REVIEW"] == scenarios.STAND_PANEL_SETTINGS["OUROBOROS_EFFORT_SCOPE_REVIEW"] == "low"
+def test_the_stand_panel_reads_as_a_pool_of_three_families_through_the_migration():
+    document = normalize_settings_raw(dict(scenarios.STAND_PANEL_SETTINGS))
+    assert "OUROBOROS_REVIEWER_SLOTS" not in document and "OUROBOROS_EFFORT_REVIEW" not in document
+    pool = [(row.target_id, row.effort, row.retrieves) for row in review_pool_rows(document)]
+    # The three triad rows pack the brief at effort low; the scope row joins the pool reading natively.
+    assert pool == [("google/gemini-3.8-flash", "low", False), ("openai/gpt-5.6-luna", "low", False),
+                    ("deepseek/deepseek-v4-pro", "low", False), ("deepseek/deepseek-v4-pro", "low", True)]
+    assert {m.split("/")[0] for m, _, _ in pool} == {"google", "openai", "deepseek"}
+    # The advisory reviewer is an unmarked catalog row the author may still name for a preflight.
+    catalog = json.loads(document["OUROBOROS_SUBAGENTS"])["items"]
+    advisory = [row for row in catalog if row["route"]["target_id"] == "anthropic/claude-sonnet-5"]
+    assert len(advisory) == 1 and not advisory[0].get("review_eligible") and advisory[0]["effort"] == "low"
+    assert document["OUROBOROS_EFFORT_TASK"] == "medium" and document["OUROBOROS_EFFORT_EVOLUTION"] == "medium"
 
 
 def test_paid_lanes_carry_the_panel_unless_production_panel_or_stub(monkeypatch):

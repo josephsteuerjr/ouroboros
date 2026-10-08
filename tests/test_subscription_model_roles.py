@@ -99,33 +99,29 @@ def test_persisted_wait_switch_changes_only_the_named_model_role():
 
 def test_managed_model_account_roundtrips_actor_and_reviewer_configuration():
     from ouroboros.configured_subagents import normalize_configured_subagents
-    from ouroboros.reviewer_slot_config import parse_reviewer_slots
+    from ouroboros.reviewer_slot_config import review_pool_rows
     route = {"kind": "api_model", "target_id": "claudexor::codex=same", "credential_profile_id": "named"}
-    actor = {"subagent_id": "actor", "recommended_use": "Review", "route": route}
+    actor = {"subagent_id": "actor", "recommended_use": "Review", "route": route, "review_eligible": True}
     parsed, encoded = normalize_configured_subagents({"enabled": True, "items": [actor]})
     assert parsed.items[0].route.credential_profile_id == "named"
     assert json.loads(encoded)['items'][0]['route'] == route
-    slots = parse_reviewer_slots(json.dumps({
-        group: [{"slot_id": group, "route": {"kind": "api_chat", "target_id": route['target_id'], "profile_id": "named"}}]
-        for group in ("triad", "scope")
-    }))
-    assert slots.triad[0].profile_id == slots.scope[0].profile_id == "named"
+    # The same row IS the reviewer row (the pool reads the catalog): the pin rides along.
+    (row,) = review_pool_rows({"OUROBOROS_SUBAGENTS": encoded})
+    assert (row.slot_id, row.profile_id) == ("actor", "named")
 
 
 @pytest.mark.parametrize("pin", ["", "named"])
 def test_empty_subscription_model_is_rejected_before_actor_or_reviewer_serialization(pin):
     from ouroboros.configured_subagents import normalize_configured_subagents
-    from ouroboros.reviewer_slot_config import parse_reviewer_slots
+    from ouroboros.reviewer_slot_config import review_pool_rows
 
     target = "claudexor::codex="
+    row = {"subagent_id": "actor", "recommended_use": "Review", "review_eligible": True,
+           "route": {"kind": "api_model", "target_id": target, "credential_profile_id": pin}}
     with pytest.raises(ValueError):
-        normalize_configured_subagents({"enabled": True, "items": [{
-            "subagent_id": "actor", "recommended_use": "Review", "route": {
-                "kind": "api_model", "target_id": target, "credential_profile_id": pin}}]})
+        normalize_configured_subagents({"enabled": True, "items": [row]})
     with pytest.raises(ValueError):
-        parse_reviewer_slots(json.dumps({group: [{"slot_id": group, "route": {
-            "kind": "api_chat", "target_id": target, "profile_id": pin}}]
-            for group in ("triad", "scope")}))
+        review_pool_rows({"OUROBOROS_SUBAGENTS": json.dumps({"enabled": True, "items": [row]})})
 
 
 def test_a_reviewer_wait_persists_through_the_real_owner_writer_into_the_catalog_row(reviewer_wait, monkeypatch):

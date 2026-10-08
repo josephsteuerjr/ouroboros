@@ -7,7 +7,6 @@ from ouroboros.config import (
     resolve_effort,
     get_review_models,
     get_review_enforcement,
-    get_scope_review_models,
     get_task_review_mode,
     get_context_mode,
     get_image_input_mode,
@@ -283,8 +282,7 @@ def test_factory_pool_routes_to_gigachat_in_gigachat_only_mode(monkeypatch):
     or an unconfigured foreign provider — the single-isolated-provider invariant
     (docs/DEVELOPMENT.md "Provider Independence"). GIGACHAT_DIRECT_DEFAULTS uses the
     universally available GigaChat-2-Max for every slot, so the quorum-safe panel is
-    [main, main, main] — three catalog rows (PR-3). An explicit gigachat scope list
-    on the env plane passes through unchanged."""
+    [main, main, main] — three catalog rows (PR-3)."""
     monkeypatch.setenv("GIGACHAT_CREDENTIALS", "giga-creds")
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -294,14 +292,12 @@ def test_factory_pool_routes_to_gigachat_in_gigachat_only_mode(monkeypatch):
     monkeypatch.delenv("CLOUDRU_FOUNDATION_MODELS_API_KEY", raising=False)
     monkeypatch.delenv("OUROBOROS_MODEL_LIGHT", raising=False)
     monkeypatch.setenv("OUROBOROS_MODEL", "gigachat::GigaChat-2-Max")
-    monkeypatch.setenv("OUROBOROS_SCOPE_REVIEW_MODELS", "gigachat::GigaChat-2-Max")
 
     assert _factory_pool_models({"GIGACHAT_CREDENTIALS": "giga-creds", "OUROBOROS_MODEL": "gigachat::GigaChat-2-Max"}) == [
         "gigachat::GigaChat-2-Max",
         "gigachat::GigaChat-2-Max",
         "gigachat::GigaChat-2-Max",
     ]
-    assert get_scope_review_models() == ["gigachat::GigaChat-2-Max"]
 
 
 def test_from_zero_local_only_review_slots_inherit_main_and_stay_local(monkeypatch):
@@ -320,14 +316,12 @@ def test_from_zero_local_only_review_slots_inherit_main_and_stay_local(monkeypat
         "OUROBOROS_REVIEW_MODELS",
         "openai/gpt-5.6-luna,google/gemini-3.6-flash,anthropic/claude-sonnet-5",
     )
-    monkeypatch.setenv("OUROBOROS_SCOPE_REVIEW_MODELS", "openai/gpt-5.6-terra")
 
     # The factory pool is the shipped panel's three seats on the local Main (three
     # independent runs, quorum 2 of 3); every review slot built from it runs on the
     # local lane.
     assert _factory_pool_models({"USE_LOCAL_MAIN": "true", "LOCAL_MODEL_SOURCE": "owner/local.gguf",
                                  "OUROBOROS_MODEL": "owner/local-main"}) == ["owner/local-main"] * 3
-    assert get_scope_review_models() == ["owner/local-main"]
     assert review_model_uses_local("owner/local-main") is True
 
     from ouroboros.reviewer_slot_config import review_pool_slots
@@ -358,17 +352,6 @@ def test_get_review_enforcement_invalid_falls_back(monkeypatch):
     """Unknown values fall back to advisory (the default)."""
     monkeypatch.setenv("OUROBOROS_REVIEW_ENFORCEMENT", "strictest")
     assert get_review_enforcement() == "advisory"
-
-
-def test_get_scope_review_models_preserves_duplicate_slots(monkeypatch):
-    monkeypatch.setenv("OUROBOROS_SCOPE_REVIEW_MODELS", "model/a, model/a, model/b")
-    assert get_scope_review_models() == ["model/a", "model/a", "model/b"]
-
-
-def test_get_scope_review_models_falls_back_to_singular(monkeypatch):
-    monkeypatch.setenv("OUROBOROS_SCOPE_REVIEW_MODELS", "")
-    monkeypatch.setenv("OUROBOROS_SCOPE_REVIEW_MODEL", "legacy/scope")
-    assert get_scope_review_models() == ["legacy/scope"]
 
 
 def test_get_task_review_mode_clamps_invalid(monkeypatch):
@@ -444,17 +427,15 @@ def test_get_auto_grant_enabled_prefers_settings_file(monkeypatch, tmp_path):
     assert cfg.get_auto_grant_enabled() is True
 
 
-def test_apply_settings_clears_review_models_restores_default(monkeypatch):
-    """ABI-10: the retired comma key is IGNORED by apply_settings_to_env; the
-    derived-projection floor restores the shipped default in env."""
-    from ouroboros.settings_defaults import OPENROUTER_REVIEW_DEFAULTS
-
+def test_apply_settings_ignores_the_retired_review_models_key(monkeypatch):
+    """ABI-10: the retired comma key is IGNORED by apply_settings_to_env — a ghost
+    value neither reaches the env plane nor is replaced by a projected floor
+    (PR-3 removed the lane projection); the reader defaults on its own."""
     monkeypatch.delenv("OUROBOROS_REVIEW_MODELS", raising=False)
-    monkeypatch.delenv("OUROBOROS_REVIEWER_SLOTS", raising=False)
+    monkeypatch.delenv("OUROBOROS_SUBAGENTS", raising=False)
     settings = {"OUROBOROS_REVIEW_MODELS": "ghost/value"}
     apply_settings_to_env(settings)
-    env_val = os.environ.get("OUROBOROS_REVIEW_MODELS", "")
-    assert env_val == ",".join(OPENROUTER_REVIEW_DEFAULTS["triad"])
+    assert "OUROBOROS_REVIEW_MODELS" not in os.environ
     assert len(get_review_models()) >= 2
 
 
@@ -467,15 +448,12 @@ def test_apply_settings_clears_review_enforcement_restores_default(monkeypatch):
     assert get_review_enforcement() == "advisory"
 
 
-def test_apply_settings_clears_task_and_scope_review_restores_default(monkeypatch):
-    from ouroboros.settings_defaults import OPENROUTER_REVIEW_DEFAULTS
-
+def test_apply_settings_clears_task_review_restores_default_and_ignores_retired_scope_key(monkeypatch):
     monkeypatch.delenv("OUROBOROS_SCOPE_REVIEW_MODELS", raising=False)
     monkeypatch.delenv("OUROBOROS_SCOPE_REVIEW_MODEL", raising=False)
-    monkeypatch.delenv("OUROBOROS_REVIEWER_SLOTS", raising=False)
     settings = {"OUROBOROS_SCOPE_REVIEW_MODELS": "ghost/value", "OUROBOROS_TASK_REVIEW_MODE": ""}
     apply_settings_to_env(settings)
-    assert os.environ.get("OUROBOROS_SCOPE_REVIEW_MODELS") == ",".join(OPENROUTER_REVIEW_DEFAULTS["scope"])
+    assert "OUROBOROS_SCOPE_REVIEW_MODELS" not in os.environ
     assert os.environ.get("OUROBOROS_TASK_REVIEW_MODE") == SETTINGS_DEFAULTS["OUROBOROS_TASK_REVIEW_MODE"]
 
 
@@ -508,13 +486,11 @@ def test_apply_settings_to_env_includes_effort_keys(monkeypatch, tmp_path):
     assert os.environ.get("OUROBOROS_EFFORT_REVIEW") is None
     assert os.environ.get("OUROBOROS_EFFORT_SCOPE_REVIEW") is None
     assert os.environ.get("OUROBOROS_EFFORT_CONSCIOUSNESS") == "none"
-    # ABI-10: the retired comma-list INPUT is ignored; the env carries the projection of the
-    # configured reviewer slots (defaults here), never the retired value.
-    from ouroboros.settings_defaults import OPENROUTER_REVIEW_DEFAULTS as _rd
-
-    assert os.environ.get("OUROBOROS_REVIEW_MODELS") == ",".join(_rd["triad"])
+    # ABI-10: the retired comma-list INPUT is ignored — the env carries neither the
+    # retired value nor a projected floor (the lane projection left with the lanes).
+    assert os.environ.get("OUROBOROS_REVIEW_MODELS") is None
     assert os.environ.get("OUROBOROS_REVIEW_ENFORCEMENT") == "advisory"
-    assert os.environ.get("OUROBOROS_SCOPE_REVIEW_MODELS") == ",".join(_rd["scope"])
+    assert os.environ.get("OUROBOROS_SCOPE_REVIEW_MODELS") is None
     assert os.environ.get("OUROBOROS_TASK_REVIEW_MODE") == "required"
     assert os.environ.get("OUROBOROS_AUTO_GRANT_REVIEWED_SKILLS") == "true"
     assert os.environ.get("OUROBOROS_RETURN_REASONING") == ""

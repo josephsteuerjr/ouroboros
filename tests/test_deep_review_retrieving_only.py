@@ -14,12 +14,8 @@ import pytest
 
 from ouroboros.deep_self_review import deep_review_route, run_deep_self_review
 from ouroboros.provider_models import OPENAI_DIRECT_DEFAULTS
-from ouroboros.reviewer_slot_config import (
-    DEEP_REVIEW_SLOT_ID,
-    ConfiguredReviewerSlot,
-    reviewer_slot_last_executions,
-)
-from tests.test_deep_review_slot import _ScriptedLLM, _tool_call
+from ouroboros.reviewer_slot_config import ConfiguredReviewerSlot, reviewer_slot_last_executions
+from tests.test_deep_review_slot import _DEEP_SLOT_ID, _ScriptedLLM, _tool_call
 
 _BIBLE = "# BIBLE\n\n## Principle 0: Agency\n\nOuroboros is a becoming personality.\n" * 3
 _REPORT = "Read: BIBLE.md in full; memory inline.\n\n# Deep self-review\n\nCRITICAL: loop.py finalization race.\n"
@@ -27,7 +23,7 @@ _REPORT = "Read: BIBLE.md in full; memory inline.\n\n# Deep self-review\n\nCRITI
 
 def _bare_row(target: str = "openai/fake-deep", **fields) -> ConfiguredReviewerSlot:
     """The row an install has without configuring one: an api route, no subagent."""
-    return ConfiguredReviewerSlot(slot_id=DEEP_REVIEW_SLOT_ID, kind="api_chat", target_id=target, **fields)
+    return ConfiguredReviewerSlot(slot_id=_DEEP_SLOT_ID, kind="api_chat", target_id=target, **fields)
 
 
 @pytest.fixture()
@@ -85,7 +81,7 @@ def test_a_bare_api_row_runs_the_native_inspection_episode(repo, drive, monkeypa
     assert task.count(_BIBLE) == 1, "tier 1 is actually delivered, not just promised"
     assert [tool["function"]["name"] for tool in first["tools"] or []], "read-only tools ride the send"
     assert any("native_tool_rounds" in line for line in progress)
-    last = reviewer_slot_last_executions()[DEEP_REVIEW_SLOT_ID]
+    last = reviewer_slot_last_executions()[_DEEP_SLOT_ID]
     assert last["surface"] == "deep_self_review" and last["status"] == "responded"
     assert last["effective"]["model"] == "openai/fake-deep"
 
@@ -118,7 +114,7 @@ def test_a_stored_openrouter_spelling_runs_on_the_direct_openai_route(repo, driv
     assert usage["resolved_model"] == "openai::gpt-5.5"
     assert "model=openai::gpt-5.5" in text.split("\n")[0]
     assert any("openai::gpt-5.5" in line for line in progress)
-    last = reviewer_slot_last_executions()[DEEP_REVIEW_SLOT_ID]
+    last = reviewer_slot_last_executions()[_DEEP_SLOT_ID]
     assert last["effective"]["model"] == "openai::gpt-5.5"
     assert last["requested"]["profile_id"] == "account-a"
 

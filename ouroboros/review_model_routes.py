@@ -16,11 +16,8 @@ from __future__ import annotations
 
 import dataclasses
 
-from ouroboros.model_slots import ResolvedModelTarget, _main_model, _parse_model_list
+from ouroboros.model_slots import ResolvedModelTarget, _parse_model_list
 from ouroboros.provider_models import (
-    _NON_COMPATIBLE_REMOTE_KEYS,
-    compatible_only_main_model,
-    local_only_review_route_env,
     migrate_model_value,
     resolve_model_target,
     review_model_uses_local,
@@ -58,23 +55,6 @@ def _exclusive_direct_remote_provider_env() -> str:
     return direct[0] if len(direct) == 1 else ""
 
 
-# removed by package B together with ``get_scope_review_models``.
-def compatible_only_review_model() -> str:
-    """Main's route when the OpenAI-compatible endpoint is the only remote provider (#1116)."""
-    keys = ("OPENAI_COMPATIBLE_BASE_URL", "OUROBOROS_MODEL", "GIGACHAT_USER", "GIGACHAT_PASSWORD",
-            *_NON_COMPATIBLE_REMOTE_KEYS)
-    return compatible_only_main_model({key: runtime_setting(key, "") for key in keys})
-
-
-# removed by package B together with ``get_scope_review_models``.
-def _compatible_only_models(models: list[str]) -> list[str]:
-    """An unreachable (non-compatible) list becomes Main repeated; an explicit compatible list stays."""
-    main = compatible_only_review_model()
-    if not main or (models and all(str(m).startswith("openai-compatible::") for m in models)):
-        return models
-    return [main] * max(1, len(models))
-
-
 def adaptive_quorum(n_slots: int) -> int:
     """Reviewer-quorum SSOT for an ARBITRARY configured slot count, reused by
     triad/scope/plan/skill/acceptance review. One configured reviewer needs 1 (a loud
@@ -106,8 +86,8 @@ def resolved_review_model_target(model: str, *, effort: str = "") -> ResolvedMod
     local-only Main route pins EVERY review slot to the local lane), so the
     typed ``provider_route`` says ``"local"`` exactly when that predicate
     does — downstream slot builders read the dataclass instead of re-asking
-    the predicate per model string. Purely a typed view: the model lists
-    themselves stay ``get_review_models``/``get_scope_review_models``.
+    the predicate per model string. Purely a typed view: the model list
+    itself stays ``get_review_models``.
     """
     target = resolve_model_target(model, effort=effort)
     if target.provider_route != "local" and review_model_uses_local(target.model_id):
@@ -125,45 +105,8 @@ def get_review_targets() -> tuple[ResolvedModelTarget, ...]:
     return tuple(resolved_review_model_target(model) for model in get_review_models())
 
 
-# removed by package B (the scope lane's typed view; ``get_scope_review_models`` goes with it).
-def get_scope_review_targets() -> tuple[ResolvedModelTarget, ...]:
-    """The effective scope list as typed targets (ABI-4), duplicates preserved.
-
-    TYPED VIEW FOR FUTURE CONSUMERS — no production caller yet (see
-    ``get_review_targets``)."""
-    return tuple(resolved_review_model_target(model) for model in get_scope_review_models())
-
-
 def get_review_enforcement() -> str:
     """Return the configured pre-commit review enforcement mode."""
     default_val = str(SETTINGS_DEFAULTS["OUROBOROS_REVIEW_ENFORCEMENT"])
     raw = (runtime_setting("OUROBOROS_REVIEW_ENFORCEMENT", default_val) or default_val).strip().lower()
     return raw if raw in {"advisory", "blocking"} else default_val
-
-
-# removed by package B (the scope lane's model list; the fold that read it is gone
-# with I3-B2, its remaining readers are the lane-era tests and the ``config`` re-export).
-def get_scope_review_models() -> list[str]:
-    """Return effective scope reviewer models, preserving duplicate model IDs."""
-    default_str = ",".join(OPENROUTER_REVIEW_DEFAULTS["scope"])
-    raw = runtime_setting("OUROBOROS_SCOPE_REVIEW_MODELS", "") or ""
-    if not raw.strip():
-        raw = runtime_setting("OUROBOROS_SCOPE_REVIEW_MODEL", default_str) or default_str
-    models = _parse_model_list(raw)
-    singular = str(runtime_setting("OUROBOROS_SCOPE_REVIEW_MODEL", OPENROUTER_REVIEW_DEFAULTS["scope"][0]) or "").strip()
-    if not models and singular:
-        models = [singular]
-    if not models:
-        models = _parse_model_list(default_str)
-    models = [_main_model()] * max(1, len(models)) if local_only_review_route_env() else models
-    provider = _exclusive_direct_remote_provider_env()
-    if not provider:
-        return _compatible_only_models(models)
-    migrated = [migrate_model_value(provider, model) for model in models]
-    provider_prefix = f"{provider}::"
-    if migrated and all(model.startswith(provider_prefix) for model in migrated):
-        return migrated
-    migrated_singular = migrate_model_value(provider, singular or OPENROUTER_REVIEW_DEFAULTS["scope"][0])
-    if migrated_singular.startswith(provider_prefix):
-        return [migrated_singular]
-    return migrated

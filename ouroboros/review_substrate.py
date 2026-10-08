@@ -128,8 +128,9 @@ from ouroboros.review_dispatch import (  # noqa: E402,F401 — re-exports
 )
 
 
-# reviewer_slots()/triad_delivery_slots() live in reviewer_slot_config (altitude, P7); re-exported for callers here.
-from ouroboros.reviewer_slot_config import reviewer_slots, triad_delivery_slots  # noqa: F401,E402
+# triad_delivery_slots() (the pool under its historical name) lives in reviewer_slot_config (altitude, P7);
+# re-exported for the acceptance callers and their tests here.
+from ouroboros.reviewer_slot_config import triad_delivery_slots  # noqa: F401,E402
 
 
 def review_usage_category(surface: str) -> str:
@@ -764,14 +765,16 @@ class ReviewCoordinator:
 def run_review_request(
     request: ReviewRequest,
     *,
-    slots: List[ReviewSlot] | None = None,
+    slots: List[ReviewSlot],
     drive_root: pathlib.Path | None = None,
     llm: LLMClient | None = None,
     usage_ctx: Any = None,
 ) -> ReviewRunResult:
-    resolved_slots = reviewer_slots(role_hint=request.surface) if slots is None else slots
+    """Run ONE review wave on ``slots`` — the rows the caller took from the pool
+    (``review_pool_slots`` / ``triad_delivery_slots``) or composed for its wave;
+    the substrate never picks reviewers itself."""
     coordinator = ReviewCoordinator(llm=llm, drive_root=drive_root, usage_ctx=usage_ctx)
-    result = coordinator.run(request, resolved_slots)
+    result = coordinator.run(request, slots)
     if request.surface == "task_acceptance":
         # D-Q5 annotation-only pass: feeds the clean bit + disclosure, never parse
         # validity/quorum/verdicts. Called UNGUARDED on purpose — the annotator is

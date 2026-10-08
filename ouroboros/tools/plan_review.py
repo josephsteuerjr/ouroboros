@@ -806,8 +806,8 @@ async def _run_plan_review_async(ctx: ToolContext, request: _PlanRequest, *, col
         return slot_error
     if not slots:
         return _plan_unavailable(
-            ctx, "ERROR: No review models configured. Configure Review lanes "
-            "(OUROBOROS_REVIEWER_SLOTS) on the Agents tab in Settings.",
+            ctx, "ERROR: No review models configured. Mark at least one catalog row "
+            "Reviewer (OUROBOROS_SUBAGENTS) on the Agents tab in Settings.",
             "review_models_unconfigured")
     configured_slots = list(slots)
     resume = _plan_in_flight_resume_inputs(

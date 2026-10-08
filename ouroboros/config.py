@@ -71,7 +71,6 @@ from ouroboros.model_slots import (
     _main_model,  # noqa: F401
     _parse_model_list,  # noqa: F401
     get_consciousness_model,  # noqa: F401
-    get_deep_self_review_model,  # noqa: F401
     get_fallback_models,  # noqa: F401
     get_heavy_model,  # noqa: F401
     get_image_input_mode,  # noqa: F401
@@ -87,8 +86,6 @@ from ouroboros.review_model_routes import (
     get_review_enforcement,  # noqa: F401
     get_review_models,  # noqa: F401
     get_review_targets,  # noqa: F401
-    get_scope_review_models,  # noqa: F401
-    get_scope_review_targets,  # noqa: F401
     resolved_review_model_target,  # noqa: F401
 )
 from ouroboros.runtime_limits import (
@@ -980,9 +977,6 @@ def apply_settings_to_env(settings: dict, *, environ=None) -> None:
                 elif isinstance(val, (dict, list)):
                     val = json.dumps(val, ensure_ascii=False, separators=(",", ":"))
                 environ[k] = str(val)
-        # Reviewer-model floors moved into the structured-slot projection (6.1):
-        from ouroboros.reviewer_slot_config import project_reviewer_slots_into_env
-        project_reviewer_slots_into_env(environ=environ)
         if not environ.get("OUROBOROS_REVIEW_ENFORCEMENT"):
             environ["OUROBOROS_REVIEW_ENFORCEMENT"] = str(SETTINGS_DEFAULTS["OUROBOROS_REVIEW_ENFORCEMENT"])
         if not environ.get("OUROBOROS_TASK_REVIEW_MODE"):

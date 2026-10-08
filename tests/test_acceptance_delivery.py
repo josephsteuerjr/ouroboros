@@ -19,7 +19,7 @@ from types import SimpleNamespace
 import pytest
 
 from ouroboros.review_execution import ReviewRouteKind
-from ouroboros.reviewer_slot_config import REVIEWER_SLOTS_ENV, review_pool_slots
+from ouroboros.reviewer_slot_config import review_pool_slots
 
 
 def _row(subagent_id, target, *, kind="api_model", review_eligible=True, **extra):
@@ -48,8 +48,7 @@ _ROSTER = _roster(*_POOL_ROWS)
 @pytest.fixture()
 def structured_env(monkeypatch):
     monkeypatch.setenv("OUROBOROS_SUBAGENTS", json.dumps(_ROSTER))
-    for key in (REVIEWER_SLOTS_ENV, "OUROBOROS_REVIEW_MODELS", "OUROBOROS_REVIEW_ROUTES",
-                "OUROBOROS_REVIEW_SESSION_ROUTE"):
+    for key in ("OUROBOROS_REVIEW_MODELS", "OUROBOROS_REVIEW_ROUTES", "OUROBOROS_REVIEW_SESSION_ROUTE"):
         monkeypatch.delenv(key, raising=False)
     return monkeypatch
 
@@ -187,7 +186,7 @@ def test_a_comma_list_without_a_catalog_is_an_empty_pool_and_a_typed_refusal(mon
     ride the comma list carry explicit catalog rows instead."""
     from ouroboros import loop as loop_mod
 
-    for key in (REVIEWER_SLOTS_ENV, "OUROBOROS_REVIEW_ROUTES", "OUROBOROS_SUBAGENTS"):
+    for key in ("OUROBOROS_REVIEW_ROUTES", "OUROBOROS_SUBAGENTS"):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("OUROBOROS_REVIEW_MODELS", "openai/a,openai/b,openai/c")
     captured = _capture_panel(monkeypatch)
@@ -345,8 +344,7 @@ _ROW_SESSION = _row("t_sess", "fake-review=fake-small", kind="agent_session")
 def _offline_env(monkeypatch, *rows):
     """An offline review pool (fake model ids never reach a provider)."""
     monkeypatch.setenv("OUROBOROS_SUBAGENTS", json.dumps(_roster(*rows)))
-    for key in (REVIEWER_SLOTS_ENV, "OUROBOROS_REVIEW_MODELS", "OUROBOROS_REVIEW_ROUTES",
-                "OUROBOROS_REVIEW_SESSION_ROUTE"):
+    for key in ("OUROBOROS_REVIEW_MODELS", "OUROBOROS_REVIEW_ROUTES", "OUROBOROS_REVIEW_SESSION_ROUTE"):
         monkeypatch.delenv(key, raising=False)
 
 
