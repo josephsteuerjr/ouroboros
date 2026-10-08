@@ -222,6 +222,7 @@ BAND_PATHS = {
     "tests/test_repo_health_smoke.py": "size-ratchet redesign: merge-aware previous, pairwise base-vs-tip, candidate-mode generator contract tests",
     "tests/test_review_agent_session_route.py": "D06 F2.3a re-entry by extraction: the session-route giant (3399) split into three sibling suites + shared fixtures; this remainder keeps the typed-verdict/route themes at 1218 with headroom",
     "tests/test_review_fidelity.py": None,
+    "tests/test_review_session_delivery.py": "The existing session-delivery fixture now models the polling deadline deterministically while retaining extraction, cancellation and calendar controls together; splitting this small shared-fixture delta would duplicate the fake gateway.",
     "tests/test_review_session_scope_wiring.py": "Scope-session integration scenarios share transport fixtures and verify exact subject delivery, manifest identity, and diagnostic coverage across native and delegated routes.",
     "tests/test_review_verification_v6544.py": None,
     "tests/test_safety_policy.py": None,
