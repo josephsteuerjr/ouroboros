@@ -522,9 +522,12 @@ def seat_parts(slot: Any, *, coupling_only: bool = False) -> tuple:
         return (PART_COUPLING,)
     retrieves = slot.get("retrieves") if isinstance(slot, dict) else getattr(slot, "retrieves", None)
     if retrieves is None and not isinstance(slot, dict):
+        # A slot-like object without the derived property: the one delivery-class
+        # predicate over the row's route and its own explicit native-delivery fact
+        # (a catalog id is NOT a delivery signal, F8).
         from ouroboros.review_execution import delivery_retrieves
 
-        retrieves = delivery_retrieves(getattr(slot, "route", None), str(getattr(slot, "subagent_id", "") or ""))
+        retrieves = delivery_retrieves(getattr(slot, "route", None), getattr(slot, "native_retrieval", None))
     return PARTS if retrieves else (PART_CHANGE,)
 
 

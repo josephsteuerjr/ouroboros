@@ -63,6 +63,22 @@ def test_seat_parts_follow_the_one_fact():
     assert seat_parts(slot) == (PART_CHANGE, PART_COUPLING)
 
 
+def test_seat_parts_without_the_derived_property_use_the_delivery_predicate_not_the_id():
+    """A slot-like object that lacks ``retrieves`` is classified by the ONE delivery
+    predicate over its route and its own native-delivery fact; its catalog id is not
+    a signal (F8) — a packet api row with an id is still asked ``change`` alone."""
+    from ouroboros.review_execution import ReviewRouteKind
+
+    def seat(route, native):
+        return SimpleNamespace(route=route, native_retrieval=native, subagent_id="api-critic")
+
+    assert seat_parts(seat(ReviewRouteKind.API_CHAT, True)) == (PART_CHANGE, PART_COUPLING)
+    assert seat_parts(seat(ReviewRouteKind.API_CHAT, False)) == (PART_CHANGE,)
+    assert seat_parts(seat(ReviewRouteKind.API_CHAT, None)) == (PART_CHANGE,)
+    assert seat_parts(seat(ReviewRouteKind.AGENT_SESSION, None)) == (PART_CHANGE, PART_COUPLING)
+    assert seat_parts(SimpleNamespace(route="api_chat", subagent_id="api-critic")) == (PART_CHANGE,)
+
+
 def test_retrieving_seat_gets_both_parts_and_contract_b(tmp_path):
     frozen, _repo = _subject(tmp_path)
     brief = build_two_part_brief(frozen, RETRIEVING, goal="raise f", commit_message="bump f",
