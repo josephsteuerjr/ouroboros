@@ -292,13 +292,28 @@ def _migration_outcomes():
     return finished, refused, noop
 
 
-def test_w4_a_refused_migration_is_the_blocks_error_with_its_snapshot(monkeypatch):
+_REFUSED_LANES = '{"triad": [{"model": "x/y"}]}'
+
+
+def _task_snapshot(**document):
+    """A task's settings snapshot over the live document with ``document`` keys as the task read them."""
+    from ouroboros.config import load_settings
+
+    settings = {**load_settings(), **document}
+    for key, value in document.items():
+        if value is None:
+            settings.pop(key, None)
+    return task_settings_snapshot(settings, {**os.environ, SUBAGENTS_SETTING: str(document.get(SUBAGENTS_SETTING) or "")})
+
+
+def test_w4_a_refused_migration_is_the_error_of_the_task_whose_document_it_refused(monkeypatch):
     """The A↔C seam, in the shape package C really has: ``config.review_pool_migrations_seen()``
     returns the tuple of ``MigrationOutcome`` records this process computed, and the supervisor
     boot's record (``server_maintenance.review_pool_migration_records``) holds the snapshot path.
-    The newest outcome that did something is the block's: a refusal is an error here even over
-    a readable catalog (the lane keys stayed; the pool the owner expects is not there yet), and
-    the snapshot path is disclosed."""
+    The block binds the outcome to the DOCUMENT whose pool it shows (FIX5 W4): a task whose
+    settings snapshot still carries the refused lanes key and the unmigrated catalog sees its
+    refusal and its snapshot path; the live settings, a pool catalog, carry neither — however
+    recent the refusal is in this process — and the process registry keeps its history."""
     from ouroboros import config as cfg
     from ouroboros import server_maintenance
 
@@ -307,11 +322,43 @@ def test_w4_a_refused_migration_is_the_blocks_error_with_its_snapshot(monkeypatc
     monkeypatch.setattr(cfg, "review_pool_migrations_seen", lambda: (finished, refused))
     monkeypatch.setattr(server_maintenance, "review_pool_migration_records", lambda state=None: {
         refused.input_sha256: {"ts": "20261008T101010Z", "snapshot": _SNAPSHOT, "error": refused.error, "reported": None}})
-    block, _ = _block()
+    refused_task = _task_snapshot(**{_LANES_KEY: _REFUSED_LANES, SUBAGENTS_SETTING: _HELPERS_ONLY})
+    block, _ = _block(refused_task)
     assert block["source"] == "error" and block["error"] == refused.error
     assert "triad[0] has unknown keys" in block["error"], "the refusal's own sentence, not a paraphrase"
-    assert block["migration_snapshot"] == _SNAPSHOT
-    assert [row["seat_id"] for row in block["pool"]] == ["critic-key", "packet-key", "session-key"]
+    assert block["migration_snapshot"] == _SNAPSHOT and block["pool"] == []
+
+    live, _ = _block()
+    assert (live["source"], live["error"]) == ("structured", "") and "migration_snapshot" not in live
+    assert [row["seat_id"] for row in live["pool"]] == ["critic-key", "packet-key", "session-key"]
+    assert cfg.review_pool_migrations_seen() == (finished, refused), "history is bound, never erased"
+
+
+def test_w4_two_task_snapshots_each_see_their_own_migration_fact(monkeypatch):
+    """Two tasks interleaved on one process: one started on the refused document, the other on
+    the repaired one whose migration finished. Each block carries the fact of ITS document —
+    the error and snapshot of the refusal, the snapshot (no error) of the finished migration —
+    whichever outcome the process computed last, and in either order of reading."""
+    from ouroboros import config as cfg
+    from ouroboros import server_maintenance
+
+    finished, refused, _noop = _migration_outcomes()
+    finished_path = "state/review_migrations/20261008T090909Z-slots-to-pool.json"
+    monkeypatch.setattr(cfg, "review_pool_migrations_seen", lambda: (finished, refused))
+    monkeypatch.setattr(server_maintenance, "review_pool_migration_records", lambda state=None: {
+        finished.input_sha256: {"ts": "20261008T090909Z", "snapshot": finished_path, "error": "", "reported": None},
+        refused.input_sha256: {"ts": "20261008T101010Z", "snapshot": _SNAPSHOT, "error": refused.error, "reported": None}})
+    refused_task = _task_snapshot(**{_LANES_KEY: _REFUSED_LANES, SUBAGENTS_SETTING: _HELPERS_ONLY})
+    repaired_task = _task_snapshot(**{_LANES_KEY: None, SUBAGENTS_SETTING: finished.catalog_after})
+
+    for _ in range(2):
+        refused_block, _ = _block(refused_task)
+        repaired_block, _ = _block(repaired_task)
+        assert (refused_block["source"], refused_block["error"]) == ("error", refused.error)
+        assert refused_block["migration_snapshot"] == _SNAPSHOT
+        assert (repaired_block["source"], repaired_block["error"]) == ("structured", "")
+        assert repaired_block["migration_snapshot"] == finished_path
+        assert {row["model"] for row in repaired_block["pool"]} == {"x/one"}
 
 
 def test_w4_a_finished_migration_is_no_error_and_a_noop_leaves_no_fact(monkeypatch):
@@ -342,21 +389,33 @@ def test_w4_a_finished_migration_is_no_error_and_a_noop_leaves_no_fact(monkeypat
     assert "migration_snapshot" not in block and block["source"] == "structured"
 
 
-def test_w4_the_read_seam_itself_puts_a_refused_migration_in_front_of_the_model(monkeypatch):
-    """End to end, nothing patched between the two packages: the settings read seam refuses a
-    migration (``review_pool_migration.apply_at_read_seam`` records the outcome), and the block
-    the model reads carries that refusal. The boot has not written a snapshot in this process,
-    so no path is claimed."""
+def test_w4_the_read_seam_refusal_reaches_the_model_and_the_owners_repair_clears_it(tmp_path, monkeypatch):
+    """End to end, nothing patched between the two packages: the settings document on disk
+    carries lanes the migration refuses; the read seam (``review_pool_migration.apply_at_read_seam``)
+    records the outcome and keeps the lanes key, and the block the model reads carries that
+    refusal (no snapshot path: the boot has not written one in this process). The owner then
+    saves a catalog — the save drops the lanes key — and the repaired document's block carries
+    no past migration error: the refusal stays in the process registry (history), bound to the
+    document it refused, not to whatever document is read next."""
+    from ouroboros import config as cfg
     from ouroboros import review_pool_migration as m
 
     monkeypatch.setattr(m, "_MIGRATIONS_SEEN", {})
-    loaded = {_LANES_KEY: '{"triad": [{"model": "x/y"}]}', SUBAGENTS_SETTING: _HELPERS_ONLY}
-    assert m.apply_at_read_seam(loaded) == (_LANES_KEY,), "a refusal keeps the lane key for the owner's save"
-    monkeypatch.setenv(SUBAGENTS_SETTING, _HELPERS_ONLY)
+    monkeypatch.delenv(SUBAGENTS_SETTING, raising=False)
+    path = tmp_path / "settings.json"
+    monkeypatch.setattr(cfg, "SETTINGS_PATH", path)
+    path.write_text(json.dumps({_LANES_KEY: _REFUSED_LANES, SUBAGENTS_SETTING: _HELPERS_ONLY}), encoding="utf-8")
     block, _ = _block()
-    assert block["source"] == "error" and block["error"] == m.migrations_seen()[-1].error
+    (refusal,) = m.migrations_seen()
+    assert refusal.error and block["source"] == "error" and block["error"] == refusal.error
     assert "triad[0] has unknown keys" in block["error"] and "migration_snapshot" not in block
     assert block["pool"] == []
+
+    path.write_text(json.dumps({SUBAGENTS_SETTING: _POOL}), encoding="utf-8")  # the owner's repairing save
+    repaired, _ = _block()
+    assert (repaired["source"], repaired["error"]) == ("structured", "") and "migration_snapshot" not in repaired
+    assert [row["seat_id"] for row in repaired["pool"]] == ["critic-key", "packet-key", "session-key"]
+    assert m.migrations_seen() == (refusal,), "the registry keeps the refusal; the block no longer wears it"
 
 
 def test_recent_records_are_the_readers_newest_five_of_this_task_from_a_bounded_hot_read(tmp_path, monkeypatch):
