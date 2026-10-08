@@ -270,6 +270,8 @@ textarea::placeholder {
   line-height: var(--line-meta);
 }
 
+.wizard-inline-note[data-tone="warn"] { color: var(--status-warn-fg); }
+
 .wizard-inline-note code,
 .field-note code {
   padding: 1px 4px;

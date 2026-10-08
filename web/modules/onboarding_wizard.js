@@ -12,7 +12,7 @@ import { escapeHtmlAttr as escapeHtml } from './utils.js';
 import { bindLanguageSettings, languageBlockHtml, saveLanguageChoice } from './settings_language.js';
 import { installAltMenuSuppression, installDesktopShellLinkInterceptor } from './ui_helpers.js';
 import { createModelRolesEditor, modelRolesHost, modelRoleMap, parseModelSource } from './model_roles.js';
-import { ALLOW_EMPTY_REVIEW_POOL, availableSubagentsEditorHost, reviewPoolRows } from './subagents_settings.js';
+import { ALLOW_EMPTY_REVIEW_POOL, PACKET_ONLY_POOL_WARNING, availableSubagentsEditorHost, packetOnlyReviewPool, reviewPoolRows } from './subagents_settings.js';
 import { PROCESSING_PREFERENCE_KEY, MODEL_PROCESSING_PREFERENCES_KEY, processingIntentLabel,
     configuredApiProviders, apiProviderLabel } from './route_editor_primitives.js';
 import { MODEL_CATALOG_TIMEOUT_MS, mergeModelCatalog, catalogReadState, summarizeReadErrors } from './settings_catalog.js';
@@ -967,6 +967,8 @@ import { accountRowFacts } from './harness_accounts.js';
                 </div>
             </div>
             <div class="summary-card">${summaryRowsHtml()}</div>
+            ${state.reviewEnforcement === 'blocking' && trim(state.runtimeMode) !== 'cyber_pro' && packetOnlyReviewPool(catalogDraft())
+                ? `<div class="wizard-inline-note" data-tone="warn" data-review-pool-warning>${escapeHtml(PACKET_ONLY_POOL_WARNING)}</div>` : ''}
             ${languageBlockHtml({ onboarding: true })}
             ${state.recoveryPrepared ? `<div class="wizard-inline-note">Automatic subscription presets were skipped. ${state.recoveryMain === mainBinding() ? 'Reviewers were assigned to Main.' : 'Main changed; reviewers keep the assignments shown above. Use Main for reviewers again if you want to update them.'} Check the assignments, then Start Ouroboros to save this draft. Later changes in Settings are manual.</div>` : ''}
         `;

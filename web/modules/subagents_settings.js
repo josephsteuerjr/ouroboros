@@ -227,6 +227,15 @@ export function reviewPoolRows(setting) {
     return (setting?.items || []).filter((row) => row?.review_eligible === true && row?.enabled !== false);
 }
 
+/** `subagent_runtime.PACKET_ONLY_POOL_WARNING`, the save warning of a pool no row of which reads the repository. */
+export const PACKET_ONLY_POOL_WARNING = 'Every reviewer is a Packet row, so none reads the repository and the coupling question (how the change fits the rest of the code) goes unanswered: with Blocking review, every commit to Ouroboros itself stops as “not performed”. Mark a reviewer that reads the work itself, or choose Advisory.';
+
+/** A non-empty pool whose every row is Packet (`subagent_runtime.coupling_unanswerable`). */
+export function packetOnlyReviewPool(setting) {
+    const pool = reviewPoolRows(setting);
+    return pool.length > 0 && pool.every((row) => row?.route?.kind === ROUTE_KIND_API_MODEL && row?.delivery === 'packet');
+}
+
 /** The empty-pool refusal of a judged catalog draft (the server applies the same rule). */
 export function reviewPoolErrors(setting, { judged = false, allowEmpty = false } = {}) {
     const items = setting?.items || [];

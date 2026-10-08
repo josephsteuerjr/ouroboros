@@ -193,6 +193,37 @@ def _api_review_cost_hint(slot: Any) -> str:
                                  reading=bool(getattr(slot, "native_retrieval", False)))
 
 
+# The wizard's summary prints the same sentence (``subagents_settings.js`` ``PACKET_ONLY_POOL_WARNING``).
+PACKET_ONLY_POOL_WARNING = (
+    "Every reviewer is a Packet row, so none reads the repository and the coupling question (how the "
+    "change fits the rest of the code) goes unanswered: with Blocking review, every commit to Ouroboros "
+    "itself stops as “not performed”. Mark a reviewer that reads the work itself, or choose Advisory.")
+
+
+def coupling_unanswerable(slots: Any) -> bool:
+    """A non-empty pool none of whose seats reads the repository (every row Packet): no seat
+    is asked the coupling part, so every commit-gate review ends ``NOT_PERFORMED``
+    (``coupling_not_performed``, ``review_ledger.reduce_verdict``) — a block under Blocking."""
+    return bool(slots) and not any(getattr(slot, "retrieves", False) for slot in slots)
+
+
+def review_pool_save_warning(settings: Mapping[str, Any]) -> str:
+    """The save-time warning, never a refusal, for a document whose pool cannot answer the
+    coupling part while review blocks (:func:`coupling_unanswerable`); ``""`` otherwise."""
+    from ouroboros.reviewer_slot_config import review_pool_slots
+    from ouroboros.tools.review_helpers import review_enforcement_blocks
+
+    enforcement = str(settings.get("OUROBOROS_REVIEW_ENFORCEMENT") or "").strip().lower()
+    try:
+        warn = review_enforcement_blocks(enforcement) and coupling_unanswerable(review_pool_slots(dict(settings)))
+    except Exception:  # a malformed catalog has its own refusal; a warning never fails a landed save
+        import logging
+
+        logging.getLogger(__name__).debug("review pool save warning unavailable", exc_info=True)
+        return ""
+    return PACKET_ONLY_POOL_WARNING if warn else ""
+
+
 def _migration_decided_this_document(outcome: Any, settings: Mapping[str, Any]) -> bool:
     """Whether ``outcome`` (a ``review_pool_migration.MigrationOutcome``) decided the
     document ``settings`` shows. A refusal rewrote nothing, so the lanes key and the
@@ -255,7 +286,8 @@ def review_facts_block(snapshot: Optional[TaskSettingsSnapshot] = None) -> str:
     live settings or the last execution; ``None`` reads the bound task scope. Each seat is named by its catalog
     handle (the same handle ``## Available subagents`` shows and ``review_change(reviewers=[…])`` accepts); its
     ``seat_id`` is the stored row id the records carry. Above four seats the rows shrink to ``{seat_id, model}``
-    and ``omitted`` counts them. ``source`` is ``structured`` (a non-empty pool), ``empty`` (a readable catalog
+    and ``omitted`` counts them; ``coupling_unanswerable: true`` (:func:`coupling_unanswerable`) is a block fact,
+    so the shrink keeps it. ``source`` is ``structured`` (a non-empty pool), ``empty`` (a readable catalog
     with no marked row — a loud, configured fact, never a default panel) or ``error`` (a malformed catalog or a
     refused migration). Stable for the task (cache-marked prefix); the task's recent ledger records ride
     separately in the changing part (:func:`review_records_block`)."""
@@ -271,6 +303,7 @@ def review_facts_block(snapshot: Optional[TaskSettingsSnapshot] = None) -> str:
         state = rs.review_pool_state(settings.get(SUBAGENTS_SETTING))
         source, error = state["state"], state["error"]
         pool: list[dict[str, Any]] = []
+        slots: list[Any] = []
         if source != "error":
             try:
                 raw = settings.get(SUBAGENTS_SETTING)
@@ -291,6 +324,7 @@ def review_facts_block(snapshot: Optional[TaskSettingsSnapshot] = None) -> str:
         migration = _review_migration_facts(settings)
         if migration.get("error") and source != "error":
             source, error = "error", migration["error"]
+        unanswerable = source == "structured" and coupling_unanswerable(slots)
         enforcement, mode = get_review_enforcement(), get_runtime_mode()
         blocks = review_enforcement_blocks(enforcement)
     seats = len(pool)
@@ -305,6 +339,7 @@ def review_facts_block(snapshot: Optional[TaskSettingsSnapshot] = None) -> str:
         "rule": _REVIEW_RULES["cyber_pro" if runtime_mode_at_least(mode, "cyber_pro") else enforcement],
         "pool": pool,
         "pool_empty": source == "empty",
+        **({"coupling_unanswerable": True} if unanswerable else {}),
         "surfaces": _REVIEW_SURFACES,
         "omitted": {"rows": seats if seats > 4 else 0},
         "full_source": {"pool": "GET /api/review-pool", "records": "## Review records"},

@@ -1460,8 +1460,6 @@ def _api_settings_post_locked(request: Request, body: Any) -> JSONResponse:
             resp["immediate_changed"] = True
         if next_task_changed:
             resp["next_task_changed"] = True
-        if warnings:
-            resp["warnings"] = warnings
         if subagents_key in all_changed:
             _unknown = _unrecognised_review_models(_candidate_pool_api_models(current))
             if _unknown:
@@ -1471,7 +1469,10 @@ def _api_settings_post_locked(request: Request, body: Any) -> JSONResponse:
                     + ". Review calls to these reviewers will fail with 'not a valid model ID' "
                     "and can break the review quorum — check for a truncated value."
                 )
-                resp["warnings"] = warnings
+        from ouroboros.subagent_runtime import review_pool_save_warning
+        warnings.extend(filter(None, [review_pool_save_warning(current)]))
+        if warnings:
+            resp["warnings"] = warnings
         return JSONResponse(resp)
     except Exception as e:
         if boundary.committed:
