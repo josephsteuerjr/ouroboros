@@ -91,6 +91,52 @@ def test_a_generated_preview_proposes_the_factory_reviewers_and_an_owner_draft_i
     assert len(pool_seams["factory"]) == 1
 
 
+def test_a_generated_completion_saves_the_factory_reviewers_the_preview_proposed(onboarding, pool_seams):
+    """A fresh install finishing without posting a catalog (an API or desktop caller) saves the
+    reviewers the preview proposed, so it never lands with an empty pool; the receipt describes
+    the saved bytes, so the catalog still reads as the onboarding default."""
+    from ouroboros.configured_subagents import SUBAGENTS_RECEIPT_KEY, resolve_configured_subagents
+
+    response = onboarding.client.post("/api/onboarding/complete", json=WIZARD_PAYLOAD)
+    assert response.status_code == 200, response.text
+    saved = onboarding.saved()
+    catalog = json.loads(saved["OUROBOROS_SUBAGENTS"])
+    assert _ids(catalog)[-3:] == [row["subagent_id"] for row in FACTORY_ROWS]
+    assert pool_seams["judged"] == [saved["OUROBOROS_SUBAGENTS"]], "the pool rule judged the saved bytes"
+    receipt = json.loads(saved[SUBAGENTS_RECEIPT_KEY])
+    assert receipt["available_subagents"] == catalog
+    assert receipt["review_pool"] == [row["subagent_id"] for row in catalog["items"] if row.get("review_eligible") is True]
+    assert resolve_configured_subagents(saved).source == "onboarding_default"
+
+
+def test_finishing_with_the_previewed_catalog_saves_exactly_its_reviewers(onboarding):
+    """The wizard posts back the catalog the preview showed, marks included. The completion must
+    save those reviewers once: re-marking an already-marked draft would mint a twin of every
+    subscription reviewer, so each model would silently review every change twice."""
+    preview = onboarding.client.post(
+        "/api/onboarding/subagents/preview", json={**WIZARD_PAYLOAD, "subscriptionsConnected": True})
+    assert preview.status_code == 200, preview.text
+    shown = preview.json()["available_subagents"]
+    assert any(row.get("review_eligible") is True for row in shown["items"])
+    response = onboarding.client.post("/api/onboarding/complete", json={
+        **WIZARD_PAYLOAD, "subscriptionsConnected": True, "OUROBOROS_SUBAGENTS": shown})
+    assert response.status_code == 200, response.text
+    assert json.loads(onboarding.saved()["OUROBOROS_SUBAGENTS"]) == shown
+
+
+def test_a_confirmed_empty_pool_gains_no_subscription_reviewers(onboarding):
+    """'Save without reviewers' is the owner's answer: neither the preview nor the completion
+    appends the connected subscriptions' reviewers to the confirmed draft."""
+    body = {**WIZARD_PAYLOAD, "subscriptionsConnected": True, "OUROBOROS_SUBAGENTS": OWNER_DRAFT,
+            "allow_empty_review_pool": True}
+    preview = onboarding.client.post("/api/onboarding/subagents/preview", json=body)
+    assert preview.status_code == 200, preview.text
+    assert _ids(preview.json()["available_subagents"]) == ["helper"]
+    response = onboarding.client.post("/api/onboarding/complete", json=body)
+    assert response.status_code == 200, response.text
+    assert _ids(json.loads(onboarding.saved()["OUROBOROS_SUBAGENTS"])) == ["helper"]
+
+
 def test_factory_reviewers_top_up_only_a_catalog_nobody_marked(pool_seams):
     from ouroboros.configured_subagents import MAX_CONFIGURED_SUBAGENTS
     from ouroboros.gateway.onboarding import with_factory_review_rows
@@ -163,7 +209,7 @@ def test_codex_only_preview_and_finish_share_models_agents_and_atomic_settings(o
     proposed = preview.json()
     assert proposed["model_settings"]["OUROBOROS_MODEL"] == model
     catalog = proposed["available_subagents"]
-    assert {row["subagent_id"] for row in FACTORY_ROWS} <= set(_ids(catalog))
+    assert any(row.get("review_eligible") is True for row in catalog["items"]), "the preview proposes reviewers"
     assert not onboarding.settings_path.exists()
     completed = onboarding.client.post("/api/onboarding/complete", json={
         **draft, **proposed["model_settings"], "OUROBOROS_SUBAGENTS": catalog,

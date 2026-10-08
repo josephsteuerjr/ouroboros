@@ -434,6 +434,46 @@ def test_a_changed_catalog_meets_the_empty_pool_rule_and_the_owner_flag_confirms
         "items"][0]["recommended_use"] == "Edited use."
 
 
+def test_re_posting_the_unsaved_candidate_a_read_showed_is_not_a_catalog_change(
+    monkeypatch, isolated_settings, _clean_subagent_env,
+):
+    """With no catalog stored, Settings shows an unsaved candidate and every save re-posts
+    it: an unrelated save is not refused by the empty-pool rule (that pool was already the
+    install's), while an edited candidate is judged like any catalog change."""
+    from ouroboros import reviewer_slot_config
+    from ouroboros.configured_subagents import SUBAGENTS_SETTING
+    from ouroboros.gateway import settings as settings_mod
+
+    judged = []
+
+    def judge(raw, *, allow_empty):
+        judged.append(len(json.loads(raw)["items"]))
+        return "no reviewers marked; mark at least one row or save with `allow_empty_review_pool`"
+
+    monkeypatch.setattr(reviewer_slot_config, "review_pool_save_error", judge, raising=False)
+    isolated_settings.write_text(json.dumps({
+        "OPENROUTER_API_KEY": "configured", "OUROBOROS_MODEL": "openai/gpt-5.6-sol",
+        "OUROBOROS_MODEL_LIGHT": "openai/gpt-5.6-luna",
+    }), encoding="utf-8")
+    app = _settings_app(monkeypatch, isolated_settings)
+    app.router.routes.append(Route("/api/settings", endpoint=settings_mod.api_settings_get, methods=["GET"]))
+    client = TestClient(app)
+    shown = client.get("/api/settings").json()["_meta"]["available_subagents"]
+    assert shown["source"] == "undecided" and len(shown["candidate"]["items"]) == 2
+
+    edited = {**shown["candidate"], "items": shown["candidate"]["items"][:1]}
+    refused = client.post("/api/settings", json={SUBAGENTS_SETTING: edited})
+    assert refused.status_code == 400 and refused.json()["code"] == "empty_review_pool", refused.text
+    assert judged == [1] and SUBAGENTS_SETTING not in json.loads(isolated_settings.read_text(encoding="utf-8"))
+
+    saved = client.post("/api/settings", json={SUBAGENTS_SETTING: shown["candidate"], "TOTAL_BUDGET": "25"})
+    assert saved.status_code == 200, saved.text
+    assert judged == [1], "re-posting the shown candidate is no catalog change"
+    stored = json.loads(isolated_settings.read_text(encoding="utf-8"))
+    assert [row["route"]["target_id"] for row in json.loads(stored[SUBAGENTS_SETTING])["items"]] == [
+        "openai/gpt-5.6-sol", "openai/gpt-5.6-luna"]
+
+
 def test_a_catalog_save_retires_the_stored_review_lanes(monkeypatch, isolated_settings):
     """The pool replaces the former review lanes: the save that writes a catalog drops
     ``OUROBOROS_REVIEWER_SLOTS`` from the document, and while that key is still stored

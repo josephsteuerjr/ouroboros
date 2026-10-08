@@ -650,22 +650,27 @@ def _candidate_pool_api_models(settings: Dict[str, Any]) -> list:
 
 
 def review_pool_save_judgement(raw: Any, stored: Dict[str, Any], *, allow_empty: bool) -> str:
-    """The empty-pool rule of a catalog save ('' = acceptable). Like the twin rule it judges
-    only a save that CHANGES the catalog (every Settings save re-posts it) or retires stored
-    review lanes, so no pool empties silently; ``allow_empty_review_pool`` confirms one."""
-    if allow_empty:
-        return ""
-    from ouroboros.configured_subagents import SUBAGENTS_SETTING, normalize_configured_subagents
+    """The empty-pool rule of a catalog save ('' = acceptable). It judges only a save that
+    CHANGES the catalog a Settings read showed — the stored one, else the unsaved candidate
+    offered in its place, whose pool was already the install's — or retires stored review
+    lanes, so no pool empties silently; ``allow_empty_review_pool`` confirms one."""
+    from ouroboros.configured_subagents import (
+        SUBAGENTS_SETTING, configured_subagents_dict, normalize_configured_subagents,
+        resolve_settings_subagent_candidate,
+    )
 
-    def canonical(value: Any) -> Optional[str]:
+    def canonical(value: Any) -> str:
         try:
             return normalize_configured_subagents(value)[1]
         except ValueError:
-            return None
+            return ""  # nothing readable: this save authors the catalog
 
+    shown = stored.get(SUBAGENTS_SETTING)
+    if shown in (None, ""):
+        config = resolve_settings_subagent_candidate(apply_runtime_provider_defaults(dict(stored))[0])[0].config
+        shown = configured_subagents_dict(config) if config is not None else None
     posted = canonical(raw)
-    if posted is None or (posted == canonical(stored.get(SUBAGENTS_SETTING))
-                          and not str(stored.get(REVIEW_LANES_KEY) or "").strip()):
+    if allow_empty or (posted == canonical(shown) and not str(stored.get(REVIEW_LANES_KEY) or "").strip()):
         return ""
     from ouroboros.reviewer_slot_config import review_pool_save_error
 

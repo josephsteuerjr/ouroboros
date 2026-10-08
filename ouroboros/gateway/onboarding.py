@@ -18,11 +18,10 @@ could not atomically include subscription presets or the fresh safety default.
    lock;
 7. only then start the supervisor.
 
-A daemon that cannot answer at save time is a TYPED failure that persists
-NOTHING and keeps the wizard open, with an explicit "finish without agent
-defaults" escape hatch (``skipSubscriptionPresets``). Saving a guessed model id
-is never the fallback: the id would be written into the reviewer configuration
-the owner believes is live, and would only fail later, inside a real review.
+A daemon that cannot answer at save time is a TYPED failure that persists NOTHING
+and keeps the wizard open, with a "finish without agent defaults" escape hatch
+(``skipSubscriptionPresets``). A guessed model id is never the fallback: it would
+land in the reviewer rows the owner believes are live and fail inside a real review.
 """
 
 from __future__ import annotations
@@ -32,7 +31,7 @@ import json
 import threading
 import concurrent.futures
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from starlette.requests import Request
@@ -44,8 +43,10 @@ from ouroboros.configured_subagents import (
     SUBAGENTS_SETTING,
     ConfiguredSubagents,
     configured_subagents_dict,
+    configured_subagents_fingerprint,
     normalize_configured_subagents,
     roster_save_error,
+    serialize_configured_subagents,
 )
 
 from ouroboros.gateway.owner_settings import (
@@ -502,24 +503,13 @@ async def resolve_install_preset(
             # "Saving..." forever: the read is abandoned to its thread and the
             # completion answers with the same typed, skippable failure the
             # dead-engine case uses.
-            log.warning(
-                "Claudexor snapshot for onboarding presets did not answer within %ss",
-                timeout_sec,
-            )
-            return None, PresetFailure(
-                "daemon_timeout",
-                f"the Claudexor status read did not answer within {timeout_sec}s",
-            )
+            log.warning("Claudexor snapshot for onboarding presets did not answer within %ss", timeout_sec)
+            return None, PresetFailure("daemon_timeout", f"the Claudexor status read did not answer within {timeout_sec}s")
         except Exception as exc:  # a dead/broken engine is a failure, not a crash
             log.warning("Claudexor snapshot for onboarding presets failed", exc_info=True)
             return None, PresetFailure("daemon_unavailable", f"{type(exc).__name__}: {exc}")
-        required_models = (
-            set(REVIEWER_PRESET_HARNESSES)
-            if owner_draft is not None else None
-        )
-        discoveries, failure = verified_harness_discoveries(
-            snapshot, required_models_for=required_models,
-        )
+        required_models = set(REVIEWER_PRESET_HARNESSES) if owner_draft is not None else None
+        discoveries, failure = verified_harness_discoveries(snapshot, required_models_for=required_models)
         if failure is not None:
             return None, failure
         capability = _harness_capability(snapshot, [d.harness_id for d in discoveries])
@@ -660,23 +650,19 @@ def _prepared_settings(
     return old_settings, normalized, ""
 
 
-def _configured_owner_draft(
-    body: Mapping[str, Any],
-) -> Tuple[Optional[ConfiguredSubagents], str]:
+def _configured_owner_draft(body: Mapping[str, Any]) -> Tuple[Optional[ConfiguredSubagents], str]:
     """Validate an owner-edited canonical object without reading live status."""
     if SUBAGENTS_SETTING not in body:
         return None, ""
     try:
-        config, _canonical = normalize_configured_subagents(body.get(SUBAGENTS_SETTING))
+        return normalize_configured_subagents(body.get(SUBAGENTS_SETTING))[0], ""
     except ValueError as exc:
         return None, str(exc)
-    return config, ""
 
 
 def with_factory_review_rows(catalog: Mapping[str, Any], doc: Mapping[str, Any]) -> Dict[str, Any]:
     """A generated catalog nobody marked gains the factory reviewer rows (the never-configured
-    read's own minting), so the wizard shows the reviewers the install will run. Callers never
-    top up an owner-edited draft: its empty pool is the owner's choice, refused unless confirmed."""
+    read's own minting), so the wizard shows the reviewers the install will run."""
     from ouroboros.configured_subagents import MAX_CONFIGURED_SUBAGENTS
     from ouroboros.subscription_install_presets import factory_review_rows
 
@@ -687,6 +673,28 @@ def with_factory_review_rows(catalog: Mapping[str, Any], doc: Mapping[str, Any])
     minted = [row for row in factory_review_rows({**doc, SUBAGENTS_SETTING: json.dumps(catalog)})
               if row.get("subagent_id") not in taken]
     return {**catalog, "items": (items + minted)[:MAX_CONFIGURED_SUBAGENTS]}
+
+
+def shown_catalog(preset: SubscriptionInstallPreset, doc: Mapping[str, Any],
+                  owner_draft: Optional[ConfiguredSubagents], *, allow_empty: bool) -> Dict[str, Any]:
+    """The catalog the wizard shows and the completion saves. A posted draft holding reviewers, or
+    whose empty pool the owner confirmed, stays as posted: re-marking the reviewers the preview
+    showed would mint a twin of each. An unmarked draft keeps the reviewers the preset appends."""
+    draft = configured_subagents_dict(owner_draft) if owner_draft is not None else None
+    if draft is not None and (allow_empty or any(row.get("review_eligible") is True for row in draft["items"])):
+        return draft
+    catalog = json.loads(preset.available_subagents)
+    return catalog if draft is not None else with_factory_review_rows(catalog, doc)
+
+
+def preset_saving(preset: SubscriptionInstallPreset, catalog: Mapping[str, Any]) -> SubscriptionInstallPreset:
+    """The preset writing ``catalog``; its receipt describes the bytes it saves."""
+    config = normalize_configured_subagents(catalog)[0]
+    shown = configured_subagents_dict(config)
+    receipt = {**preset.receipt, "available_subagents": shown,
+               "available_subagents_fingerprint": configured_subagents_fingerprint(config),
+               "review_pool": [row["subagent_id"] for row in shown["items"] if row.get("review_eligible") is True]}
+    return replace(preset, available_subagents=serialize_configured_subagents(config), receipt=receipt)
 
 
 def review_rows_on_main(catalog: Mapping[str, Any], settings: Mapping[str, Any]) -> Dict[str, Any]:
@@ -756,10 +764,9 @@ async def api_onboarding_subagents_preview(request: Request) -> JSONResponse:
             diagnostics=[{"code": failure.code, "message": failure.detail}],
         )
     assert preset is not None
+    from ouroboros.gateway.settings import ALLOW_EMPTY_REVIEW_POOL
     try:
-        catalog = json.loads(preset.available_subagents)
-        if owner_draft is None:
-            catalog = with_factory_review_rows(catalog, current)
+        catalog = shown_catalog(preset, current, owner_draft, allow_empty=body.get(ALLOW_EMPTY_REVIEW_POOL) is True)
         if subscriptions_connected and skip_presets:
             catalog = review_rows_on_main(catalog, current)
         available = normalize_configured_subagents(catalog)[0]
@@ -848,15 +855,10 @@ async def api_onboarding_complete(request: Request) -> JSONResponse:
     if draft_error:
         return unsaved_error(draft_error, 400, code="invalid_available_subagents")
 
-    # BEFORE the read, not after: if a write lands between the two, the document
-    # this request goes on to derive is NEWER than the fingerprint, the locked
-    # precondition sees the mismatch and refuses. Taken the other way round the
-    # same interleaving would be invisible, and this is the one ordering that
-    # fails closed. Completion derives the WHOLE document from an unlocked read
-    # and writes that whole dictionary back, so without this a concurrent owner
-    # write would be silently restored key by key while the owner is told the
-    # save succeeded. The digest is the one the single-decision owner endpoints
-    # ask the same staleness question with.
+    # BEFORE the read: a write landing between the two makes the derived document NEWER than the
+    # fingerprint, so the locked precondition refuses (the one ordering that fails closed). The
+    # whole document is written back, so without this a concurrent owner write would be silently
+    # undone while the owner is told the save succeeded (the owner endpoints' staleness digest).
     read_fingerprint = settings_document_digest()
     old_settings, current, error = _prepared_settings(body)
     if error:
@@ -866,21 +868,17 @@ async def api_onboarding_complete(request: Request) -> JSONResponse:
     eligible = preset_eligible(old_settings)
     safety_light = _fresh_settings_file()
     if safety_light:
-        # Rev.3-2 parity with the desktop wizard: a genuinely FRESH install
-        # authors the new-install ``light`` safety coverage here, because the
-        # shared validator must not (web/Docker also reach it through the
-        # non-owner generic settings path). Eligibility is "no settings file
-        # yet"; the persist seam re-proves it under the lock.
+        # Rev.3-2 desktop-wizard parity: a genuinely FRESH install authors the new-install ``light``
+        # safety here (the shared validator must not: web/Docker reach it through the generic path);
+        # the persist seam re-proves "no settings file yet" under the lock.
         current["OUROBOROS_SAFETY_MODE"] = "light"
     preset: Optional[SubscriptionInstallPreset] = None
     preset_reason = "not_requested"
     install_preset_applied = False
     if not eligible or skip_presets:
         preset_reason = "skipped_by_owner" if eligible else "not_install_time"
-        # Install-time generation is closed or skipped, but an explicit canonical
-        # owner draft is still ordinary settings intent.  A recovery/retry completion
-        # must not answer 200 while silently discarding the editor value.  This
-        # path is pure: no daemon read, reviewer rewrite, or preset marker.
+        # Generation is closed or skipped, but an explicit owner draft is still ordinary intent: a
+        # recovery/retry must not answer 200 while discarding it. Pure: no daemon read, no marker.
         if owner_draft is not None:
             preset, failure = await resolve_install_preset(
                 current, subscriptions_connected=False, owner_draft=owner_draft)
@@ -895,18 +893,19 @@ async def api_onboarding_complete(request: Request) -> JSONResponse:
             return failure.as_response()
         preset_reason = "applied"
         install_preset_applied = True
-        # R8 ordering: provider normalization has ALREADY run over `current`;
-        # the structured preset keys land on top of it, never through it.
+        # R8: provider normalization already ran over `current`; the preset keys land on top of it.
         current.update(preset.settings_keys())
-        # Finish receives the visible editor draft. A value equal to a shipped
-        # default is still explicit owner intent; only omitted fields (or an
-        # empty Main awaiting its first proposal) may be authored here.
+        # Only omitted fields (or an empty Main awaiting its first proposal) are authored here: a
+        # visible draft value, even one equal to a shipped default, is explicit owner intent.
         current.update({key: value for key, value in preset.model_settings.items()
                         if key not in body or (key == "OUROBOROS_MODEL" and not body[key])})
 
     if not has_startup_ready_provider(current):
         return unsaved_error("The connected accounts do not provide a Main model. Connect Codex, an API provider, or a local model.",
                              400, code="model_source_unavailable")
+    if install_preset_applied:  # the catalog the preview showed (``shown_catalog``)
+        preset = preset_saving(preset, shown_catalog(preset, current, owner_draft, allow_empty=allow_empty_pool))
+        current.update(preset.settings_keys(include_reviewer=False, include_marker=False))
 
     pool_error = review_pool_save_judgement(current.get(SUBAGENTS_SETTING), old_settings, allow_empty=allow_empty_pool)
     if pool_error:
