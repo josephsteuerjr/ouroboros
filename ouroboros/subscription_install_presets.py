@@ -415,22 +415,36 @@ def _mark_review_rows(
     (every pool row judges both parts of the brief), else takes a row like a
     triad seat. If the catalog ceiling leaves no room, the seat is omitted and
     said so in diagnostics — honest disclosure, never a silent drop.
+
+    Idempotent: a row already marked with a seat's identity COUNTS as that seat
+    (each marked row satisfies one triad seat), so feeding the wizard's own
+    output back — the catalog a preview showed, re-saved — changes nothing and
+    mints no further twins.
     """
     items = list(available.items)
     diagnostics: List[Dict[str, Any]] = []
+    taken: set[int] = set()  # row indices already standing for a seat of this run
 
     def _same(row: ConfiguredSubagent, target: str, effort: str) -> bool:
         return (row.route.kind == ROUTE_KIND_AGENT_SESSION and row.route.target_id == target
                 and not row.route.credential_profile_id and row.effort == effort)
 
+    def _first(target: str, effort: str, *, marked: bool) -> Optional[int]:
+        return next((index for index, row in enumerate(items)
+                     if index not in taken and row.review_eligible is marked and _same(row, target, effort)), None)
+
     for seat in [*({**s, "_merge": False} for s in triad), *({**s, "_merge": True} for s in scope)]:
         target, effort = str(seat["target_id"]), str(seat["effort"])
         if seat["_merge"] and any(row.review_eligible and _same(row, target, effort) for row in items):
             continue
-        for index, row in enumerate(items):
-            if not row.review_eligible and _same(row, target, effort):
-                items[index] = replace(row, review_eligible=True)
-                break
+        standing = _first(target, effort, marked=True)
+        if standing is not None:
+            taken.add(standing)
+            continue
+        unmarked = _first(target, effort, marked=False)
+        if unmarked is not None:
+            items[unmarked] = replace(items[unmarked], review_eligible=True)
+            taken.add(unmarked)
         else:
             if len(items) >= MAX_CONFIGURED_SUBAGENTS:
                 diagnostics.append({
@@ -447,6 +461,7 @@ def _mark_review_rows(
                 review_eligible=True,
                 minted_from=MINTED_FROM_FACTORY_DEFAULT,
             ))
+            taken.add(len(items) - 1)
     return make_configured_subagents(items, enabled=available.enabled), diagnostics
 
 

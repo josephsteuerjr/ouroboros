@@ -538,6 +538,38 @@ def test_roster_cap_overflow_omits_the_seat_with_a_diagnostic():
     assert not preset.ok and preset.refusal.code == "preset_failed_pool_validation"
 
 
+def test_marking_the_review_rows_is_idempotent_so_a_shown_catalog_resaved_is_unchanged():
+    """The wizard's output fed back as its input (the catalog a preview showed,
+    saved as shown) is a fixed point: every marked row already stands for one
+    seat, so nothing is re-marked and no further twin is minted."""
+    from ouroboros.configured_subagents import (
+        ROUTE_KIND_AGENT_SESSION,
+        ConfiguredSubagent,
+        RouteSpec,
+        make_configured_subagents,
+    )
+    from ouroboros.subscription_install_presets import _mark_review_rows
+
+    seat = {"target_id": "claude=claude-opus-5", "effort": "medium"}
+    triad = [{"position": n, "surface": "triad", **seat} for n in (1, 2, 3)]
+    scope = [{"position": 1, "surface": "scope", **seat}]
+    start = make_configured_subagents([
+        ConfiguredSubagent(subagent_id="builder", recommended_use="Builds.",
+                           route=RouteSpec(ROUTE_KIND_AGENT_SESSION, seat["target_id"]), effort="medium"),
+    ])
+
+    once, diagnostics = _mark_review_rows(start, triad, scope)
+    assert diagnostics == []
+    assert [(row.subagent_id, row.review_eligible, row.minted_from) for row in once.items] == [
+        ("builder", True, ""), ("review-claude", True, "factory_default"), ("review-claude-2", True, "factory_default")]
+
+    twice, diagnostics = _mark_review_rows(once, triad, scope)
+    assert diagnostics == [] and twice == once
+    # Still one seat per marked row: a fourth identical seat mints exactly one more twin.
+    more, _ = _mark_review_rows(once, [*triad, {"position": 4, "surface": "triad", **seat}], scope)
+    assert [row.subagent_id for row in more.items] == ["builder", "review-claude", "review-claude-2", "review-claude-3"]
+
+
 # --- factory review rows (contract §3.2 п.6): the shipped panel as catalog rows --
 
 def _factory(doc):
