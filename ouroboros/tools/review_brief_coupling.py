@@ -51,10 +51,10 @@ from ouroboros.tools.review_helpers import (
     _HISTORY_VERIFICATION_ONLY_RULE,
     build_goal_section,
     build_rebuttal_section,
-    build_review_history_section,
     build_scope_section,
     format_review_history_entry,
     load_checklist_section,
+    review_history_with_obligations,
 )
 from ouroboros.tools.review_synthesis import build_coupling_part
 
@@ -530,16 +530,8 @@ def build_retrieving_brief(
     goal_section = build_goal_section(intent.goal, intent.scope, brief.commit_message, intent.owner_words)
     scope_section = build_scope_section(intent.scope)
     rebuttal_section = build_rebuttal_section(intent.review_rebuttal)
-    open_obligations = []
-    if brief.drive_root is not None:
-        try:
-            from ouroboros.review_state import load_state, make_repo_key
-
-            state = load_state(pathlib.Path(brief.drive_root))
-            open_obligations = state.get_open_obligations(repo_key=make_repo_key(repo_dir))
-        except Exception:
-            open_obligations = []  # Non-fatal: the brief states the history it has
-    history_section = build_review_history_section(intent.review_history or [], open_obligations=open_obligations)
+    history_section = review_history_with_obligations(intent.review_history, drive_root=brief.drive_root,
+                                                      repo_root=repo_dir)
     coupling_history_section = build_coupling_history_section(intent.coupling_history, history_section)
 
     bound = first_send_bound(brief)

@@ -24,10 +24,8 @@ from ouroboros.tools.review_helpers import (
     _ANTI_THRASHING_RULE_ITEM_NAME,
     _HISTORY_VERIFICATION_ONLY_RULE,
 )
-from ouroboros.tools.review_brief_coupling import (
-    build_coupling_history_section as _build_scope_history_section,
-    build_review_history_section as scope_hist,
-)
+from ouroboros.tools.review_brief_coupling import build_coupling_history_section as _build_scope_history_section
+from ouroboros.tools.review_helpers import build_review_history_section as scope_hist
 
 
 @dataclass
@@ -230,12 +228,15 @@ def test_run_unified_review_obligation_loading_uses_drive_root_and_make_repo_key
     This tests the production call-site wiring in review.py:
     - load_state(pathlib.Path(ctx.drive_root)) is used (not a file path)
     - make_repo_key(pathlib.Path(ctx.repo_dir)) is used (not str())
-    - The loaded obligations reach _build_review_history_section
+    - The loaded obligations reach build_review_history_section through the one
+      history owner (``review_helpers.review_history_with_obligations``)
 
-    Strategy: monkeypatch _build_review_history_section to capture its arguments,
-    then verify the persisted obligation was passed via the correct repo_key path.
+    Strategy: monkeypatch review_helpers.build_review_history_section (the owner's
+    call-time binding) to capture its arguments, then verify the persisted
+    obligation was passed via the correct repo_key path.
     """
     import ouroboros.tools.review as review_mod
+    import ouroboros.tools.review_helpers as review_helpers
 
     drive_root = tmp_path / "data"
     drive_root.mkdir()
@@ -256,14 +257,14 @@ def test_run_unified_review_obligation_loading_uses_drive_root_and_make_repo_key
 
     # Capture obligations passed to the prompt builder.
     captured_obligations = []
-    original_build = review_mod._build_review_history_section
+    original_build = review_helpers.build_review_history_section
 
-    def capturing_build(history, open_obligations=None):
+    def capturing_build(history, open_obligations=None, **kwargs):
         if open_obligations:
             captured_obligations.extend(open_obligations)
-        return original_build(history, open_obligations=open_obligations)
+        return original_build(history, open_obligations=open_obligations, **kwargs)
 
-    monkeypatch.setattr(review_mod, "_build_review_history_section", capturing_build)
+    monkeypatch.setattr(review_helpers, "build_review_history_section", capturing_build)
 
     # Stub out heavy git / LLM / file I/O so we never leave the obligation-loading path.
     monkeypatch.setattr(
@@ -307,7 +308,7 @@ def test_run_unified_review_obligation_loading_uses_drive_root_and_make_repo_key
     found_ids = [ob.obligation_id for ob in captured_obligations]
     assert "ob-unified-999" in found_ids, (
         f"Expected obligation 'ob-unified-999' to be loaded via make_repo_key+drive_root "
-        f"and passed to _build_review_history_section. Got: {found_ids}"
+        f"and passed to build_review_history_section. Got: {found_ids}"
     )
     all_prompt_text = original_build(_mk_history(), open_obligations=captured_obligations)
     assert '"obligation_id": "ob-unified-999"' in all_prompt_text

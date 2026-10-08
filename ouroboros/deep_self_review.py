@@ -36,6 +36,7 @@ log = logging.getLogger(__name__)
 
 from ouroboros.tools.review_helpers import (  # noqa: E402
     _MAX_FULL_REPO_FILE_BYTES,
+    author_questions_block,
     load_governance_doc,
 )
 from ouroboros.shell_parse import is_absolute_path_text  # noqa: E402
@@ -143,10 +144,9 @@ class SystemReviewAsk:
         parts = []
         if self.goal.strip():
             parts.append(f"The caller's goal for this review (beside the standing review above): {self.goal.strip()}")
-        questions = [q.strip() for q in self.author_questions if str(q or "").strip()]
+        questions = author_questions_block(self.author_questions, note="after your own questionnaire")
         if questions:
-            asked = "".join(f"\n{number}. {question}" for number, question in enumerate(questions, 1))
-            parts.append(f"Author questions (answer each as asked, after your own questionnaire):{asked}")
+            parts.append(questions)
         return "\n\n".join(parts)
 
 

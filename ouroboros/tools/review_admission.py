@@ -599,7 +599,8 @@ def build_two_part_brief(frozen_subject: Any, seat: Any, *, layer: Optional[str]
     from ouroboros.tools import review as _rv
     from ouroboros.tools.review_brief_coupling import BriefIntent
     from ouroboros.tools.review_helpers import (
-        build_goal_section, build_rebuttal_section, build_review_history_section, build_scope_section,
+        build_goal_section, build_rebuttal_section, build_scope_section, goal_with_author_questions,
+        review_history_with_obligations,
     )
     from ouroboros.tools.review_multi_model import TRIAD_USER_TURN, triad_api_messages
     from ouroboros.review_records import ReviewSlot
@@ -614,12 +615,14 @@ def build_two_part_brief(frozen_subject: Any, seat: Any, *, layer: Optional[str]
     governance_root = pathlib.Path(frozen_subject.spec.governance_root or review_root)
     parts = tuple(seat_parts(seat, coupling_only=coupling_only))
     checklist_section = _rv._load_checklist_section(layer)
-    questions = [str(q).strip() for q in author_questions if str(q or "").strip()]
-    goal_text = goal + ("\n\nAuthor's questions to the panel:\n" + "\n".join(f"- {q}" for q in questions) if questions else "")
+    # The author's questions and the prior rounds are rendered by the owners the
+    # gate and review_change use (D5-004): the text here IS the text a seat is sent.
+    goal_text = goal_with_author_questions(goal, author_questions)
     goal_section = build_goal_section(goal_text, scope, commit_message, owner_words)
     scope_section = build_scope_section(scope)
     rebuttal_section = build_rebuttal_section(review_rebuttal)
-    history_section = build_review_history_section(list(review_history or []))
+    history_section = review_history_with_obligations(review_history, drive_root=drive_root,
+                                                      repo_root=frozen_subject.spec.root)
     model, slot_id = str(_field("model") or ""), str(_field("slot_id") or "")
     route = _field("route", None)
     delegated = str(getattr(route, "value", route) or "") == "agent_session"

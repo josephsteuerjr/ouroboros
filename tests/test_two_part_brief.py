@@ -92,7 +92,9 @@ def test_retrieving_seat_gets_both_parts_and_contract_b(tmp_path):
     assert COUPLING_CHECKLIST_SECTION.split(" / ")[0] in system or "coupling" in system.lower()
     # Contract B is the answer format of a seat asked both questions.
     assert REVIEW_TWO_PART_OBJECT_CONTRACT.strip() in system
-    assert "Author's questions to the panel" in system and "Is the new value covered by a test?" in system
+    # The author's questions ride the goal as the ONE owner renders them for every
+    # door (review_change, the gate, this builder): numbered, as asked.
+    assert "Author questions (answer each as asked):\n1. Is the new value covered by a test?" in system
     # Exactly ONE anti pattern-lock guard per brief.
     assert system.count(GUARD_HEADING) == 1
     sha = brief["sha"]
@@ -108,10 +110,13 @@ def test_builder_is_pure_over_the_frozen_subject(tmp_path):
     one = build_two_part_brief(frozen, RETRIEVING, goal="raise f", commit_message="bump f")
     two = build_two_part_brief(frozen, RETRIEVING, goal="raise f", commit_message="bump f")
     assert one["sha"] == two["sha"] and one["system"] == two["system"]
-    # A different intent is a different brief — the sha is the brief's, not the seat's.
+    # A different intent is a different brief — the sha is the brief's, not the seat's:
+    # Part 1 carries the intent, so its sha moves; Part 2 is the coupling question over
+    # the same subject's tree and the same history, so its sha does not.
     other = build_two_part_brief(frozen, RETRIEVING, goal="lower f", commit_message="bump f")
     assert other["sha"]["brief"] != one["sha"]["brief"]
-    assert other["sha"]["coupling_brief_sha"] == one["sha"]["coupling_brief_sha"] or other["sha"]["coupling_brief_sha"]
+    assert other["sha"]["change_prompt_sha"] != one["sha"]["change_prompt_sha"]
+    assert other["sha"]["coupling_brief_sha"] == one["sha"]["coupling_brief_sha"] != ""
 
 
 def test_packet_seat_gets_the_change_alone_and_contract_a(tmp_path):

@@ -11,8 +11,9 @@ from __future__ import annotations
 import pytest
 
 
-# The exact string the convergence rule must contain (module-level so both
-# review.py and review_brief_coupling.py share a single source of truth).
+# The exact string the convergence rule must contain (module-level: the packet
+# seat and the two-part brief render history through ONE owner,
+# review_helpers.build_review_history_section / review_history_with_obligations).
 _EXPECTED_RULE_SUBSTRING = (
     "CONVERGENCE RULE (attempt 3+): Do NOT raise new critical findings on "
     "code that was not changed between this attempt and the previous attempt."
@@ -36,12 +37,12 @@ def _make_history(n_rounds: int) -> list:
     "module_path, func_name",
     [
         ("ouroboros.tools.review", "_build_review_history_section"),
-        ("ouroboros.tools.review_brief_coupling", "build_review_history_section"),
+        ("ouroboros.tools.review_helpers", "build_review_history_section"),
     ],
 )
 class TestConvergenceRuleInjection:
-    """Runs the same contract as the packet seat (review.py) and the two-part
-    brief (review_brief_coupling.py) render it."""
+    """Runs the same contract through the packet seat's binding (review.py) and the
+    owner the two-part brief (review_brief_coupling.py) renders with."""
 
     def _fn(self, module_path, func_name):
         import importlib
@@ -184,7 +185,7 @@ class TestConvergenceRuleSharedConstant:
 
     def test_packet_and_brief_emit_identical_rule_line(self):
         from ouroboros.tools.review import _build_review_history_section as rh
-        from ouroboros.tools.review_brief_coupling import build_review_history_section as sh
+        from ouroboros.tools.review_helpers import build_review_history_section as sh
 
         def _extract_convergence_line(section: str) -> str:
             for line in section.splitlines():

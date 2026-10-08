@@ -474,11 +474,11 @@ def _dispatch(ctx: ToolContext, wave: _Wave) -> Dict[str, Any]:
     A rejoin runs the same wave on the gate's reconcile-only path (nothing new is
     sent; the open operation is collected under the attempt row it opened)."""
     from ouroboros.tools import git as git_mod
+    from ouroboros.tools.review_helpers import goal_with_author_questions
 
     holder = install_paid_stamp(ctx, wave)
     arm_rejoin(ctx, wave)
-    asked = "".join(f"\n{number}. {question}" for number, question in enumerate(wave.request.author_questions, 1))
-    goal = f"{wave.request.goal}\n\nAuthor questions (answer each as asked):{asked}".lstrip("\n") if asked else wave.request.goal
+    goal = goal_with_author_questions(wave.request.goal, wave.request.author_questions)
     try:
         review_err, _coupling, block_reason, _advisory = run_parallel_review(
             ctx, wave.label, goal=goal, scope=wave.request.scope,

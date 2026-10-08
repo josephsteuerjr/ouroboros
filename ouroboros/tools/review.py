@@ -50,7 +50,7 @@ from ouroboros.tools.review_helpers import (
     anti_pattern_lock_guard,  # noqa: F401 -- facade import surface (same)
     review_preamble,  # noqa: F401 -- facade import surface (same)
     build_self_verification_template,
-    build_review_history_section as _build_review_history_section,
+    build_review_history_section as _build_review_history_section,  # noqa: F401 -- retained test/facade patch seam
     calibrated_input_token_limit,  # noqa: F401 — patchable seam (see note above)
     emit_review_usage,  # noqa: F401 -- facade import surface; leaves read it through the call-time handle
     format_name_status_for_preflight,
@@ -1017,16 +1017,13 @@ def _subject_changed_paths(frozen: Any, target_repo) -> tuple[str, str]:
 
 def _review_history_with_open_obligations(ctx: ToolContext, frozen: Any) -> str:
     """The prior-rounds section with the subject root's durable open obligations
-    (anti-thrashing across restarts; best-effort, never fatal)."""
-    open_obligations = []
-    try:
-        from ouroboros.review_state import load_state, make_repo_key
-        state = load_state(pathlib.Path(ctx.drive_root))
-        repo_key = make_repo_key(pathlib.Path(frozen.spec.root if frozen is not None else ctx.repo_dir))
-        open_obligations = state.get_open_obligations(repo_key=repo_key)
-    except Exception:
-        pass
-    return _build_review_history_section(ctx._review_history, open_obligations=open_obligations)
+    (``review_helpers.review_history_with_obligations``, the one owner the public
+    brief builder shares)."""
+    from ouroboros.tools.review_helpers import review_history_with_obligations
+
+    return review_history_with_obligations(
+        ctx._review_history, drive_root=getattr(ctx, "drive_root", None),
+        repo_root=frozen.spec.root if frozen is not None else getattr(ctx, "repo_dir", None))
 
 
 def _gate_governance_root(ctx: ToolContext) -> pathlib.Path:

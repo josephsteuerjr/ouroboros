@@ -406,7 +406,7 @@ class TestCouplingPromptMatrixContract:
 
 
 def test_coupling_history_keeps_all_rounds_and_structured_ids():
-    from ouroboros.tools.review_brief_coupling import build_review_history_section
+    from ouroboros.tools.review_helpers import build_review_history_section
 
     history = [
         {

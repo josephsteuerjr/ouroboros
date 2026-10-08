@@ -130,6 +130,90 @@ def test_review_change_on_the_system_index_is_the_commit_gates_brief(staged_body
         assert "## Informational context — commit message" in gate_text, slot_id
 
 
+QUESTIONS = ["Does the proposal's constant reach every caller of the helper?", "Which test pins the new value?"]
+PRIOR_OBLIGATION = "ob-prior-round-7"
+
+
+def _seed_open_obligation(drive_root: Path, repo: Path) -> None:
+    """One obligation of this checkout left open by an earlier round, in the durable
+    advisory state every door reads its history from."""
+    from ouroboros.review_state import AdvisoryReviewState, ObligationItem, make_repo_key, save_state
+
+    state = AdvisoryReviewState()
+    state.open_obligations.append(ObligationItem(
+        obligation_id=PRIOR_OBLIGATION, item="cross_module_bugs", severity="critical",
+        reason="the helper's callers were not re-read", source_attempt_ts="2026-10-01T00:00:00+00:00",
+        source_attempt_msg="fix: an earlier attempt", status="still_open", repo_key=make_repo_key(repo)))
+    save_state(drive_root, state)
+
+
+def test_the_public_builder_renders_the_brief_each_seat_was_sent(staged_body, tmp_path, monkeypatch):
+    """``review_admission.build_two_part_brief`` is the one public builder of a seat's
+    brief (step R; D5-004, D5-07): for the frozen subject and the intent of a wave it
+    renders, byte for byte, the text the operation handed that seat at the delivery
+    boundary — the author's questions as the seat read them and the prior rounds with
+    the checkout's open obligations, through the owners the runtime itself renders with.
+
+    The builder takes as ARGUMENTS what a wave reads from its context; these, and only
+    these, are where its text may differ from a wave's, and each is passed here as the
+    wave had it:
+      - ``commit_message``: the operation's wave label (``_wave_label``), the gate's
+        intended commit message;
+      - ``review_history`` / ``review_rebuttal`` / ``coupling_history``: this task's
+        earlier rounds (none in a first round);
+      - ``owner_words``: the owner's recorded words for the task as the wave renders
+        them (``owner_words.owner_words_text(ctx)``, which says so when none are
+        recorded); ``task_evidence_section``: the task's execution evidence (none here);
+      - ``task_id`` / ``source_root``: the paging identity of a retrieving seat's sources;
+      - a packet seat's governance share is sized for the one seat given, a wave's for
+        its packet quorum (one packet seat sits in this pool, so the two coincide).
+    """
+    from ouroboros.owner_words import owner_words_text
+    from ouroboros.review_ledger import PART_CHANGE
+    from ouroboros.tools.review_admission import build_two_part_brief
+    from ouroboros.tools.review_subject import ReviewSubjectSpec, freeze_subject
+
+    repo = Path(staged_body["repo"])
+    ctx = ToolContext(repo_dir=repo, drive_root=tmp_path / "operation-drive")
+    _seed_open_obligation(ctx.drive_root, repo)
+    sent: list[dict] = []
+    monkeypatch.setattr(substrate, "run_review_request", shared.golden_substrate(sent))
+    args = {"root": "system_repo", "surface": "change", "goal": GOAL, "scope": SCOPE, "subject": "index",
+            "author_questions": QUESTIONS}
+    result = run_review_change(ctx, **args)
+    assert result["state"] == "settled", result
+    record = review_ledger.load_record(ctx.drive_root, result["record_id"])
+    rows = {row["seat_id"]: row for row in record["rows"]}
+    by_seat = {brief["slot_id"]: brief for brief in sent}
+    assert sorted(by_seat) == sorted(rows) == ["s1", "t1", "t2"]
+
+    label = review_change._wave_label(review_change.parse_request(dict(args)), repo)
+    frozen = freeze_subject(ctx, ReviewSubjectSpec(root_kind="system_repo", root=str(repo), kind="index",
+                                                   governance_root=str(repo), surface="change", layer="body"))
+    assert frozen.tree_sha == record["subject"]["tree_sha"] == staged_body["staged_tree_sha"]
+    for slot_id, row in rows.items():
+        requested = row["requested"]
+        seat = {"slot_id": slot_id, "model": requested["model"], "route": requested["route"],
+                "retrieves": requested["delivery"] == "retrieving", "session_profile": requested["profile"],
+                "subagent_id": row["subagent_id"]}
+        brief = build_two_part_brief(frozen, seat, goal=GOAL, scope=SCOPE, author_questions=QUESTIONS,
+                                     commit_message=label, owner_words=owner_words_text(ctx),
+                                     drive_root=ctx.drive_root, task_id=ctx.task_id)
+        assert brief["parts"] == row["parts"], slot_id
+        # The builder's claim is not vacuous: the questions and the open obligation are in its text.
+        asked = "Author questions (answer each as asked):\n1. " + QUESTIONS[0] + "\n2. " + QUESTIONS[1]
+        assert asked in brief["system"] and PRIOR_OBLIGATION in brief["system"], slot_id
+        # ... and its text IS the text the seat was sent, byte for byte.
+        given = by_seat[slot_id]
+        if brief["parts"] == [PART_CHANGE]:  # a packet seat: the system blocks and the one user turn
+            [system, user] = given["messages"]
+            assert "".join(block["text"] for block in system["content"]) == brief["system"], slot_id
+            assert (user["content"], given["session_task"]) == (brief["user"], ""), slot_id
+        else:  # a retrieving seat: the two-part brief is its session task
+            assert (given["messages"], given["session_task"]) == ([], brief["system"]), slot_id
+            assert row["brief_sha"] == brief["sha"]["brief"] == hashlib.sha256(brief["system"].encode()).hexdigest(), slot_id
+
+
 REASON = "A tooling-only change: one api seat and the scout's second opinion suffice."
 
 
