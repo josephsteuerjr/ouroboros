@@ -20,6 +20,30 @@ from tests.test_native_tool_round_executor import _tool_call
 
 pytestmark = pytest.mark.serial
 
+# The work order measures whether the native row's first send fits its window
+# (`acceptance_retrieving_work_order` -> `_first_send_fits` -> `reviewer_context_window`
+# -> `capability_evidence.probe`), and that probe asks OpenRouter's live `/models`
+# catalog through `LLMClient.openrouter_context_length(allow_fetch=True)`. The
+# answer lands in these CLASS caches for the rest of the process, so a later
+# unrelated send already strips a field the catalog lists as unsupported (the
+# `test_llm_no_proxy` parameter-rejection retry then has nothing left to drop).
+_PROCESS_CAPABILITY_STATE = (
+    '_SUPPORTED_PARAMS_CACHE', '_SUPPORTED_PARAMS_FETCHED',
+    '_CONTEXT_LENGTH_CACHE', '_CAPABILITIES_FETCH_OK',
+)
+
+
+@pytest.fixture(autouse=True)
+def _provider_catalog_stays_off_the_wire(monkeypatch):
+    """Keep the window probe local and hand the process capability caches back as found."""
+    from ouroboros.llm import LLMClient
+
+    saved = {name: copy.copy(getattr(LLMClient, name)) for name in _PROCESS_CAPABILITY_STATE}
+    monkeypatch.setattr(LLMClient, '_fetch_openrouter_capabilities', classmethod(lambda cls: None))
+    yield
+    for name, value in saved.items():
+        setattr(LLMClient, name, value)
+
 
 def _source(root, task, name, payload):
     return artifacts.store_actor_source_bytes(root, task, category='context_checkpoints', source_id=name,
@@ -51,6 +75,19 @@ def _retrieving(tmp_path):
     acceptance_retrieving_work_order(request, [native, session], session_root=str(repo), data_root=author)
     ctx = SimpleNamespace(task_id=task, task_attempt=1, drive_root=author, budget_drive_root=canonical, task_metadata={})
     return canonical, author, repo, request, native, session, ctx
+
+
+def test_the_work_order_measurement_leaves_the_process_capability_caches_as_found(tmp_path, monkeypatch):
+    import requests
+    from ouroboros.llm import LLMClient
+
+    def no_live_catalog(*_args, **_kwargs):
+        raise AssertionError('the work order reached a live provider catalog from a test')
+
+    monkeypatch.setattr(requests, 'get', no_live_catalog)
+    before = {name: copy.copy(getattr(LLMClient, name)) for name in _PROCESS_CAPABILITY_STATE}
+    _retrieving(tmp_path)
+    assert {name: getattr(LLMClient, name) for name in _PROCESS_CAPABILITY_STATE} == before
 
 
 def test_actual_native_and_session_work_orders_survive_author_cleanup(tmp_path):
