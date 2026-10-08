@@ -312,10 +312,10 @@ class TestGitWiring:
         source = inspect.getsource(git._repo_commit_push)
         assert "_run_reviewed_stage_cycle" in source
         shared_source = inspect.getsource(git._run_reviewed_stage_cycle)
-        # The advisory-freshness check lives in the extracted gate helper the
-        # stage cycle calls before any paid dispatch.
-        assert "_advisory_and_tests_gate" in shared_source
-        assert "_check_advisory_freshness" in inspect.getsource(git._advisory_and_tests_gate)
+        # The free checks, the tests and the author's optional one-row look live in
+        # the extracted gate helper the stage cycle calls before any paid dispatch.
+        assert "_preflight_and_tests_gate" in shared_source
+        assert "run_commit_preflight" in inspect.getsource(git._preflight_and_tests_gate)
         assert "_run_parallel_review" in shared_source
 
     def test_assembly_precedes_admission_precedes_dispatch(self):
@@ -443,13 +443,6 @@ class TestGitWiring:
         assert "crashed" in review_err
         assert coupling is None  # no seat was asked anything
 
-    def test_advisory_freshness_path_aware(self):
-        """_check_advisory_freshness must accept paths parameter."""
-        git = _get_module("ouroboros.tools.git")
-        sig = inspect.signature(git._check_advisory_freshness)
-        assert "paths" in sig.parameters
-
-
 # ---------------------------------------------------------------------------
 # LLM routing validation (Phase 3, item 6)
 # ---------------------------------------------------------------------------
@@ -482,33 +475,6 @@ class TestSharedLLMRouting:
         helper = inspect.getsource(_get_module("ouroboros.tools.review_helpers").emit_review_usage)
         assert "llm_usage" in helper
         assert "emit_review_event" in helper
-
-
-# ---------------------------------------------------------------------------
-# Advisory schema enrichment
-# ---------------------------------------------------------------------------
-
-class TestAdvisorySchemaEnriched:
-    def test_advisory_schema_has_goal_scope_paths(self):
-        adv = _get_module("ouroboros.tools.claude_advisory_review")
-        tools = adv.get_tools()
-        adv_tool = next(t for t in tools if t.name == "advisory_review")
-        props = adv_tool.schema["parameters"]["properties"]
-        assert "goal" in props
-        assert "scope" in props
-        assert "paths" in props
-
-    def test_advisory_prompt_uses_section_loader(self):
-        """Advisory prompt builder must use precise section loader, not full CHECKLISTS.md."""
-        adv = _get_module("ouroboros.tools.claude_advisory_review")
-        source = inspect.getsource(adv._build_advisory_prompt)
-        assert "load_checklist_section" in source
-
-    def test_advisory_no_blind_truncation(self):
-        """Advisory must not silently truncate raw_result."""
-        adv = _get_module("ouroboros.tools.claude_advisory_review")
-        source = inspect.getsource(adv._handle_advisory_pre_review)
-        assert "raw_result[:4000]" not in source
 
 
 class TestTriadPromptAntiPatternLock:

@@ -7,7 +7,6 @@ tests block, the author's ONE named row only looks (``review_change`` with
 ``surface=preflight``), and the commit record states the fact either way. The
 ``candidate`` fixture is the prepared commit candidate the gate tests share.
 """
-import json
 import os
 import subprocess
 import sys
@@ -629,9 +628,13 @@ class TestTestsPreflightProofBinding:
 # ---------------------------------------------------------------------------
 
 def _roster(monkeypatch, *, enabled=True, subagent_id="api-scout"):
-    monkeypatch.setenv("OUROBOROS_SUBAGENTS", json.dumps({"enabled": True, "items": [{
-        "subagent_id": subagent_id, "name": "API scout", "recommended_use": "An early look.",
-        "route": {"kind": "api_model", "target_id": "openai/fake-reviewer"}, "effort": "high", "enabled": enabled}]}))
+    """The catalog: the review pool (``tests.review_pool_rosters.mixed_pool_rows``) plus one
+    enabled UNMARKED row the author may name for a look — a reviewer only when named."""
+    from tests.review_pool_rosters import mixed_pool_rows, pool_roster, set_review_pool
+
+    scout = {"subagent_id": subagent_id, "name": "API scout", "recommended_use": "An early look.",
+             "route": {"kind": "api_model", "target_id": "openai/fake-reviewer"}, "effort": "high", "enabled": enabled}
+    set_review_pool(monkeypatch, pool_roster(*mixed_pool_rows(), scout))
     return subagent_id
 
 
@@ -741,9 +744,11 @@ def _panel_rows():
 def test_a_performed_preflight_of_the_same_tree_never_answers_the_commit_panel(candidate, monkeypatch):
     """The real cycle: the named row's ``surface=preflight`` wave reads the worktree, then the
     panel still runs over the same tree and writes its own record, which names the look."""
+    import hashlib
+
     from ouroboros import review_ledger as rl
+    from ouroboros.review_ledger import CouplingOutcome
     from ouroboros.tools import review_change as rc
-    from ouroboros.tools.scope_review import ScopeReviewResult
     from tests.test_review_change_tool import Wave
 
     _roster(monkeypatch)
@@ -754,17 +759,26 @@ def test_a_performed_preflight_of_the_same_tree_never_answers_the_commit_panel(c
     panel = []
 
     def reviewer(ctx, message, **kw):
+        # The panel's one wave: the first seat retrieves and answers both parts, the
+        # others read the packet (contract A); the ledger's facts the gate records.
         panel.append(message)
         rows = _panel_rows()
+        texts = {hashlib.sha256(b"BRIEF").hexdigest(): "BRIEF", hashlib.sha256(b"PACKET").hexdigest(): "PACKET"}
+        plan = []
+        for index, row in enumerate(rows):
+            retrieves = index == 0
+            parts = ["change", "coupling"] if retrieves else ["change"]
+            plan.append({"slot_id": row["slot_id"], "model": row["model_id"], "route": "api_chat", "effort": "high",
+                         "parts": parts, "retrieves": retrieves,
+                         "brief_sha": hashlib.sha256(b"BRIEF" if retrieves else b"PACKET").hexdigest()})
+            if retrieves:
+                row["parts"] = parts
+                row["answers"] = {part: {"status": "responded", "verdict": "PASS", "findings": [], "critical": 0,
+                                         "coverage": "complete"} for part in parts}
         ctx._last_triad_raw_results = rows
-        ctx._last_scope_raw_result = {"slot_id": "scope", "status": "responded", "model_id": "openai/gpt-5",
-                                      "raw_text": "scope answer", "raw_results": []}
-        ctx._last_review_structured = {
-            "triad_rows": [{"slot_id": r["slot_id"], "model": r["model_id"], "route": "api_chat", "effort": "high"}
-                           for r in rows],
-            "scope_rows": [{"slot_id": "scope", "model": "openai/gpt-5", "route": "api_chat", "effort": "high"}],
-            "triad_prompt": "TRIAD", "scope_brief": "SCOPE", "started_ts": "2026-10-07T00:00:00+00:00"}
-        return None, ScopeReviewResult(blocked=False, status="responded"), "", []
+        ctx._last_review_structured = {"rows": plan, "brief_texts": texts, "quorum": rl._quorum_for(len(plan)),
+                                       "started_ts": "2026-10-07T00:00:00+00:00"}
+        return None, CouplingOutcome(verdict="PASS", blocked=False, status="responded"), "", []
 
     monkeypatch.setattr(git, "_run_parallel_review", reviewer)
     git._reset_commit_review_state(candidate)

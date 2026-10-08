@@ -51,6 +51,14 @@ def packet_pool(models: Sequence[str] = FACTORY_MODELS, *, prefix: str = "review
     ), enabled=enabled)
 
 
+def mixed_pool_rows(models: Sequence[str] = FACTORY_MODELS, *, prefix: str = "review") -> list:
+    """Three pool rows the way a mixed install reads them: two natively retrieving api
+    seats (asked both parts of the brief) and one packet seat (asked ``change``)."""
+    return [pool_seat(f"{prefix}-1", models[0], delivery="native"),
+            pool_seat(f"{prefix}-2", models[1], delivery="native"),
+            pool_seat(f"{prefix}-3", models[2])]
+
+
 def set_review_pool(monkeypatch, roster_or_models: Any = FACTORY_MODELS, **kwargs: Any) -> str:
     """Put a pool in the environment: a roster text, or the models of a packet pool."""
     raw = roster_or_models if isinstance(roster_or_models, str) else packet_pool(list(roster_or_models), **kwargs)

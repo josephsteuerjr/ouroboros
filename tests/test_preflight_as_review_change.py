@@ -21,7 +21,7 @@ from ouroboros.tools import commit_gate
 from ouroboros.tools import preflight_review as pr
 from ouroboros.tools import review_change as rc
 from tests.test_git_review_preflight_gate import _roster
-from tests.test_review_change_tool import Harness, _configured, h  # noqa: F401
+from tests.test_review_change_tool import Harness, _pool, h  # noqa: F401
 
 
 def _edit(harness: Harness, text: str = "preflight edit\n") -> None:
@@ -35,7 +35,7 @@ def _look(harness: Harness, reviewer: str, **args):
 @pytest.mark.parametrize("member", [False, True], ids=["catalog-row", "pool-seat"])
 def test_one_named_row_is_the_whole_panel(h: Harness, monkeypatch, member) -> None:  # noqa: F811
     _roster(monkeypatch)
-    reviewer = _configured()[0][0] if member else "api-scout"
+    reviewer = _pool()[0] if member else "api-scout"
     _edit(h)
     result = _look(h, reviewer, goal="An early look")
 

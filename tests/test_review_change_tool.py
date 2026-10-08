@@ -28,6 +28,7 @@ from ouroboros import reviewer_slot_config as slots
 from ouroboros.tools import commit_gate
 from ouroboros.tools import review_change as rc
 from ouroboros.tools.review_subject import ReviewSubjectSpec, review_retry_key, review_round_sha
+from tests.review_pool_rosters import mixed_pool_rows, pool_roster, pool_seat, set_review_pool
 
 
 def _git(repo: pathlib.Path, *args: str) -> str:
@@ -62,9 +63,18 @@ def _commit(repo: pathlib.Path, name: str, text: str) -> str:
     return _git(repo, "rev-parse", "HEAD")
 
 
-def _configured() -> tuple:
-    config = slots.load_reviewer_slot_config()
-    return [row.slot_id for row in config.triad], [row.slot_id for row in config.scope]
+def _pool() -> list:
+    """The review pool in force, by seat id (inside a composed wave: that wave's seats)."""
+    return [slot.slot_id for slot in slots.review_pool_slots()]
+
+
+def _seats() -> list:
+    """``(slot, parts, additional)`` of the wave in force: the composed seats inside a
+    composed wave, else the configured pool with the parts its delivery decides."""
+    composed = slots.composed_pool_seats()
+    if composed is not None:
+        return [(seat.slot, tuple(seat.parts), seat.additional) for seat in composed]
+    return [(slot, tuple(rl.seat_parts(slot)), False) for slot in slots.review_pool_slots()]
 
 
 @dataclass(frozen=True)
@@ -86,10 +96,11 @@ class Frozen:
 
 
 class Wave:
-    """The paid wave stub: ONE wave, every seat asked its ``parts`` — a configured
-    triad seat ``seat_parts(row)`` (both when it retrieves), a configured scope seat
-    ``coupling`` only — each answering by part (contract B's shape as the ledger
-    records it)."""
+    """The paid wave stub: ONE wave, every seat asked its ``parts`` — a pool seat
+    ``seat_parts(row)`` (both when it retrieves, ``change`` when it reads the packet),
+    an added ``coupling_only`` seat ``coupling`` alone — each answering by part
+    (contract B's shape as the ledger records it). ``triad`` names the assigned seats,
+    ``coupling`` the added coupling-only ones."""
 
     def __init__(self) -> None:
         self.calls: List[SimpleNamespace] = []
@@ -109,7 +120,7 @@ class Wave:
                              "reason": f"{row.slot_id}: defect"}] if failing else []
             answers[part] = {"status": "responded", "verdict": "FAIL" if findings else "PASS", "findings": findings,
                              "critical": len(findings), "coverage": "n/a" if part == rl.PART_CHANGE else "complete"}
-        answer = {"slot_id": row.slot_id, "model_id": row.target_id, "status": self.status, "parts": list(parts),
+        answer = {"slot_id": row.slot_id, "model_id": row.model, "status": self.status, "parts": list(parts),
                   "raw_text": f"{row.slot_id} {'+'.join(parts)} answer", "cost_usd": 0.01}
         if answered:
             answer["answers"] = answers
@@ -119,9 +130,10 @@ class Wave:
                  review_binding_fingerprint: str = "", subject: Any = None):
         from ouroboros.review_dispatch import invoke_review_paid_stamp
 
-        config = slots.load_reviewer_slot_config()
-        triad, coupling = list(config.triad), list(config.scope)
-        seats = [(row, rl.seat_parts(row)) for row in triad] + [(row, rl.seat_parts(row, coupling_only=True)) for row in coupling]
+        seated = _seats()
+        triad = [row for row, _parts, additional in seated if not additional]
+        coupling = [row for row, _parts, additional in seated if additional]
+        seats = [(row, parts) for row, parts, _additional in seated]
         prompt = f"PACKET\n{commit_message}\n{goal}\n{subject.diff_text}"
         brief = f"TWO-PART BRIEF\n{goal}\n{subject.diff_text}"
         texts = {_sha(prompt): prompt, _sha(brief): brief}
@@ -134,7 +146,7 @@ class Wave:
             efforts={row.slot_id: row.effort for row in (*triad, *coupling)}, prompt=prompt, brief=brief))
         invoke_review_paid_stamp(ctx._review_paid_stamp)
         ctx._last_triad_raw_results = [self._answer(row, parts) for row, parts in seats]
-        plan = [{"slot_id": row.slot_id, "model": row.target_id, "route": "api_chat", "effort": row.effort or "high",
+        plan = [{"slot_id": row.slot_id, "model": row.model, "route": "api_chat", "effort": row.effort or "high",
                  "parts": list(parts), "retrieves": rl.PART_COUPLING in parts,
                  "brief_sha": _sha(brief) if rl.PART_COUPLING in parts else _sha(prompt)} for row, parts in seats]
         ctx._last_review_structured = {"started_ts": "2026-10-07T00:00:00+00:00", "rows": plan, "brief_texts": texts,
@@ -268,8 +280,11 @@ def h(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> Harness:
     monkeypatch.setattr(rc, "get_review_enforcement", lambda: "advisory")
     # The shipped cycle cap is the ceiling test's subject; every other test pays freely.
     monkeypatch.setattr(commit_gate, "review_max_cycles", lambda: None)
-    triad, scope = _configured()
-    assert len(triad) >= 2 and scope, "the default panel seats several change reviewers and a coupling reviewer"
+    # The pool: two natively retrieving seats (asked both parts) and one packet seat; an
+    # enabled unmarked row (``scout``) is a reviewer only when the author names it.
+    set_review_pool(monkeypatch, pool_roster(*mixed_pool_rows(), pool_seat("scout", "openai/scout-model", marked=False)))
+    pool = _pool()
+    assert len(pool) >= 2 and any(slot.retrieves for slot in slots.review_pool_slots()), "several seats, one retrieving"
     return harness
 
 
@@ -320,10 +335,10 @@ def test_the_system_index_is_the_gate_path_on_one_frozen_subject(h: Harness, tmp
     gate = gate_record({"task_id": "task-rc", "repo_dir": str(h.system), "subject": frozen, "goal": "Fix the body",
                         **vars(h.wave.last)}, drive_root=tmp_path / "gate-data").to_dict()
     record = rl.load_record(h.drive, result["record_id"])
-    triad, scope = _configured()
+    pool = _pool()
     expected = {(",".join(parts), _sha(call.brief if "coupling" in parts else call.prompt)) for parts in call.parts.values()}
-    assert _prompt_shas(record) == _prompt_shas(gate) == expected and ("coupling", _sha(call.brief)) in expected
-    assert [seat["seat_id"] for seat in record["rows"]] == [seat["seat_id"] for seat in gate["rows"]] == [*triad, *scope]
+    assert _prompt_shas(record) == _prompt_shas(gate) == expected and ("change,coupling", _sha(call.brief)) in expected
+    assert [seat["seat_id"] for seat in record["rows"]] == [seat["seat_id"] for seat in gate["rows"]] == pool
     assert (record["verdict"]["aggregate"], record["verdict"]["per_question"]) == (
         gate["verdict"]["aggregate"], gate["verdict"]["per_question"])
     assert result["aggregate"] == rl.VERDICT_PASS and result["record_id"] == call.record_id
@@ -333,10 +348,10 @@ def test_the_system_index_is_the_gate_path_on_one_frozen_subject(h: Harness, tmp
 
 
 def test_a_foreign_base_head_is_core_untested_and_locks_nothing(h: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
-    triad, _scope = _configured()
+    pool = _pool()
     base = _git(h.project, "rev-parse", "HEAD")
     head = _commit(h.project, "feature.py", "print('feature')\n")
-    h.wave.failing = {triad[0]}
+    h.wave.failing = {pool[0]}  # a retrieving seat: both of its answers carry the defect
     monkeypatch.setattr(rc, "get_review_enforcement", lambda: "blocking")
     result = h.run(subject="base..head", base=base, head=head, goal="Add the feature")
 
@@ -347,7 +362,7 @@ def test_a_foreign_base_head_is_core_untested_and_locks_nothing(h: Harness, monk
         "checkout", "checkout_closed"]
     assert result["checklist"] == {"layer": "core", "body_fact": "false", "how": "remote_chain", "treat_as_body": False}
     assert result["tests"] == {"policy": "NOT_RUN", "result": "unknown"}
-    assert result["aggregate"] == rl.VERDICT_FAIL and {f["seat_id"] for f in result["findings"]["critical_findings"]} == {triad[0]}
+    assert result["aggregate"] == rl.VERDICT_FAIL and {f["seat_id"] for f in result["findings"]["critical_findings"]} == {pool[0]}
     assert sorted(f["part"] for f in result["findings"]["critical_findings"]) == ["change", "coupling"]
     assert (result["enforcement"], result["enforcement_blocks"]) == ("blocking", False)
     assert (result["subject"]["base"], result["subject"]["head"], result["subject"]["root"]) == (
@@ -364,15 +379,15 @@ def test_a_foreign_base_head_is_core_untested_and_locks_nothing(h: Harness, monk
 
 def test_treat_as_body_raises_only_an_unknown_root_to_the_body_layer(
         h: Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
-    triad, scope = _configured()
+    pool = _pool()
     monkeypatch.setattr(rc, "get_review_enforcement", lambda: "blocking")
     # A recognized foreign root (its remote reaches neither the managed remote nor the
     # install's origin) stays on the core layer whatever the flag says; the flag is recorded.
     _stage(h.project, "a.py", "a = 1\n")
-    foreign = h.run(subject="index", treat_as_body=True, reviewers=[triad[0]], reason="one seat")
+    foreign = h.run(subject="index", treat_as_body=True, reviewers=[pool[0]], reason="one seat")
     assert ("body_fact", h.project.resolve(), True) in h.calls
     [call] = h.wave.calls
-    assert call.subject.spec.layer == "core" and (call.triad, call.coupling) == ([triad[0]], [])
+    assert call.subject.spec.layer == "core" and (call.triad, call.coupling) == ([pool[0]], [])
     assert foreign["checklist"] == {"layer": "core", "body_fact": "false", "how": "remote_chain", "treat_as_body": True}
     assert foreign["enforcement_blocks"] is False
 
@@ -380,16 +395,16 @@ def test_treat_as_body_raises_only_an_unknown_root_to_the_body_layer(
     # owner's panel outside Cyber Pro, enforcement binding; ``how`` keeps the fact's value.
     local = _repo(tmp_path / "work" / "local", "local")
     _stage(local, "b.py", "b = 2\n")
-    raised = h.run(subject="index", workspace_root=str(local), treat_as_body=True, reviewers=[triad[0]])
+    raised = h.run(subject="index", workspace_root=str(local), treat_as_body=True, reviewers=[pool[0]])
     call = h.wave.calls[-1]
-    assert call.subject.spec.layer == "body" and (call.triad, call.coupling) == (triad, scope)
+    assert call.subject.spec.layer == "body" and (call.triad, call.coupling) == (pool, [])
     assert raised["checklist"] == {"layer": "body", "body_fact": "true", "how": "unknown", "treat_as_body": True}
     assert raised["panel"]["reviewers_subset_ignored"] is True and raised["enforcement_blocks"] is True
 
     _stage(local, "c.py", "c = 3\n")
-    plain = h.run(subject="index", workspace_root=str(local), reviewers=[triad[0]], reason="one seat")
+    plain = h.run(subject="index", workspace_root=str(local), reviewers=[pool[0]], reason="one seat")
     assert plain["checklist"] == {"layer": "core", "body_fact": "unknown", "how": "unknown", "treat_as_body": False}
-    assert h.wave.calls[-1].triad == [triad[0]] and plain["enforcement_blocks"] is False
+    assert h.wave.calls[-1].triad == [pool[0]] and plain["enforcement_blocks"] is False
 
 
 def test_workspace_root_names_any_registered_repository(h: Harness, tmp_path: pathlib.Path) -> None:
@@ -409,13 +424,13 @@ def test_workspace_root_names_any_registered_repository(h: Harness, tmp_path: pa
 # --- Panel ----------------------------------------------------------------------------
 
 def test_one_named_seat_is_the_whole_panel_of_a_foreign_root(h: Harness) -> None:
-    triad, _scope = _configured()
+    pool = _pool()
     _stage(h.project, "a.py", "a = 1\n")
-    result = h.run(subject="index", reviewers=[triad[1]], reason="one cheap check")
+    result = h.run(subject="index", reviewers=[pool[1]], reason="one cheap check")
 
     [call] = h.wave.calls
-    assert (call.triad, call.coupling) == ([triad[1]], [])
-    assert [row["seat_id"] for row in result["rows"]] == [triad[1]]
+    assert (call.triad, call.coupling) == ([pool[1]], [])
+    assert [row["seat_id"] for row in result["rows"]] == [pool[1]]
     assert (result["panel"]["composition"], result["panel"]["chosen_by"]) == ("composed", "author")
     assert (result["panel"]["reason"], result["panel"]["reason_missing"]) == ("one cheap check", False)
     # A retrieving seat alone is asked both parts: the one seat IS the wave's quorum.
@@ -424,79 +439,89 @@ def test_one_named_seat_is_the_whole_panel_of_a_foreign_root(h: Harness) -> None
 
 
 def test_a_narrowed_panel_without_a_reason_is_recorded_not_refused(h: Harness) -> None:
-    triad, scope = _configured()
+    pool = _pool()
     _stage(h.project, "a.py", "a = 1\n")
-    narrowed = h.run(subject="index", reviewers=[triad[0]])
+    narrowed = h.run(subject="index", reviewers=[pool[0]])
     assert narrowed["panel"]["reason_missing"] is True and len(h.wave.calls) == 1
 
     _stage(h.project, "b.py", "b = 2\n")
-    everyone = h.run(subject="index", reviewers=[*triad, *scope])
+    everyone = h.run(subject="index", reviewers=pool)
     assert everyone["panel"]["composition"] == "composed" and everyone["panel"]["reason_missing"] is False
 
 
 def test_no_list_seats_every_configured_seat(h: Harness) -> None:
-    triad, scope = _configured()
+    pool = _pool()
     _stage(h.project, "a.py", "a = 1\n")
     result = h.run(subject="index")
     [call] = h.wave.calls
-    assert (call.triad, call.coupling) == (triad, scope)
+    assert (call.triad, call.coupling) == (pool, [])
+    # Each seat is asked the parts its delivery decides: both when it retrieves.
+    assert call.parts == {slot.slot_id: tuple(rl.seat_parts(slot)) for slot in slots.review_pool_slots()}
+    assert {len(parts) for parts in call.parts.values()} == {1, 2}
     assert result["panel"]["composition"] == "full_pool" and result["panel"]["reason_missing"] is False
 
 
 def test_a_body_subset_outside_cyber_pro_is_ignored_and_recorded(h: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
-    triad, scope = _configured()
+    pool = _pool()
     _stage(h.system, "body.py", "x = 1\n")
-    ignored = h.run(root="system_repo", subject="index", reviewers=[triad[0]])
-    assert (h.wave.calls[-1].triad, h.wave.calls[-1].coupling) == (triad, scope)
+    ignored = h.run(root="system_repo", subject="index", reviewers=[pool[0]])
+    assert (h.wave.calls[-1].triad, h.wave.calls[-1].coupling) == (pool, [])
     assert (ignored["panel"]["composition"], ignored["panel"]["reviewers_subset_ignored"]) == ("full_pool", True)
 
     _stage(h.system, "more.py", "y = 2\n")
-    named_all = h.run(root="system_repo", subject="index", reviewers=[*triad, *scope])
+    named_all = h.run(root="system_repo", subject="index", reviewers=pool)
     assert named_all["panel"]["reviewers_subset_ignored"] is False
 
+    # An enabled row outside the pool is heard beside the owner's pool, not counted.
+    _stage(h.system, "extra.py", "e = 3\n")
+    added = h.run(root="system_repo", subject="index", reviewers=["scout"])
+    assert (h.wave.calls[-1].triad, h.wave.calls[-1].coupling) == (pool, ["scout"])
+    assert added["panel"]["additional"] == ["scout"] and added["panel"]["reviewers_subset_ignored"] is False
+    assert {row["seat_id"]: row["additional"] for row in added["rows"]} == {**{seat: False for seat in pool}, "scout": True}
+
     monkeypatch.setattr(rc, "get_runtime_mode", lambda: "cyber_pro")
-    composed = h.run(root="system_repo", subject="index", reviewers=[triad[0]], reason="cyber pro chooses")
-    assert h.wave.calls[-1].triad == [triad[0]] and h.wave.calls[-1].coupling == []
+    composed = h.run(root="system_repo", subject="index", reviewers=[pool[0]], reason="cyber pro chooses")
+    assert h.wave.calls[-1].triad == [pool[0]] and h.wave.calls[-1].coupling == []
     assert (composed["panel"]["composition"], composed["panel"]["reviewers_subset_ignored"]) == ("composed", False)
 
 
 def test_reviewer_effort_is_this_waves_order(h: Harness) -> None:
-    triad, scope = _configured()
+    pool = _pool()
     _stage(h.project, "a.py", "a = 1\n")
     ordered = h.run(subject="index", reviewer_effort="low")
     assert set(h.wave.calls[-1].efforts.values()) == {"low"}
     effort = ordered["panel"]["reviewer_effort"]
-    assert effort["order"] == "low" and sorted(effort["applied"]) == sorted([*triad, *scope])
+    assert effort["order"] == "low" and sorted(effort["applied"]) == sorted(pool)
 
-    configured = slots.load_reviewer_slot_config()
+    own = {slot.slot_id: slot.effort for slot in slots.review_pool_slots()}
     _stage(h.project, "b.py", "b = 2\n")
     h.run(subject="index")
-    assert h.wave.calls[-1].efforts == {row.slot_id: row.effort for row in (*configured.triad, *configured.scope)}
+    assert h.wave.calls[-1].efforts == own
 
 
 def test_coupling_only_critics_answer_outside_the_quorum(h: Harness) -> None:
-    triad, scope = _configured()
-    critic = triad[1]
+    pool = _pool()
+    critic = pool[1]
     h.wave.failing = {critic}
     _stage(h.project, "a.py", "a = 1\n")
-    result = h.run(subject="index", reviewers=[triad[0], scope[0]], coupling_only=[critic], reason="extra eyes")
+    result = h.run(subject="index", reviewers=[pool[0]], coupling_only=[critic], reason="extra eyes")
 
     [call] = h.wave.calls
-    assert (call.triad, call.coupling) == ([triad[0]], [scope[0], critic])
+    assert (call.triad, call.coupling) == ([pool[0]], [critic]) and call.parts[critic] == (rl.PART_COUPLING,)
     assert result["aggregate"] == rl.VERDICT_PASS and result["per_question"]["coupling"] == rl.VERDICT_PASS
     assert [f["seat_id"] for f in result["findings"]["additional_findings"]] == [critic]
     assert result["findings"]["critical_findings"] == [] and result["panel"]["additional"] == [critic]
-    assert {row["seat_id"]: row["additional"] for row in result["rows"]} == {triad[0]: False, scope[0]: False, critic: True}
+    assert {row["seat_id"]: row["additional"] for row in result["rows"]} == {pool[0]: False, critic: True}
 
     _stage(h.project, "b.py", "b = 2\n")
-    assigned = h.run(subject="index", reviewers=[triad[0], critic, scope[0]], reason="the critic decides")
+    assigned = h.run(subject="index", reviewers=[pool[0], critic], reason="the critic decides")
     assert assigned["aggregate"] == rl.VERDICT_FAIL
 
 
 # --- Identities: reuse, retry and the shared ceiling ------------------------------------
 
 def test_the_same_identity_returns_the_settled_record_free(h: Harness) -> None:
-    triad, _scope = _configured()
+    pool = _pool()
     _stage(h.project, "a.py", "a = 1\n")
     first = h.run(subject="index", goal="Bound the cache")
     again = h.run(subject="index", goal="Bound the cache")
@@ -504,7 +529,7 @@ def test_the_same_identity_returns_the_settled_record_free(h: Harness) -> None:
     assert again["record_id"] == first["record_id"] and again["aggregate"] == first["aggregate"]
     assert again["cost"] == {"usd": 0.0, "unknown": False} and first["cost"]["usd"] > 0
 
-    h.run(subject="index", reviewers=[triad[0]], reason="another panel")
+    h.run(subject="index", reviewers=[pool[0]], reason="another panel")
     assert len(h.wave.calls) == 2
     rebutted = h.run(subject="index", review_rebuttal="The finding is stale: line 3 already bounds it.")
     assert len(h.wave.calls) == 3 and rebutted["reused"] is False
@@ -561,14 +586,14 @@ def test_the_settled_record_is_bound_to_the_seats_own_execution_rows(
     the wave's timestamps); settling names the record on exactly those rows — the
     gate's ``bind_reviewer_slot_record_id(executions, record_id)`` contract."""
     monkeypatch.setattr(slots, "_last_execution_path", lambda: tmp_path / "reviewer_last_execution.json")
-    wave, triad, _scope = h.wave, *_configured()
+    wave, pool = h.wave, _pool()
 
     def recording(ctx: Any, commit_message: str, **kwargs: Any):
         answer = wave(ctx, commit_message, **kwargs)
-        config = slots.load_reviewer_slot_config()
+        seated = {slot.slot_id: slot for slot in slots.review_pool_slots()}
         actors = [SimpleNamespace(slot_id=row["slot_id"], status="responded", usage={}, operation_state="settled")
                   for row in ctx._last_triad_raw_results]
-        slots.record_reviewer_slot_executions("change", actors, {row.slot_id: row for row in config.triad}, keep_on=ctx)
+        slots.record_reviewer_slot_executions("change", actors, seated, keep_on=ctx)
         return answer
 
     monkeypatch.setattr(rc, "run_parallel_review", recording)
@@ -576,7 +601,7 @@ def test_the_settled_record_is_bound_to_the_seats_own_execution_rows(
     result = h.run(subject="index")
     assert result["state"] == "settled" and result["record_id"]
     last = slots.reviewer_slot_last_executions()
-    assert {seat: last[seat].get("review_record_id") for seat in triad} == {seat: result["record_id"] for seat in triad}
+    assert {seat: last[seat].get("review_record_id") for seat in pool} == {seat: result["record_id"] for seat in pool}
 
 
 def test_the_ceiling_is_shared_by_every_subject_of_one_root(h: Harness, monkeypatch: pytest.MonkeyPatch) -> None:

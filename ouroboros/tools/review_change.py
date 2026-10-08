@@ -762,7 +762,7 @@ def _as_report(record: Any, drive: Any, text: str) -> None:
             seat["source_refs"].append(retain_text_source(drive, record.task_id, record_id=record.record_id,
                                                           seat_id=seat["seat_id"], role="response", part=REPORT_PART,
                                                           text=text))
-    verdict = reduce_verdict(record.rows, quorum_required={}, gate_blocked=False, gate_reason="",
+    verdict = reduce_verdict(record.rows, quorum_required=None, gate_blocked=False, gate_reason="",
                              dispatch_refusal=record.dispatch_refusal, pending=False)
     verdict["per_row"] = {seat["seat_id"]: REPORT_PART if seat["parts_answered"] else row_verdict(seat)
                           for seat in record.rows}
