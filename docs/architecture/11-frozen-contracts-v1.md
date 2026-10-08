@@ -68,7 +68,7 @@ Add the field to the active frozen owner — `ouroboros/contracts/` for the pack
     (`OUROBOROS_REVIEW_MODELS`, `OUROBOROS_SCOPE_REVIEW_MODELS`, `OUROBOROS_SCOPE_REVIEW_MODEL`,
     `OUROBOROS_REVIEW_ROUTES`, `OUROBOROS_SCOPE_REVIEW_ROUTES`, `OUROBOROS_ADVISORY_REVIEW_ROUTE`). Their
     migration note: mark the reviewers in the subagent catalog (Settings → Agents) — an install carrying only
-    comma keys runs the shipped default reviewer rows. The owner is TOLD: the read seam logs the dropped keys
+    comma keys runs the factory reviewer rows (`factory_review_rows(document)`, below). The owner is TOLD: the read seam logs the dropped keys
     once per process, and the first supervisor boot with an owner chat bound posts one system row there
     (`server_maintenance._startup_retired_settings_notice`, the same sentence —
     `settings_defaults.retired_setting_keys_notice` — naming the keys as NOT honored and their successor: the
