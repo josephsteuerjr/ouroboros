@@ -1478,11 +1478,10 @@ def get_tools() -> list:
             schema={
                 "name": "preflight_review",
                 "description": (
-                    "Run the preflight pre-commit review (formerly `advisory_review`) "
-                    "through the configured read-only route. "
-                    "Use deterministic_only=True with explicit source=worktree or index for release diagnostics without effects or review freshness. "
-                    "Ordinary review returns structured JSON findings; any edit afterward makes the result stale. "
-                    f"{ADVISORY_REVIEW_CHOICE_GUIDANCE} "
+                    "Run pre-commit preflight (formerly `advisory_review`) through the configured "
+                    "read-only route. Returns structured JSON findings, stale after any edit. "
+                    "See deterministic_only for effect-free release diagnostics and "
+                    "skip_advisory_review for the audited advisory-only bypass. "
                     f"{_identical_diff_cap_note()}"
                 ),
                 "parameters": _preflight_review_params(),

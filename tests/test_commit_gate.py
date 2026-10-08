@@ -993,8 +993,10 @@ def test_advisory_choice_guidance_is_shared_across_model_facing_schemas():
     alias_skip = alias_tool.schema["parameters"]["properties"]["skip_advisory_review"]
 
     guidance = adv_mod.ADVISORY_REVIEW_CHOICE_GUIDANCE
+    # Preflight keeps the complete shared choice rule on its named parameter,
+    # with a top-level pointer rather than repeating the same prose twice.
+    assert "skip_advisory_review for the audited advisory-only bypass" in advisory_tool.schema["description"]
     surfaces = [
-        advisory_tool.schema["description"],
         advisory_skip["description"],
         status_tool.schema["description"],
         commit_tool.schema["description"],
