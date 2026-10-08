@@ -130,6 +130,89 @@ def test_review_change_on_the_system_index_is_the_commit_gates_brief(staged_body
         assert "## Informational context — commit message" in gate_text, slot_id
 
 
+REASON = "A tooling-only change: one api seat and the scout's second opinion suffice."
+
+
+def _golden_with_critic(briefs: list, critic: str):
+    """``golden_substrate`` plus one unmarked packet row (``critic``) that answers as t1 does
+    (the gate sends one seat per substrate call)."""
+    import dataclasses
+
+    golden = shared.golden_substrate(briefs)
+
+    def run_review_request(request, *, slots, drive_root, llm=None, usage_ctx=None):
+        if [slot.slot_id for slot in slots] != [critic]:
+            return golden(request, slots=slots, drive_root=drive_root, llm=llm, usage_ctx=usage_ctx)
+        [slot] = slots
+        result = golden(request, slots=[dataclasses.replace(slot, slot_id="t1")], drive_root=drive_root, llm=llm,
+                        usage_ctx=usage_ctx)
+        briefs[-1]["slot_id"] = critic
+        reserved = (getattr(usage_ctx, "_review_reserved_operations", None) or {}).get(request.surface) or {}
+        result.actors[0] = {**result.actors[0], "slot_id": critic, "operation_id": str(reserved.get(critic) or f"op-{critic}")}
+        return result
+
+    return run_review_request
+
+
+def _gate_with_critic(staged_body, tmp_path, monkeypatch, *, mode: str, **args):
+    """The gate's review-only cycle with an unmarked enabled row ``scout`` beside the golden pool."""
+    from tests.review_pool_rosters import pool_seat
+
+    set_review_pool(monkeypatch, shared.golden_pool(pool_seat("scout", "openai/gpt-5.6-sol", effort="high", marked=False)))
+    monkeypatch.setattr(git_mod, "get_runtime_mode", lambda: mode)
+    briefs: list[dict] = []
+    monkeypatch.setattr(substrate, "run_review_request", _golden_with_critic(briefs, "scout"))
+    ctx = ToolContext(repo_dir=Path(staged_body["repo"]), drive_root=tmp_path / "gate-drive")
+    outcome = _run_non_committing_review_cycle(ctx, COMMIT_MESSAGE, skip_advisory_review=True, goal=GOAL, scope=SCOPE, **args)
+    assert outcome["status"] == "passed", outcome
+    record = review_ledger.load_record(ctx.drive_root, outcome["review_record_id"])
+    return record, sorted(brief["slot_id"] for brief in briefs)
+
+
+def test_in_cyber_pro_commit_reviewed_composes_its_panel_from_the_pool_and_records_why(staged_body, tmp_path, monkeypatch):
+    """Decision 1A on the commit gate (D1-01, D5-001, AUDV_D1 V01): `reviewers`/`reason` go
+    through the ONE composer `review_change` uses. In Cyber Pro the named pool row IS the
+    counted panel, the unmarked row is an added critic, and the reason is in the record."""
+    record, sent = _gate_with_critic(staged_body, tmp_path, monkeypatch, mode="cyber_pro",
+                                     reviewers=["s1", "scout"], reason=REASON)
+    assert sent == ["s1", "scout"]  # the rest of the pool was not paid
+    panel = record["panel"]
+    assert (panel["composition"], panel["chosen_by"], panel["reason"], panel["reason_missing"]) == (
+        "composed", "author", REASON, False)
+    assert (panel["assigned"], panel["additional"], panel["seats"], panel["additional_seats"]) == (["s1"], ["scout"], 1, 1)
+    assert panel["reviewers_requested"] == ["s1", "scout"]
+    assert {row["seat_id"]: row["additional"] for row in record["rows"]} == {"s1": False, "scout": True}
+    assert record["verdict"]["aggregate"] == "PASS" and record["mode"] == "cyber_pro"
+
+
+def test_below_cyber_pro_the_whole_pool_judges_the_commit_and_named_rows_only_add(staged_body, tmp_path, monkeypatch):
+    record, sent = _gate_with_critic(staged_body, tmp_path, monkeypatch, mode="pro", reviewers=["t1", "scout"])
+    assert sent == ["s1", "scout", "t1", "t2"]
+    panel = record["panel"]
+    assert (panel["composition"], panel["chosen_by"], panel["reason_missing"], panel["reviewers_subset_ignored"]) == (
+        "full_pool", "owner", False, True)
+    assert (sorted(panel["assigned"]), panel["additional"], panel["seats"]) == (["s1", "t1", "t2"], ["scout"], 3)
+    assert record["verdict"]["aggregate"] == "PASS"
+
+
+def test_a_commit_panel_that_names_no_pool_seat_is_refused_before_anything_is_staged(staged_body, tmp_path, monkeypatch):
+    from tests.review_pool_rosters import pool_seat
+
+    repo = Path(staged_body["repo"])
+    set_review_pool(monkeypatch, shared.golden_pool(pool_seat("scout", "openai/gpt-5.6-sol", effort="high", marked=False)))
+    monkeypatch.setattr(git_mod, "get_runtime_mode", lambda: "cyber_pro")
+    monkeypatch.setattr(substrate, "run_review_request", lambda *a, **k: pytest.fail("no wave may be paid"))
+    ctx = ToolContext(repo_dir=repo, drive_root=tmp_path / "gate-drive")
+    shared.git(repo, "reset", "-q", "HEAD")  # the index is the gate's to stage; here nothing may be
+    for args, fragment in (({"reviewers": ["scout"], "reason": REASON}, "from the review pool"),
+                           ({"reviewers": ["nobody"]}, "not an enabled catalog row")):
+        result = git_mod._commit_reviewed(ctx, COMMIT_MESSAGE, **args)
+        assert "TOOL_ARG_ERROR" in result and fragment in result and "Nothing was staged" in result, result
+        assert shared.git(repo, "diff", "--cached", "--name-only") == ""
+    schema = next(entry.schema for entry in git_mod.get_tools() if entry.name == "commit_reviewed")["parameters"]["properties"]
+    assert schema["reviewers"]["type"] == "array" and schema["reason"]["type"] == "string"
+
+
 def test_a_new_round_of_the_same_index_is_a_new_physical_review_not_a_replay(staged_body, tmp_path, monkeypatch):
     """Identities (b) and (c) under the REAL custody layer. The custody layer replays a
     settled attempt to a caller whose attempt key it already holds (same context, same

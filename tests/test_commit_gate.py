@@ -585,8 +585,12 @@ def test_preflight_gate_in_repo_commit_push():
     """The shared reviewed stage runs the free checks, the tests and the optional named
     preflight (the extracted _preflight_and_tests_gate helper) before any paid dispatch;
     no advisory freshness is read any more."""
+    from ouroboros.tools import git_review_cycle
+
     git_mod = _get_git_module()
-    source = inspect.getsource(git_mod._run_reviewed_stage_cycle)
+    # `_run_reviewed_stage_cycle` runs the cycle body under the commit's composed panel.
+    assert "_reviewed_stage_cycle(" in inspect.getsource(git_mod._run_reviewed_stage_cycle)
+    source = inspect.getsource(git_review_cycle._reviewed_stage_cycle)
     gate_pos = source.find("_preflight_and_tests_gate")
     review_pos = source.find("_run_parallel_review")
     assert gate_pos != -1, "_preflight_and_tests_gate not found in _run_reviewed_stage_cycle"

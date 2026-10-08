@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from ouroboros.tools.tool_result import ToolResult, _publish_tool_result
 
+import contextlib
 import hashlib
 import json
 import logging
@@ -523,12 +524,45 @@ def _reset_commit_review_state(ctx):
     ctx._author_commit_record = None
     ctx._commit_review_status = "unknown"
     ctx._commit_preflight = None
+    ctx._commit_review_panel = None
 
 
 from ouroboros.tools.commit_gate import _return_commit_feedback, settle_commit_review_ledger  # noqa: E402
 
 
 def _run_reviewed_stage_cycle(
+    ctx: ToolContext,
+    commit_message: str,
+    commit_start: float,
+    *,
+    paths: Optional[List[str]] = None,
+    skip_advisory_review: bool = False,
+    skip_advisory_pre_review: bool = False,
+    skip_tests: bool = False,
+    goal: str = "",
+    scope: str = "",
+    review_rebuttal: str = "",
+    came_from_detached_checkout: bool = False,
+    require_release_tag: bool = True,
+    preflight_reviewer: str = "",
+    panel: Any = None,
+) -> Dict[str, Any]:
+    """The reviewed stage cycle under this commit's panel (``commit_gate.compose_commit_panel``):
+    every pool reader of the cycle — the contract fingerprint, the paid roster, the wave's
+    seat vectors, the record — sees the composed seats, exactly as a ``review_change`` wave
+    runs under its own; ``None`` (and a panel that is the configured pool) reads the pool."""
+    from ouroboros.tools.review_change import _panel_in_force
+
+    ctx._commit_review_panel = dict(panel.facts) if panel is not None else None
+    with (_panel_in_force(panel) if panel is not None else contextlib.nullcontext()):
+        return _reviewed_stage_cycle(
+            ctx, commit_message, commit_start, paths=paths, skip_advisory_review=skip_advisory_review,
+            skip_advisory_pre_review=skip_advisory_pre_review, skip_tests=skip_tests, goal=goal, scope=scope,
+            review_rebuttal=review_rebuttal, came_from_detached_checkout=came_from_detached_checkout,
+            require_release_tag=require_release_tag, preflight_reviewer=preflight_reviewer)
+
+
+def _reviewed_stage_cycle(
     ctx: ToolContext,
     commit_message: str,
     commit_start: float,
@@ -831,13 +865,23 @@ def _run_non_committing_review_cycle(
     scope: str = "",
     review_rebuttal: str = "",
     preflight_reviewer: str = "",
+    reviewers: Optional[List[str]] = None,
+    reason: str = "",
 ) -> Dict[str, Any]:
+    from ouroboros.tools.commit_gate import compose_commit_panel
+    from ouroboros.tools.review_change import ReviewChangeArgumentError
+
     skip_advisory_pre_review = bool(skip_advisory_review or skip_advisory_pre_review)
     ctx.last_reviewed_commit_sha = ""
     _git()._reset_commit_review_state(ctx)
     commit_start = time.time()
     if not commit_message.strip():
         return {"status": "failed", "message": _publish_tool_result(ctx, ToolResult(status="error", code="TOOL_ARG_ERROR", text="⚠️ ERROR: commit_message must be non-empty."))}
+    try:
+        panel = compose_commit_panel(ctx, list(reviewers or []), str(reason or ""))
+    except ReviewChangeArgumentError as exc:
+        return {"status": "failed", "message": _publish_tool_result(ctx, ToolResult(
+            status="error", code="TOOL_ARG_ERROR", text=f"⚠️ TOOL_ARG_ERROR: {exc} Nothing was staged, reviewed or recorded."))}
     ctx._current_review_commit_message = commit_message
     overlap_err = _git()._check_overlapping_review_attempt(ctx)
     if overlap_err:
@@ -881,6 +925,7 @@ def _run_non_committing_review_cycle(
             scope=scope,
             review_rebuttal=review_rebuttal,
             preflight_reviewer=preflight_reviewer,
+            panel=panel,
         )
         if outcome.get("status") == "passed":
             pre_fingerprint = outcome.get("pre_fingerprint", {}) or {}

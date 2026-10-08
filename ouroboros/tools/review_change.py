@@ -441,7 +441,7 @@ _CTX_FIELDS = (
     "_triad_withheld_seat_records",
     "_review_paid_stamp", "_review_reserved_roster", "_review_reserved_operations",
     "_review_pending_invocation_checkpoint", "_last_review_slot_executions", "_pending_review_attempt",
-    "_commit_preflight",
+    "_commit_preflight", "_commit_review_panel",
 )
 
 

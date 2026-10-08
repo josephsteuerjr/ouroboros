@@ -10,7 +10,7 @@ import hashlib
 import json
 import logging
 import pathlib
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from ouroboros.review_cycles import REASON_REVIEW_CYCLES_EXHAUSTED, review_max_cycles
 from ouroboros.review_owner_custody import stamp_paid_review_owner
@@ -947,6 +947,26 @@ def commit_preflight_choice_error(selector: str, *, skipped: bool, continuation:
     return preflight_reviewer_error(selector)
 
 
+def compose_commit_panel(ctx: ToolContext, reviewers: Sequence[str], reason: str) -> Any:
+    """This commit's panel through the ONE composer ``review_change`` uses
+    (``review_change.compose_panel``, decision 1A). In Cyber Pro the marked pool rows are
+    the owner's menu: ``reviewers`` names the counted seats (an enabled catalog row outside
+    the pool is an added critic, never the quorum) and ``reason`` says why; below Cyber Pro
+    the whole pool judges and ``reviewers`` only add critics outside it. No ``reviewers`` is
+    ``None``: the configured pool exactly as the gate reads it today (an empty pool stays the
+    gate's own typed ``pool_empty`` refusal). The runtime mode is the gate's own reading (the
+    ``mode`` fact of its record). Raises ``ReviewChangeArgumentError`` — before anything is
+    staged, reviewed or recorded."""
+    from ouroboros.runtime_mode_policy import runtime_mode_at_least
+    from ouroboros.tools import git as git_mod
+    from ouroboros.tools import review_change as rc
+
+    request = rc.parse_request({"root": "system_repo", "subject": "index", "reviewers": list(reviewers), "reason": reason})
+    if not request.reviewers:
+        return None
+    return rc.compose_panel(request, adds_only=not runtime_mode_at_least(git_mod._current_runtime_mode(), "cyber_pro"))
+
+
 def release_diagnostics(ctx: ToolContext, paths: Optional[List[str]], source: str) -> Dict[str, Any]:
     """``preflight_review(deterministic_only=True)``: every release-metadata finding of the
     worktree or the index, with no sync, staging, tests, provider or review state."""
@@ -1146,6 +1166,12 @@ def _review_preflight_facts(ctx: ToolContext) -> Dict[str, Any]:
     return {"status": "not_performed", "record_id": ""}
 
 
+def commit_panel_facts(ctx: ToolContext) -> Dict[str, Any]:
+    """THIS attempt's panel composition as ``compose_commit_panel`` stated it (set by the
+    cycle, reset per call); ``{}`` is the configured pool, the record's defaults."""
+    return dict(getattr(ctx, "_commit_review_panel", None) or {})
+
+
 def _review_body_facts(ctx: ToolContext) -> Dict[str, Any]:
     """The gate reviews the system repository (``_repo_commit_push`` refuses any other
     root), so its wave runs the body layer; the record states that through the same
@@ -1189,8 +1215,11 @@ def _review_ledger_facts(ctx: ToolContext, commit_message: str, *, goal: str, sc
         mode = ""
     tests_passed = getattr(ctx, "_preflight_tests_passed", None)
     pre_fingerprint = pre_fingerprint or {}
+    panel = commit_panel_facts(ctx)
     return {
         **_review_body_facts(ctx),
+        "composition": str(panel.get("composition") or "full_pool"),
+        "composition_reason": str(panel.get("reason") or ""), "chosen_by": str(panel.get("chosen_by") or "owner"),
         "task_id": task_id, "root_task_id": resolve_root_task_id(ctx),
         "review_wave_id": resolve_review_wave(ReviewRequest(
             surface="commit_gate", goal=goal or commit_message, task_id=task_id,
@@ -1292,12 +1321,18 @@ def settle_commit_review_ledger(ctx: ToolContext, commit_message: str, *, goal: 
         prior = str(getattr(attempt, "review_record_id", "") or "") if attempt is not None and retry_key and str(
             getattr(attempt, "review_retry_key", "") or "") == retry_key else ""
         existing = ledger.load_record(root, prior) if prior else None
+        # The composition facts the panel was built with (requested rows, added critics, the
+        # reason) ride the record's panel block as on ``review_change`` (its ``reason_missing``
+        # is the composer's: a panel that names the whole pool owes none).
+        composed = commit_panel_facts(ctx)
         if existing is not None and existing.get("state") == ledger.STATE_PENDING:
             fresh = ledger.build_commit_gate_record(facts, record_id=prior, drive_root=root).to_dict()
+            fresh["panel"] = {**dict(fresh.get("panel") or {}), **composed}
             ledger.revise_record(root, prior, lambda payload: {**fresh, "revision": payload["revision"], "ts": payload["ts"]})
             ctx._current_review_record_id = prior
         else:
             record = ledger.build_commit_gate_record(facts, drive_root=root)
+            record.panel = {**dict(record.panel or {}), **composed}
             ctx._current_review_record_id = str(ledger.write_record(root, record)["record_id"])
         from ouroboros.reviewer_slot_config import bind_reviewer_slot_record_id
 
