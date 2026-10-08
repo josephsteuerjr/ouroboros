@@ -360,7 +360,7 @@ def test_reuse_lookup_reads_the_hot_index_first_and_opens_the_archive_only_on_a_
     monkeypatch.setattr(rl, "INDEX_MAX_BYTES", 1)  # every write after the first rotates the hot index
     keys = [f"reuse-key-{n}" for n in range(3)]
     for key in keys:  # three records → the two oldest keys live in archived segments, the newest in the hot index
-        rl.write_record(tmp_path, rl.build_commit_gate_record(_facts(_three(), _scope(), reuse_key=key), drive_root=tmp_path))
+        rl.write_record(tmp_path, rl.build_commit_gate_record(_facts(_panel(), reuse_key=key), drive_root=tmp_path))
     assert len(rl._index_segments(tmp_path)) == 2
     opened = []
     real_iter = rl.iter_jsonl_objects

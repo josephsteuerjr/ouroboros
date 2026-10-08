@@ -23,12 +23,19 @@ from tests._git_review_pipeline_shared import (
 
 
 @pytest.fixture(autouse=True)
-def _packet_default_panel(monkeypatch):
-    """This module pins the PACKET assembly of the review pool: three packet seats
-    on the factory models (the pool's own default delivery is native)."""
-    from tests.review_pool_rosters import set_review_pool
+def _mixed_default_panel(monkeypatch):
+    """This module pins one pool of three factory seats: two PACKET seats
+    (``review-1``, ``review-2``) that answer Part 1 only and one natively
+    retrieving seat (``review-3``) that also answers the coupling question, so a
+    verdict here is decided by the change findings under test and the coupling
+    question is answered rather than NOT_PERFORMED."""
+    from tests.review_pool_rosters import FACTORY_MODELS, pool_roster, pool_seat, set_review_pool
 
-    set_review_pool(monkeypatch)
+    set_review_pool(monkeypatch, pool_roster(
+        pool_seat("review-1", FACTORY_MODELS[0]),
+        pool_seat("review-2", FACTORY_MODELS[1]),
+        pool_seat("review-3", FACTORY_MODELS[2], delivery="native"),
+    ))
 
 
 @pytest.fixture
@@ -120,14 +127,15 @@ def _clean_coupling_matrix():
 class TestReviewEnforcementModes:
     @staticmethod
     def _fake_result(*review_texts):
-        """One wave of the module's pinned packet panel: the change texts land on
-        the packet seats ``slot_1..n`` and the transitional coupling-only seat
-        answers Part 2 with a clean matrix, so a verdict here is decided by the
-        change findings under test and not by an unanswered coupling question."""
+        """One wave of the module's pinned pool: the change texts land on the
+        packet seats ``review-1..n`` (contract A) and the retrieving seat
+        ``review-3`` answers both parts (contract B: a clean change block and a
+        clean coupling matrix), so a verdict here is decided by the change
+        findings under test and not by an unanswered coupling question."""
         rows = [
             {
                 "model": f"model-{idx}",
-                "slot_id": f"slot_{idx}",
+                "slot_id": f"review-{idx}",
                 "verdict": "PASS",
                 "text": text,
                 "tokens_in": 0,
@@ -137,8 +145,8 @@ class TestReviewEnforcementModes:
             for idx, text in enumerate(review_texts, start=1)
         ]
         rows.append({
-            "model": "coupling-seat", "slot_id": "scope_slot_1", "verdict": "PASS",
-            "text": json.dumps(_clean_coupling_matrix()),
+            "model": "retrieving-seat", "slot_id": "review-3", "verdict": "PASS",
+            "text": json.dumps({"change": [], "change_clean": True, "coupling": _clean_coupling_matrix()}),
             "tokens_in": 0, "tokens_out": 0, "cost_estimate": 0.0,
         })
         return json.dumps({"results": rows})
@@ -232,7 +240,7 @@ class TestReviewEnforcementModes:
         assert saved.count("material original finding") == 1
         assert saved.count("minor original finding") == 1
         assert saved.count("prior deterministic/preflight warning") == 1
-        assert saved.count("Note: 1 of 4 review models") == 1  # 3 packet seats + the coupling seat
+        assert saved.count("Note: 1 of 4 review models") == 1  # three seated answers + the failed row
 
     @pytest.mark.parametrize("failure", ["nonzero_rc", "non_utf8_rc"])
     def test_uncapturable_staged_diff_blocks_instead_of_reviewing_a_placeholder(
@@ -441,16 +449,15 @@ class TestReviewEnforcementModes:
         monkeypatch.setattr(
             review,
             "_handle_multi_model_review",
-            lambda *args, **kwargs: self._fake_result(
-                "Error: timeout",
-                '[{"item":"code_quality","verdict":"PASS","severity":"critical","reason":"ok"}]',
-            ),
+            # two of the three seats time out: one responded seat is below the quorum of two
+            lambda *args, **kwargs: self._fake_result("Error: timeout", "Error: timeout"),
         )
         result = review._run_unified_review(ctx, "test commit", repo_dir=ctx.repo_dir)
         assert result is None
         assert any(
-            "only 1 of 2 review models responded successfully" in w.lower()
-            or "review enforcement=advisory" in w.lower()
+            isinstance(w, str) and (
+                "only 1 of 3 review models responded successfully" in w.lower()
+                or "review enforcement=advisory" in w.lower())
             for w in ctx._review_advisory
         )
 

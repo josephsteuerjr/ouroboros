@@ -655,8 +655,11 @@ def build_two_part_brief(frozen_subject: Any, seat: Any, *, layer: Optional[str]
     model, slot_id = str(_field("model") or ""), str(_field("slot_id") or "")
     route = _field("route", None)
     delegated = str(getattr(route, "value", route) or "") == "agent_session"
+    # The gate's own subject (the system repository's index at HEAD) is the one
+    # subject read on its live root; every other frozen subject hands its own
+    # trees and diff to the manifest (the same rule as ``prepare_retrieving_seats``).
     path_subject = frozen_subject.managed if frozen_subject.managed is not None else (
-        frozen_subject if frozen_subject.spec.kind != "index" else None)
+        frozen_subject if not frozen_subject.is_system_index else None)
     intent = BriefIntent(goal=goal_text, scope=scope, review_rebuttal=review_rebuttal, review_history=list(review_history or []),
                          coupling_history=list(coupling_history or []), owner_words=owner_words)
     if "coupling" in parts:
