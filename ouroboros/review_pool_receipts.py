@@ -264,21 +264,24 @@ def mark_reported(update_state: Callable[..., Any], digest: str, record: Dict[st
 
 
 def outcome_decides_document(outcome: Any, settings: Mapping[str, Any]) -> bool:
-    """Whether ``outcome`` decided the document ``settings`` shows: a refusal rewrote nothing,
-    so the lanes key and the catalog read back exactly as its ``before`` recorded them; a finished
-    migration's ``catalog_after`` IS the document's catalog and its lanes key is gone. Any other
-    document (the owner's repairing save, an environment catalog that won) carries none of it."""
+    """Whether ``outcome`` (a ``review_pool_migration.MigrationOutcome``) decided the document
+    ``settings`` shows — the ONE predicate the owner's receipt and the model's ``## Review``
+    block share. A refusal rewrote nothing, so the lanes key and the catalog read back exactly
+    as its snapshot's ``before`` recorded them; a finished migration's ``catalog_after`` IS the
+    document's catalog and its lanes key is gone. A no-op decided nothing. Any other document
+    — the owner's repairing save, another task's snapshot, an environment catalog that won over
+    the minted rows — carries none of this outcome's facts, however recent the outcome is."""
     from ouroboros.review_pool_migration import REVIEWER_SLOTS_KEY, SUBAGENTS_KEY
 
     def as_read(value: Any) -> str:
         return value if isinstance(value, str) else ("" if value is None else json.dumps(value))
 
-    if outcome.noop:
+    if getattr(outcome, "noop", False):
         return False
-    before = (outcome.snapshot or {}).get("before") or {}
-    if outcome.error:
+    before = (getattr(outcome, "snapshot", None) or {}).get("before") or {}
+    if getattr(outcome, "error", ""):
         return all(as_read(settings.get(key)) == as_read(before.get(key)) for key in (REVIEWER_SLOTS_KEY, SUBAGENTS_KEY))
-    after = str(outcome.catalog_after or "")
+    after = str(getattr(outcome, "catalog_after", None) or "")
     return bool(after) and REVIEWER_SLOTS_KEY not in settings and as_read(settings.get(SUBAGENTS_KEY)) == after
 
 

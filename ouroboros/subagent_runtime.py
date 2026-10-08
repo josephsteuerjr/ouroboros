@@ -225,45 +225,24 @@ def review_pool_save_warning(settings: Mapping[str, Any]) -> str:
     return PACKET_ONLY_POOL_WARNING if warn else ""
 
 
-def _migration_decided_this_document(outcome: Any, settings: Mapping[str, Any]) -> bool:
-    """Whether ``outcome`` (a ``review_pool_migration.MigrationOutcome``) decided the
-    document ``settings`` shows. A refusal rewrote nothing, so the lanes key and the
-    catalog read back exactly as its snapshot's ``before`` recorded them; a finished
-    migration's ``catalog_after`` IS the document's catalog and its lanes key is gone.
-    A no-op decided nothing. Any other document — the owner's repairing save, another
-    task's snapshot, an environment catalog that won over the minted rows — carries
-    none of this outcome's facts, however recent the outcome is in this process."""
-    from ouroboros.review_pool_migration import REVIEWER_SLOTS_KEY, SUBAGENTS_KEY
-
-    def as_read(value: Any) -> str:
-        return value if isinstance(value, str) else ("" if value is None else json.dumps(value))
-
-    if getattr(outcome, "noop", False):
-        return False
-    before = (getattr(outcome, "snapshot", None) or {}).get("before") or {}
-    if getattr(outcome, "error", ""):
-        return all(as_read(settings.get(key)) == as_read(before.get(key)) for key in (REVIEWER_SLOTS_KEY, SUBAGENTS_KEY))
-    after = str(getattr(outcome, "catalog_after", None) or "")
-    return bool(after) and REVIEWER_SLOTS_KEY not in settings and as_read(settings.get(SUBAGENTS_KEY)) == after
-
-
 def _review_migration_facts(settings: Mapping[str, Any]) -> dict[str, str]:
     """The A↔C seam: ``config.review_pool_migrations_seen()`` is the tuple of
     ``review_pool_migration.MigrationOutcome`` records this process's settings reads
     computed, oldest first (a no-op — the catalog was already a pool — leaves no fact).
     The block shows the newest one that decided THIS document — the settings view whose
-    pool the block shows (:func:`_migration_decided_this_document`), never another
-    document's: its ``error`` (a refused migration keeps the lane keys in the document,
-    so the pool the owner expects does not exist until the catalog is saved) and the
-    ``snapshot`` path the supervisor boot recorded for that document
-    (``server_maintenance.review_pool_migration_records``), when it has written one.
-    Either key is present only when it has a value. The process registry itself is
-    history and is never trimmed here."""
+    pool the block shows (``review_pool_receipts.outcome_decides_document``, the same
+    predicate the owner's receipt applies), never another document's: its ``error`` (a
+    refused migration keeps the lane keys in the document, so the pool the owner expects
+    does not exist until the catalog is saved) and the ``snapshot`` path the supervisor
+    boot recorded for that document (``server_maintenance.review_pool_migration_records``),
+    when it has written one. Either key is present only when it has a value. The process
+    registry itself is history and is never trimmed here."""
     from ouroboros import config as cfg
+    from ouroboros.review_pool_receipts import outcome_decides_document
 
     seen = getattr(cfg, "review_pool_migrations_seen", None)
     outcomes = [outcome for outcome in (seen() if callable(seen) else ())
-                if _migration_decided_this_document(outcome, settings)]
+                if outcome_decides_document(outcome, settings)]
     if not outcomes:
         return {}
     latest = outcomes[-1]

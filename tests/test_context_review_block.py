@@ -422,6 +422,32 @@ def test_w4_a_finished_migration_is_no_error_and_a_noop_leaves_no_fact(monkeypat
     assert "migration_snapshot" not in block and block["source"] == "structured"
 
 
+def test_w4_the_block_and_the_owners_receipt_share_one_deciding_predicate(monkeypatch):
+    """One owner of «this migration decided this document»: the block asks
+    ``review_pool_receipts.outcome_decides_document`` — the predicate the owner's receipt
+    applies — about every outcome the process saw, and ``subagent_runtime`` keeps no copy
+    of it, so the two surfaces cannot drift apart on which document an outcome decided."""
+    from ouroboros import config as cfg
+    from ouroboros import review_pool_receipts, subagent_runtime
+
+    assert not hasattr(subagent_runtime, "_migration_decided_this_document")
+    finished, refused, noop = _migration_outcomes()
+    monkeypatch.setattr(cfg, "review_pool_migrations_seen", lambda: (finished, refused, noop))
+    monkeypatch.setenv(SUBAGENTS_SETTING, finished.catalog_after)
+    asked = []
+    decides = review_pool_receipts.outcome_decides_document
+
+    def spy(outcome, settings):
+        asked.append(outcome)
+        return decides(outcome, settings)
+
+    monkeypatch.setattr(review_pool_receipts, "outcome_decides_document", spy)
+    block, _ = _block()
+    assert asked == [finished, refused, noop], "the block asks the receipt's predicate, outcome by outcome"
+    assert (block["source"], block["error"]) == ("structured", "")
+    assert [decides(outcome, {SUBAGENTS_SETTING: finished.catalog_after}) for outcome in asked] == [True, False, False]
+
+
 def test_w4_the_read_seam_refusal_reaches_the_model_and_the_owners_repair_clears_it(tmp_path, monkeypatch):
     """End to end, nothing patched between the two packages: the settings document on disk
     carries lanes the migration refuses; the read seam (``review_pool_migration.apply_at_read_seam``)
