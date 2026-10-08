@@ -328,8 +328,8 @@ and 20 (`delegated_transport`), both critical. The imperatives:
   children copy current eligible source contents, including uncommitted inputs;
   isolation never identifies a project as Ouroboros's body. Preserve source and
   baseline through capture, cleanup and integration; apply only the child's delta.
-  `external_workspace` verifies shared effects without re-applying; external Git
-  authority and patch-only `self_worktree` stay distinct. A capture base proves
+  `external_workspace` verifies in the assigned folder under current read rights,
+  without transfer (ARCHITECTURE §6). Patch-only `self_worktree` stays distinct. A capture base proves
   no authorship: use `vcs_diff`. Genesis directories are durable deliverables;
   until `.gitignore` exists, small text build outputs ride `workspace.patch`,
   bounded per file and by Git's binary verdict, never by a total source-patch cap.
