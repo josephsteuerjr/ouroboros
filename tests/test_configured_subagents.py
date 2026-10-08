@@ -263,8 +263,13 @@ def test_unique_engines_allows_marked_twins_and_a_minted_row_beside_the_owners()
         validate_unique_engines(twins({}, {}), {})
     # ...unless BOTH seats are review-eligible (one engine judging twice)...
     validate_unique_engines(twins({"review_eligible": True}, {"review_eligible": True, "delivery": "packet"}), {})
-    # ...or exactly one of them is a row the runtime minted beside the owner's.
+    # ...or at least one of them is a row the runtime minted: beside the owner's own row...
     validate_unique_engines(twins({}, {"review_eligible": True, "minted_from": "factory_default"}), {})
+    # ...or beside its own reviewer row (M4: a former advisory/deep seat coinciding with a
+    # triad seat gives one marked reviewer and one unmarked helper, both minted; two helpers too).
+    validate_unique_engines(twins({"review_eligible": True, "minted_from": "review_lane"}, {"minted_from": "review_lane"}), {})
+    validate_unique_engines(twins({"minted_from": "review_lane"}, {"minted_from": "review_lane"}), {})
+    # Two rows the owner authored stay refused, marked or not.
     with pytest.raises(ValueError, match="runs the same engine"):
         validate_unique_engines(twins({}, {"review_eligible": True}), {})
 

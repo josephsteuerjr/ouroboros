@@ -434,19 +434,24 @@ def validate_unique_engines(config: ConfiguredSubagents, settings: Mapping[str, 
 
     The handle IS the engine with baselines folded, so an unset row and an
     explicit row with the same effective value are one engine, and no two saved
-    rows can carry the same name. Two deliberate exceptions, both about the
-    review pool (THESIS: a reviewer's two seats are the owner's honest choice):
-    the twins are BOTH marked review-eligible (the same engine judging twice,
-    e.g. once by packet and once natively), or exactly one of them is a row the
-    runtime minted (``minted_from``) beside the owner's own row of that engine
-    (a former direct advisory seat that coincided with a direct triad seat).
+    rows the OWNER authored can carry the same name. Two deliberate exceptions,
+    both about the review pool (THESIS: a reviewer's two seats are the owner's
+    honest choice): the twins are BOTH marked review-eligible (the same engine
+    judging twice, e.g. once by packet and once natively), or at least one of
+    them is a row the runtime minted (``minted_from``) — the migration kept
+    what a lane ran beside the owner's own row of that engine, or beside its
+    own reviewer row (a former direct advisory or deep-review seat that
+    coincided with a direct triad seat: one marked reviewer, one unmarked
+    helper, both minted). Such a pair must survive an ordinary description edit
+    without deleting a row or changing an engine; twins share a handle as
+    ``<handle>~<id>``.
     """
     seen: dict[tuple[str, str], tuple[int, ConfiguredSubagent]] = {}
     for index, row in enumerate(config.items):
         key = (row.route.kind, subagent_handle(row, settings))
         if key in seen:
             first_index, first = seen[key]
-            if (row.review_eligible and first.review_eligible) or (bool(row.minted_from) != bool(first.minted_from)):
+            if (row.review_eligible and first.review_eligible) or row.minted_from or first.minted_from:
                 continue
             raise ValueError(
                 f"{SUBAGENTS_SETTING}: items[{index}] runs the same engine as items[{first_index}] "

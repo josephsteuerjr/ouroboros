@@ -529,6 +529,38 @@ def test_f5c_a_direct_advisory_coinciding_with_a_direct_triad_seat_keeps_its_own
     assert "preflight is now chosen per commit" in note
 
 
+def _save_judgement(loaded, items):
+    """What the Settings save path says about re-posting ``items`` over the migrated document."""
+    posted = json.dumps({"enabled": True, "items": items})
+    return cs.roster_save_error(posted, loaded, {SUBAGENTS: posted})
+
+
+@pytest.mark.parametrize("helper_lane", ["advisory", "deep_review"])
+def test_m4_the_reviewer_helper_pair_the_migration_minted_survives_a_description_edit(helper_lane):
+    """F5(c) end to end: a direct triad seat and a direct advisory (or deep-review) seat of one
+    engine become a marked reviewer and an unmarked helper, both minted. The owner editing any
+    row's description must save without deleting a row or changing an engine."""
+    seat = {"route": {"kind": "api_chat", "target_id": "anthropic/claude-sonnet-5"}, "effort": "low"}
+    extra = {"advisory": {"enabled": True, **seat}} if helper_lane == "advisory" else {"deep_review": seat}
+    doc = {"OUROBOROS_MODEL": "openai/gpt-5.6-sol", "OPENROUTER_API_KEY": "present",
+           SLOTS: lanes(triad=[direct("t", "anthropic/claude-sonnet-5", "low", delivery="native")],
+                        scope=[direct("s", "openai/gpt-5.6-terra", "high")], **extra)}
+    loaded = cfg.normalize_settings_raw(dict(doc))
+    items = json.loads(loaded[SUBAGENTS])["items"]
+    assert [(r["subagent_id"], r.get("review_eligible", False), r["minted_from"]) for r in items] == [
+        ("review-1", True, "review_lane"), ("review-2", True, "review_lane"), ("review-3", False, "review_lane")]
+    assert items[2]["route"] == items[0]["route"] and items[2]["effort"] == items[0]["effort"] == "low"
+    assert _save_judgement(loaded, items) == "", "re-posting the migrated catalog unchanged is accepted"
+    for index in range(3):
+        edited = copy.deepcopy(items)
+        edited[index]["recommended_use"] = "Owner's wording"
+        assert _save_judgement(loaded, edited) == "", f"a description edit of items[{index}] is an ordinary save"
+    # The ordinary refusal stands: two rows the owner authored on one engine.
+    owner_twin = {k: v for k, v in items[2].items() if k != "minted_from"}
+    owned = [{k: v for k, v in items[0].items() if k not in ("minted_from", "review_eligible")}, items[1], owner_twin]
+    assert "runs the same engine" in _save_judgement(loaded, owned)
+
+
 def test_f7_an_empty_scope_effort_materializes_before_the_key_is_retired():
     doc = {"OUROBOROS_EFFORT_REVIEW": "high", "OUROBOROS_EFFORT_SCOPE_REVIEW": "xhigh",
            SLOTS: lanes(triad=[direct("t", "openai/gpt-5.6-terra")], scope=[direct("s", "openai/gpt-5.6-terra")])}
