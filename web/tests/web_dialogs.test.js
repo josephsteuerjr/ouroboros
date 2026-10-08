@@ -142,30 +142,74 @@ test('/panic cancel/backdrop/Escape resolutions send NOTHING', async () => {
 // ---------------------------------------------------------------------------
 
 const REVIEW_ROSTER = { enabled: true, items: [
-    { subagent_id: 'sol', name: 'sol-high', route: {} },
-    { subagent_id: 'off', name: 'switched-off', enabled: false, route: {} },
-    { subagent_id: 'raw', route: {} },
+    { subagent_id: 'sol', name: 'stale label', effort: 'high', route: { kind: 'api_model', target_id: 'openai/gpt-5.6-sol' } },
+    { subagent_id: 'off', enabled: false, route: { kind: 'agent_session', target_id: 'claude=claude-fable-5-1' } },
+    { subagent_id: 'r1', effort: 'xhigh', route: { kind: 'agent_session', target_id: 'codex=gpt-6-astra' } },
+    { subagent_id: 'r2', effort: 'xhigh', route: { kind: 'agent_session', target_id: 'codex=gpt-6-astra' } },
 ] };
+const REVIEW_SETTINGS = { OUROBOROS_SUBAGENTS: JSON.stringify(REVIEW_ROSTER), OUROBOROS_PROCESSING_PREFERENCE: 'fast' };
+const REVIEW_CHOICES = [
+    { value: '', label: 'Main model (default)' },
+    { value: 'sol', label: 'Subagent 1 — openai/gpt-5.6-sol/high/fast' },
+    { value: 'r1', label: 'Subagent 3 — codex=gpt-6-astra/xhigh/fast~r1' },
+    { value: 'r2', label: 'Subagent 4 — codex=gpt-6-astra/xhigh/fast~r2' },
+];
+const UNREAD_CATALOG = 'could not be read, so only Main is available';
 
-test('/review offers Main first plus every enabled catalog row and sends the chosen one', async () => {
+test('/review labels each enabled row the way Settings and the model name it, and sends the stored id', async () => {
     const sent = [];
     const seen = [];
     const fired = await chooseAndSendReview({
-        openConfirmDialog: async (options) => { seen.push(options); return { confirmed: true, value: 'sol' }; },
+        openConfirmDialog: async (options) => { seen.push(options); return { confirmed: true, value: 'r2' }; },
         ws: { send: (msg) => sent.push(msg) },
-        readSettings: async () => ({ OUROBOROS_SUBAGENTS: JSON.stringify(REVIEW_ROSTER) }),
+        readSettings: async () => REVIEW_SETTINGS,
     });
     assert.equal(fired, true);
-    assert.deepEqual(sent, [{ type: 'command', cmd: '/review sol' }]);
+    assert.deepEqual(sent, [{ type: 'command', cmd: '/review r2' }]);
     assert.equal(seen[0].input, true);
-    assert.deepEqual(seen[0].choices, [
-        { value: '', label: 'Main model (default)' },
-        { value: 'sol', label: 'sol-high' },
-        { value: 'raw', label: 'raw' },
-    ]);
+    assert.equal(seen[0].body, 'Who reviews the whole system?');
+    // The ordinal is the card's ("Subagent N" counts switched-off rows too); twins
+    // carry the roster's ~<stored id>; a stale `name` never labels a row.
+    assert.deepEqual(seen[0].choices, REVIEW_CHOICES);
 });
 
-test('/review default sends the bare command (Main); cancel sends nothing; an unreadable roster still offers Main', async () => {
+test('/review tells an unreadable catalog apart from an empty one; Main stays offered either way', async () => {
+    const realFetch = globalThis.fetch;
+    const open = async (readSettings) => {
+        const seen = [];
+        await chooseAndSendReview({
+            ws: { send() {} }, readSettings,
+            openConfirmDialog: async (options) => { seen.push(options); return false; },
+        });
+        return seen[0];
+    };
+    try {
+        // The last two run the handler's real reader (no injected readSettings).
+        for (const [why, readSettings, fetchImpl] of [
+            ['a thrown read', async () => { throw new Error('offline'); }],
+            ['an unparseable catalog', async () => ({ OUROBOROS_SUBAGENTS: '{"items": [' })],
+            ['a catalog without rows', async () => ({ OUROBOROS_SUBAGENTS: { enabled: true } })],
+            ['a refused /api/settings', undefined, async () => ({ ok: false, status: 503, json: async () => ({ error: 'down' }) })],
+            ['a failed fetch', undefined, async () => { throw new TypeError('Failed to fetch'); }],
+        ]) {
+            globalThis.fetch = fetchImpl || realFetch;
+            const dialog = await open(readSettings);
+            assert.deepEqual(dialog.choices, [{ value: '', label: 'Main model (default)' }], why);
+            assert.match(dialog.body, new RegExp(UNREAD_CATALOG), why);
+        }
+        for (const settings of [{}, { OUROBOROS_SUBAGENTS: '' }, { OUROBOROS_SUBAGENTS: { enabled: true, items: [] } }]) {
+            const dialog = await open(async () => settings);
+            assert.deepEqual(dialog.choices, [{ value: '', label: 'Main model (default)' }]);
+            assert.equal(dialog.body, 'Who reviews the whole system?');
+        }
+        globalThis.fetch = async (url) => ({ ok: url === '/api/settings', status: 200, json: async () => REVIEW_SETTINGS });
+        assert.deepEqual((await open(undefined)).choices, REVIEW_CHOICES);
+    } finally {
+        globalThis.fetch = realFetch;
+    }
+});
+
+test('/review default sends the bare command (Main); cancel sends nothing', async () => {
     const sent = [];
     const ws = { send: (msg) => sent.push(msg) };
     const readSettings = async () => ({ OUROBOROS_SUBAGENTS: REVIEW_ROSTER });
@@ -177,12 +221,6 @@ test('/review default sends the bare command (Main); cancel sends nothing; an un
         assert.equal(await chooseAndSendReview({ ws, readSettings, openConfirmDialog: async () => resolution }), false);
     }
     assert.equal(sent.length, 1);
-    const seen = [];
-    await chooseAndSendReview({
-        ws, openConfirmDialog: async (options) => { seen.push(options); return false; },
-        readSettings: async () => { throw new Error('offline'); },
-    });
-    assert.deepEqual(seen[0].choices, [{ value: '', label: 'Main model (default)' }]);
 });
 
 // ---------------------------------------------------------------------------
