@@ -494,12 +494,10 @@ def prepare_settings_for_persist(settings: dict, *, authored_keys: Sequence[str]
         allow_context_lowering: bool = False, allow_safety_lowering: bool = False) -> dict:
     """Normalize settings writes under existing ratchets. Only the actual writer
     names authored_keys; a defaults merge preserves absent disk-owned intent,
-    forwarded environment choices and install-time provenance. A review-pool migration
-    this process computed gets its durable receipts here, BEFORE the write replaces the
-    pre-image on disk (``review_pool_receipts``: the saving process, not the boot, owns them)."""
-    from ouroboros.review_pool_receipts import persist_receipts
-
-    persist_receipts(DATA_DIR)
+    forwarded environment choices and install-time provenance. The review-pool receipts THIS
+    write owes land before it replaces the pre-image (``review_pool_receipts.persist_write_receipts``)."""
+    from ouroboros.review_pool_receipts import persist_write_receipts
+    persist_write_receipts(DATA_DIR, settings, SETTINGS_PATH)
     authored = set(authored_keys or ())
     prepared = {k: v for k, v in settings.items() if not (
         k in _DISK_AUTHORED_SETTINGS and k not in authored and not _settings_file_value(k, "")
@@ -702,6 +700,11 @@ def _coerce_setting_value(key: str, value):
     return str(value or "")
 
 
+def coerce_settings_raw(raw: Any) -> dict:
+    """The read seam's first step: every known key typed as its default declares, unknown keys untouched."""
+    return {key: _coerce_setting_value(key, value) if key in SETTINGS_DEFAULTS else value for key, value in dict(raw or {}).items()}
+
+
 def verify_settings_integrity() -> str | None:
     """Verify the strict child pin, returning the observed digest when present."""
     return _settings_integrity.verify_settings_integrity(SETTINGS_PATH)
@@ -756,10 +759,7 @@ def normalize_settings_raw(raw: dict) -> dict:
     (``retired_key_sets_seen`` -> ``server_maintenance._startup_retired_settings_notice``)."""
     from ouroboros.retention import LEGACY_RETENTION_KEYS, pick_legacy_retention_seed
 
-    loaded = {
-        key: _coerce_setting_value(key, value) if key in SETTINGS_DEFAULTS else value
-        for key, value in dict(raw or {}).items()
-    }
+    loaded = coerce_settings_raw(raw)
     # Prefer a CUSTOMIZED legacy retention value so a rename never orphans it; an
     # all-defaults file collapses to the unified default.
     if "OUROBOROS_GC_RETENTION_DAYS" not in loaded:

@@ -1501,6 +1501,33 @@ def test_the_saving_process_writes_the_receipts_before_its_write_and_the_boot_ad
     assert record["reported"] and snapshot_file.name in sent[0][1]
 
 
+def test_a_save_receipts_the_document_it_replaces_not_every_document_the_process_read(boot, monkeypatch):
+    """FIX6F: the prologue gives receipts to the migration of the document the write REPLACES (the
+    on-disk pre-image by its exact digest, even when the owner's save brings a new catalog instead
+    of the migrated rows) and to one whose result it saves — not to every document this process
+    normalized (a draft the wizard read, another root's document): those receipts described rows
+    that never ran, and each snapshot cost the writer a UTC second under the settings lock."""
+    root, _sent = boot
+    path = root / "settings.json"
+    monkeypatch.setattr(cfg, "DATA_DIR", root)
+    monkeypatch.setattr(cfg, "SETTINGS_PATH", path)
+    for unsaved in (dict(N1_DOC), {"OUROBOROS_MODEL": "x/y", "OPENROUTER_API_KEY": "present"}):
+        cfg.normalize_settings_raw(unsaved)
+    path.write_text(json.dumps(anton_document()), encoding="utf-8")
+    loaded = cfg.normalize_settings_raw(anton_document())
+    assert len(cfg.review_pool_migrations_seen()) == 3
+    owner_catalog = catalog(api_row("mine", "x/y", "high", review_eligible=True))
+
+    cfg.save_settings({**loaded, SUBAGENTS: owner_catalog})
+
+    (snapshot_file,) = _snapshots(root)
+    snapshot = json.loads(snapshot_file.read_text(encoding="utf-8"))
+    assert snapshot["input_sha256"] == m.input_sha256(anton_document()) and snapshot["before"][SLOTS] == ANTON_LANES
+    (record,) = server_maintenance.review_pool_migration_records().values()
+    assert record["snapshot"] == f"state/review_migrations/{snapshot_file.name}"
+    assert json.loads(path.read_text(encoding="utf-8"))[SUBAGENTS] == owner_catalog
+
+
 def test_a_receipt_failure_never_blocks_the_save(boot, monkeypatch):
     from ouroboros import review_pool_receipts as receipts
 

@@ -89,7 +89,7 @@ Add the field to the active frozen owner — `ouroboros/contracts/` for the pack
     (`review_pool_migration.factory_lanes`) is those rows, one source, never a second provider table minting
     seats beside them. The process that first SAVES the migrated document writes the snapshot
     `state/review_migrations/<ts>-slots-to-pool.json` and the `state.json:review_pool_migrations` record before
-    its write (`review_pool_receipts.persist_receipts`, from the persistence prologue and the Colab writer; the
+    its write (`review_pool_receipts.persist_write_receipts`, from the persistence prologue and the Colab writer; the
     boot writes them when it read the document first), and the first boot with an owner chat posts one message
     per unreported record, from the durable snapshot (`server_maintenance._startup_review_pool_notice`). Who
     reviews is thereafter one list: the Reviewer-marked catalog rows (`GET /api/review-pool`). The DOCUMENT is

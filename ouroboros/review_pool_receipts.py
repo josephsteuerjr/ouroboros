@@ -168,8 +168,8 @@ def _relpath(path: pathlib.Path, data_dir: Any) -> str:
 
 
 def persist_receipts(data_dir: Any, *, outcomes: Optional[Tuple[Any, ...]] = None) -> Dict[str, Dict[str, Any]]:
-    """Give every non-noop migration this process computed its durable receipts under
-    ``data_dir``, BEFORE the saving write replaces the pre-image: the snapshot file when no
+    """Give the non-noop ``outcomes`` (default: every migration this process computed — the
+    boot's set) their durable receipts under ``data_dir``: the snapshot file when no
     file carries the document digest yet, and the state record when this process's supervisor
     state is bound to ``data_dir`` and the digest has no record. Returns the records it knows
     (written or found). Never raises — a receipt failure is logged and the next writer or the
@@ -179,6 +179,30 @@ def persist_receipts(data_dir: Any, *, outcomes: Optional[Tuple[Any, ...]] = Non
     except Exception:
         log.warning("review pool migration receipts could not be written under %s", data_dir, exc_info=True)
         return {}
+
+
+def persist_write_receipts(data_dir: Any, written: Mapping[str, Any], settings_path: Any) -> Dict[str, Dict[str, Any]]:
+    """The receipts a settings write owes BEFORE it lands (the persistence prologue, the Colab
+    writer): the migration of the document it replaces — ``settings_path`` as the read seam types
+    it (``config.coerce_settings_raw``), found by its exact digest — and any migration whose result
+    it saves (:func:`outcome_decides_document`). Not every migration this process computed: another
+    data root's document or a draft the wizard read is no document this write replaces or saves, its
+    receipt would describe rows that never ran, and each extra snapshot costs a UTC second
+    (:func:`_new_snapshot_path`) the writer waits out under the settings lock. Never raises."""
+    from ouroboros.config import coerce_settings_raw
+    from ouroboros.review_pool_migration import input_sha256, migrations_seen
+
+    try:
+        raw = json.loads(pathlib.Path(settings_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raw = None  # no readable pre-image: this write replaces no document of its own
+    try:
+        replaced = input_sha256(coerce_settings_raw(raw)) if isinstance(raw, dict) else None
+        owed = tuple(o for o in migrations_seen() if o.input_sha256 == replaced or outcome_decides_document(o, written))
+    except Exception:
+        log.warning("review pool migration receipts for a write under %s could not be chosen", data_dir, exc_info=True)
+        return {}
+    return persist_receipts(data_dir, outcomes=owed)
 
 
 def _persist_receipts(data_dir: pathlib.Path, outcomes: Optional[Tuple[Any, ...]]) -> Dict[str, Dict[str, Any]]:
@@ -314,6 +338,7 @@ __all__ = [
     "outcome_decides_document",
     "outcome_from_snapshot",
     "persist_receipts",
+    "persist_write_receipts",
     "read_snapshots",
     "reconcile_records",
     "record_for",

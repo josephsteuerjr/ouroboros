@@ -201,13 +201,13 @@ def write_colab_settings(data_dir: pathlib.Path, settings: Dict[str, Any]) -> pa
     still ``serialize_settings`` bytes, so the next reader of the Drive file meets the
     spelling every other writer produces. The one prologue duty it shares: a review-pool
     migration ``build_colab_settings`` computed for the Drive document gets its durable
-    receipts under the Drive root (``review_pool_receipts``) BEFORE this write replaces the
-    pre-image — the kernel is a different process from the server that later tells the owner."""
-    from ouroboros.review_pool_receipts import persist_receipts
+    receipts under the Drive root (``review_pool_receipts.persist_write_receipts``) BEFORE this
+    write replaces the pre-image — the kernel is a different process from the server that later tells the owner."""
+    from ouroboros.review_pool_receipts import persist_write_receipts
 
     path = pathlib.Path(data_dir) / "settings.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    persist_receipts(data_dir)
+    persist_write_receipts(data_dir, settings, path)
     write_text_atomic(path, serialize_settings(dict(settings)))
     return path
 

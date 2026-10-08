@@ -509,7 +509,7 @@ def _startup_review_pool_notice(settings: dict) -> None:
     The migration itself is pure and runs at the read seam (``config.normalize_settings_raw``
     -> ``review_pool_migration.apply_at_read_seam``) in whichever process reads an old document;
     the process that SAVES the migrated document writes its receipts before that write
-    (``review_pool_receipts.persist_receipts`` from the persistence prologue and the Colab
+    (``review_pool_receipts.persist_write_receipts`` from the persistence prologue and the Colab
     writer): the snapshot ``state/review_migrations/<ts>-slots-to-pool.json`` and the
     ``state.json`` record. This boot step first gives its own outcomes their receipts (the
     normal order: the boot read the document before anything saved it), then reconciles a
