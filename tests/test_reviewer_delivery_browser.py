@@ -122,22 +122,27 @@ def _stored(gateway):
 @pytest.mark.parametrize("case", ["fresh", "saved"])
 def test_an_unrelated_save_re_posts_the_shown_catalog_and_writes_no_lanes(subscription_ui, settings_gateway, case):
     """Every Settings save re-posts the catalog: one saved before (no reviewer marked), or the
-    unsaved candidate a fresh install is shown. Re-posting either is no catalog change, so an
-    unrelated save is never refused for its empty pool, and no lanes key is written."""
+    unsaved candidate a fresh install is shown, whose factory review rows come marked (the
+    read seam's never-configured cell). Re-posting either is no catalog change, so an unrelated
+    save is never refused, not even for the saved catalog's empty pool, and no lanes key is written."""
     ui, gateway, writes = subscription_ui, settings_gateway, []
     _install(gateway, {"enabled": True, "items": [_OWNER_ROW]} if case == "saved" else None)
     shown = gateway.client.get("/api/settings").json()
     shown = (json.loads(shown["OUROBOROS_SUBAGENTS"]) if case == "saved"
              else shown["_meta"]["available_subagents"]["candidate"])
-    assert shown["items"] and not any(row.get("review_eligible") for row in shown["items"])
+    marked = [row for row in shown["items"] if row.get("review_eligible")]
+    if case == "saved":
+        assert shown["items"] and not marked
+    else:
+        assert marked and all(row.get("minted_from") == "factory_default" for row in marked), marked
     before = gateway.path.read_bytes()
     _serve_through(ui, gateway, writes)
     page = ui["page"]
     page.goto(ui["url"] + "/#settings")
     page.locator('[data-settings-tab="agents"]').click()
     page.wait_for_selector("[data-subagent-row]")
-    assert page.locator("[data-review-pool-count]").inner_text() == "Reviewers: 0"
-    assert page.locator("[data-review-pool-empty]").is_visible()
+    assert page.locator("[data-review-pool-count]").inner_text() == f"Reviewers: {len(marked)}"
+    assert page.locator("[data-review-pool-empty]").is_visible() is (not marked)
     assert gateway.path.read_bytes() == before, "both reads are passive"
     roles.capture(page, f"unrelated-save-{case}-before")
     page.locator('[data-settings-tab="behavior"]').click()
