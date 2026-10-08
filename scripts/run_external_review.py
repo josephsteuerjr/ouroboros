@@ -1378,9 +1378,6 @@ def _operator_lane(args, host_ctx, commit_message: str, *, goal: str, scope: str
         _write_json(output_dir / "outcome.json", {"exit_code": 2, "outcome": {
             "status": "failed", "block_reason": "tool_arg_error", "message": f"TOOL_ARG_ERROR: {refusal}"}})
         return 2
-    # The lane always pays the hermetic suite, doc-only diffs included (the advisory-carrying
-    # cycle it replaced did); an explicit operator env value still wins.
-    os.environ.setdefault("OUROBOROS_PREFLIGHT_DIFF_AWARE", "false")
     spec = ReviewSubjectSpec(root_kind="system_repo", root=str(REPO), kind="index", surface="commit_gate")
     retained: dict = {}
     outcome: dict = {}

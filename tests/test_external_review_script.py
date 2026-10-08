@@ -164,6 +164,22 @@ def test_external_review_script_defaults_to_pro_mode():
     assert 'setdefault("OUROBOROS_RUNTIME_MODE", "pro")' in source
 
 
+def test_the_operator_lane_sets_no_retired_diff_aware_knob():
+    """The commit gate pays the suite on every diff (owner answer A, 2026-10-08), so nothing
+    reads ``OUROBOROS_PREFLIGHT_DIFF_AWARE`` any more; the lane neither sets it nor leaves a
+    mention for an operator to copy. The whole tree under test has no reader of the name."""
+    name = "OUROBOROS_PREFLIGHT_" + "DIFF_AWARE"
+    assert name not in Path("scripts/run_external_review.py").read_text(encoding="utf-8")
+    readers = [
+        path.relative_to(REPO_ROOT).as_posix()
+        for folder in ("ouroboros", "supervisor", "scripts", "web", "docs", "prompts")
+        for path in (REPO_ROOT / folder).rglob("*")
+        if path.is_file() and path.suffix in {".py", ".js", ".md", ".json"}
+        and name in path.read_text(encoding="utf-8", errors="ignore")
+    ]
+    assert readers == []
+
+
 def test_external_review_script_resolves_models_and_efforts(monkeypatch):
     for key in (
         "OPENAI_API_KEY",
@@ -669,8 +685,7 @@ def test_contributor_policy_preserves_configured_routes(monkeypatch):
         pool_seat("reader", "openai/gpt-5.6-sol", delivery="native", effort="high"))
     set_review_pool(monkeypatch, raw)
     for key in ("OUROBOROS_REVIEW_ENFORCEMENT", "OUROBOROS_CONTEXT_MODE",
-                "OUROBOROS_OBSERVABILITY_KEEP_RAW", "OUROBOROS_PRE_PUSH_TESTS",
-                "OUROBOROS_PREFLIGHT_DIFF_AWARE"):
+                "OUROBOROS_OBSERVABILITY_KEEP_RAW", "OUROBOROS_PRE_PUSH_TESTS"):
         monkeypatch.setenv(key, "")
 
     _apply_contributor_review_env()
@@ -680,9 +695,8 @@ def test_contributor_policy_preserves_configured_routes(monkeypatch):
     assert os.environ["OUROBOROS_REVIEW_ENFORCEMENT"] == "blocking"
     assert os.environ["OUROBOROS_OBSERVABILITY_KEEP_RAW"] == "0"
     # The review operation runs no tests (its record says tests NOT_RUN), so the
-    # wrapper no longer pins the commit gate's test-preflight knobs.
+    # wrapper no longer pins the commit gate's test-preflight knob.
     assert os.environ["OUROBOROS_PRE_PUSH_TESTS"] == ""
-    assert os.environ["OUROBOROS_PREFLIGHT_DIFF_AWARE"] == ""
     assert [row["route"]["kind"] for row in config["pool_slots"]] == [
         "agent_session", "api_chat", "api_chat",
     ]
