@@ -1085,6 +1085,26 @@ _COMMIT_ROOT_REFUSAL = (
 )
 
 
+def _commit_request_refusals(ctx: ToolContext, *, root: str, preflight_reviewer: str, skipped: bool,
+                             continuation: bool, reviewers: Optional[List[str]], reason: str) -> tuple:
+    """The typed refusals of a commit request that come before anything is staged, reviewed
+    or recorded — a foreign root, a bad preflight choice, a panel the one composer
+    ``review_change`` applies refuses (decision 1A) — and the composed panel when none
+    applies: ``(panel, refusal_text)``."""
+    from ouroboros.tools.commit_gate import compose_commit_panel
+    from ouroboros.tools.review_change import ReviewChangeArgumentError
+
+    if str(root or "system_repo") != "system_repo":  # no id to name
+        return None, _COMMIT_ROOT_REFUSAL
+    error = _commit_preflight_choice_error(preflight_reviewer, skipped=skipped, continuation=continuation)
+    if not error:
+        try:
+            return compose_commit_panel(ctx, list(reviewers or []), str(reason or "")), ""
+        except ReviewChangeArgumentError as exc:
+            error = str(exc)
+    return None, f"⚠️ TOOL_ARG_ERROR: {error} Nothing was staged, reviewed or recorded."
+
+
 def _repo_commit_push(ctx: ToolContext, commit_message: str,
                        paths: Optional[List[str]] = None,
                        skip_tests: bool = False,
@@ -1094,25 +1114,17 @@ def _repo_commit_push(ctx: ToolContext, commit_message: str,
                        goal: str = "",
                        scope: str = "", review_reference: Optional[dict] = None,
                        author_disposition: Optional[dict] = None, root: str = "",
-                       preflight_reviewer: str = "", reviewers: Optional[List[str]] = None,
-                       reason: str = "") -> str:
+                       preflight_reviewer: str = "", reviewers: Optional[List[str]] = None, reason: str = "") -> str:
     """Stage, review, and commit files with unified pre-commit review."""
     from ouroboros import body_candidate  # lazy: the Git tools reach the candidate owner only when committing
-    from ouroboros.tools.commit_gate import compose_commit_panel
-    from ouroboros.tools.review_change import ReviewChangeArgumentError
     skip_advisory_pre_review = bool(skip_advisory_review or skip_advisory_pre_review)
     preflight_reviewer = str(preflight_reviewer or "").strip()
     _reset_commit_review_state(ctx)
-    if str(root or "system_repo") != "system_repo":  # before any staging, review or record: no id to name
-        return _publish_tool_result(ctx, ToolResult(status="error", code="TOOL_ARG_ERROR", text=_COMMIT_ROOT_REFUSAL))
-    preflight_error = _commit_preflight_choice_error(preflight_reviewer, skipped=skip_advisory_pre_review,
-                                                     continuation=review_reference is not None or author_disposition is not None)
-    if preflight_error:
-        return _publish_tool_result(ctx, ToolResult(status="error", code="TOOL_ARG_ERROR", text=f"⚠️ TOOL_ARG_ERROR: {preflight_error} Nothing was staged, reviewed or recorded."))
-    try:  # the panel is composed by the one rule review_change applies (decision 1A), before anything is staged
-        panel = compose_commit_panel(ctx, list(reviewers or []), str(reason or ""))
-    except ReviewChangeArgumentError as exc:
-        return _publish_tool_result(ctx, ToolResult(status="error", code="TOOL_ARG_ERROR", text=f"⚠️ TOOL_ARG_ERROR: {exc} Nothing was staged, reviewed or recorded."))
+    panel, refusal = _commit_request_refusals(  # before any staging, review or record
+        ctx, root=root, preflight_reviewer=preflight_reviewer, skipped=skip_advisory_pre_review,
+        continuation=review_reference is not None or author_disposition is not None, reviewers=reviewers, reason=reason)
+    if refusal:
+        return _publish_tool_result(ctx, ToolResult(status="error", code="TOOL_ARG_ERROR", text=refusal))
     error = prepare_author_commit_request(ctx, review_reference, author_disposition, review_rebuttal)
     if error:
         return error
