@@ -925,6 +925,9 @@ def build_wave_record(facts: Dict[str, Any], *, surface: str, record_id: str = "
                    "base": str(parents[0]) if isinstance(parents, list) and parents else str(parents or ""), "head": "",
                    "tree_sha": str(binding.get("tree_sha") or ""), "diff_sha": str(binding.get("diff_sha256") or "")}
     subject["candidate_branch"] = str(facts.get("candidate_branch") or "")
+    # The root whose rules the seats were given (a frozen subject names it; the gate states
+    # the serving body's): the record says WHICH body judged, not only that one did.
+    subject["governance_root"] = str(facts.get("governance_root") or frozen.get("governance_root") or "")
     checklist = _checklist_facts(layer=str(facts.get("layer") or structured.get("layer") or ""),
                                  body_fact=str(facts.get("body_fact") or ""), how=str(facts.get("body_how") or ""))
     enforcement, contract_fp = str(facts.get("enforcement") or ""), str(facts.get("review_contract_fingerprint") or "")

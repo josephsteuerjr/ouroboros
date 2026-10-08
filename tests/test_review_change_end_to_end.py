@@ -596,3 +596,74 @@ def test_a_bound_body_candidate_is_the_subject_and_the_serving_body_is_the_gover
     spec = review_change.ReviewSubjectSpec(root_kind="system_repo", root=str(serving), kind="index")
     frozen = review_change.freeze_subject(plain, spec)
     assert frozen.spec.governance_root == str(serving.resolve()) and review_change._governance_repo(plain) == serving.resolve()
+
+
+PROTOCOL_CHAPTER = "docs/development/05-review-and-commit-protocol.md"
+SERVING_DEV_RULE = "SERVING-HANDBOOK-MARKER: every commit of the body is reviewed by the whole pool."
+CANDIDATE_DEV_RULE = "CANDIDATE-HANDBOOK-MARKER: the candidate relaxed the protocol it is judged by."
+
+
+def _handbook(repo: Path, rule: str) -> None:
+    (repo / "docs" / "development").mkdir(parents=True, exist_ok=True)
+    (repo / PROTOCOL_CHAPTER).write_text(f"# Protocol\n\nAn authored introduction.\n\n## Protocol rules\n\n{rule}\n",
+                                         encoding="utf-8", newline="\n")
+    (repo / "docs" / "DEVELOPMENT.md").write_text(
+        "# Development\n\nThe handbook entrypoint.\n\n## Chapters\n\n"
+        "- [05-review-and-commit-protocol.md](development/05-review-and-commit-protocol.md)\n",
+        encoding="utf-8", newline="\n")
+
+
+def test_the_commit_gate_judges_a_bound_candidate_by_the_serving_handbook_and_records_that_root(tmp_path, monkeypatch):
+    """The same binding under the COMMIT GATE (``commit_reviewed`` without a frozen
+    subject): a candidate that rewrites the review-protocol chapter of the handbook is
+    judged — on every delivery, packet and retrieving — by the SERVING body's chapter,
+    its own rewrite reaching the seats only as the diff under review; and the record
+    names the serving body as the governance root, recognized through the predicate
+    (``git_common_dir``), not the candidate judged against itself (``dir``)."""
+    from ouroboros import body_candidate
+
+    fixture = shared.init_installed_body(tmp_path)
+    serving = Path(fixture["repo"])
+    (serving / "BIBLE.md").write_text(f"# Constitution\n\n{SERVING_RULE}\n", encoding="utf-8")
+    (serving / ".gitignore").write_text("__pycache__/\n", encoding="utf-8")  # as a real install carries one
+    _handbook(serving, SERVING_DEV_RULE)
+    shared.git(serving, "add", "-A")
+    shared.git(serving, "commit", "-q", "-m", "constitution and handbook")
+    head = shared.git(serving, "rev-parse", "HEAD")
+    candidate = (tmp_path / "candidates" / "c1").resolve()
+    candidate.parent.mkdir()
+    shared.git(serving, "worktree", "add", "-q", "-b", "candidate/c1", str(candidate), head)
+    _handbook(candidate, CANDIDATE_DEV_RULE)
+    shared.git(candidate, "add", "-A")
+
+    set_review_pool(monkeypatch, shared.golden_pool())
+    monkeypatch.setenv("OUROBOROS_REVIEW_ENFORCEMENT", "blocking")
+    monkeypatch.setenv("OUROBOROS_PRE_PUSH_TESTS", "1")
+    monkeypatch.setenv("OUROBOROS_RUNTIME_MODE", "pro")
+    monkeypatch.setattr(git_mod, "_run_review_preflight_tests", shared.passing_test_runner)
+    briefs: list[dict] = []
+    monkeypatch.setattr(substrate, "run_review_request", shared.golden_substrate(briefs))
+    ctx = ToolContext(repo_dir=serving, system_repo_dir=serving, drive_root=tmp_path / "drive", task_id="task-candidate")
+    body_candidate.bind(ctx, {"candidate_id": "c1", "path": str(candidate), "branch": "candidate/c1",
+                              "base_sha": head, "repo_dir": str(serving)})
+
+    outcome = _run_non_committing_review_cycle(ctx, COMMIT_MESSAGE, skip_advisory_review=True, goal=GOAL, scope=SCOPE)
+
+    assert outcome["status"] == "passed", outcome
+    record = review_ledger.load_record(ctx.drive_root, outcome["review_record_id"])
+    assert record["subject"]["governance_root"] == str(serving.resolve())
+    checklist = record["brief"]["checklist"]
+    assert (checklist["layer"], checklist["body_fact"], checklist["how"]) == ("body", "true", "git_common_dir")
+    texts = {brief["slot_id"]: _brief_text(brief) for brief in briefs}
+    assert sorted(texts) == ["s1", "t1", "t2"]
+    for slot_id, text in texts.items():
+        # The chapter as the governance tiers deliver it (under its `## <path>` heading) is
+        # the serving body's; the candidate's rewrite reaches the seat as the change under
+        # review (the diff, and the packet's changed-file context), never as a rule.
+        _, heading, delivered = text.partition(f"\n## {PROTOCOL_CHAPTER}\n")
+        assert heading and delivered.index(SERVING_DEV_RULE) < delivered.index(CANDIDATE_DEV_RULE), slot_id
+        assert "-" + SERVING_DEV_RULE in text and "+" + CANDIDATE_DEV_RULE in text, slot_id
+        assert text.count(SERVING_DEV_RULE) == 2, slot_id  # the delivered rule and the diff's removed line
+        if slot_id != "t1":  # the retrieving seats inline the serving constitution too
+            assert SERVING_RULE in text, slot_id
+    assert shared.git(serving, "status", "--porcelain") == ""

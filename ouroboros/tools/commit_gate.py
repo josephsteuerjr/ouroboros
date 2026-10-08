@@ -1150,15 +1150,19 @@ def _review_body_facts(ctx: ToolContext) -> Dict[str, Any]:
     """The gate reviews the system repository (``_repo_commit_push`` refuses any other
     root), so its wave runs the body layer; the record states that through the same
     predicate ``review_change`` uses (``review_body_fact.body_fact``), never by assertion.
-    An unanswerable predicate leaves the layer facts out (the ledger says ``unknown``)."""
+    The rules are the SERVING body's (``body_candidate.serving_repo_dir_for`` — the root
+    the brief tiers them from, ``review._gate_governance_root``): a bound candidate is the
+    subject judged against the body that runs, never against its own rewritten copy, and
+    the record names that root. An unanswerable predicate leaves the layer facts out (the
+    ledger says ``unknown``)."""
     try:
+        from ouroboros.body_candidate import serving_repo_dir_for
         from ouroboros.review_body_fact import body_fact, layer_for
         from ouroboros.review_ledger import ledger_root
-        from ouroboros.tools.tool_resolution import system_repo_dir_for
 
-        system = str(system_repo_dir_for(ctx))
-        fact = body_fact(ctx.repo_dir, system_repo=system, data_dir=ledger_root(ctx))
-        return {"governance_root": system, "layer": layer_for(fact), "body_fact": str(fact.body),
+        serving = str(serving_repo_dir_for(ctx).resolve(strict=False))
+        fact = body_fact(ctx.repo_dir, system_repo=serving, data_dir=ledger_root(ctx))
+        return {"governance_root": serving, "layer": layer_for(fact), "body_fact": str(fact.body),
                 "body_how": str(fact.how)}
     except Exception:
         log.warning("review body fact unavailable for the commit gate record", exc_info=True)
