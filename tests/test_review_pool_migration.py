@@ -276,7 +276,36 @@ def test_antons_install_migrates_to_eleven_rows_three_marked():
     assert "• subagent_osabav (claude=claude-fable-5-1, xhigh) — marked" in text
     assert "• review-2 (api claudexor::codex=gpt-6-astra, xhigh, economy) — new row without the mark" in text
     assert "Not in effect before, retired: OUROBOROS_EFFORT_REVIEW=medium" in text
-    assert text.rstrip().endswith("Snapshot: state/review_migrations/x.json. Adjust in Settings → Agents.")
+    assert text.rstrip().endswith(f"Snapshot: state/review_migrations/x.json. {m.ROLLBACK_SENTENCE} Adjust in Settings → Agents.")
+
+
+@pytest.mark.parametrize("document", [N1_DOC, {"OPENROUTER_API_KEY": "present"}, None], ids=["n-1", "never-configured", "anton"])
+def test_the_owner_message_names_the_snapshot_and_the_rollback_its_before_really_is(document):
+    """VD3-07: every migration message names its snapshot path and the rollback — restore
+    OUROBOROS_SUBAGENTS and OUROBOROS_REVIEWER_SLOTS from the snapshot's ``before`` — and that
+    ``before`` really is the rollback source: written back over the migrated document (null =
+    remove the key) it yields the pre-migration inputs, which migrate to the same catalog again."""
+    document = anton_document() if document is None else dict(document)
+    outcome = m.migrate_review_lanes(document)
+    assert outcome is not None and not outcome.error and not outcome.noop
+    text = m.owner_message(outcome, "state/review_migrations/20261008T000000Z-slots-to-pool.json")
+    assert "Snapshot: state/review_migrations/20261008T000000Z-slots-to-pool.json. " + m.ROLLBACK_SENTENCE in text
+    assert "restore OUROBOROS_SUBAGENTS and OUROBOROS_REVIEWER_SLOTS" in text and "`before`" in text
+    assert "no rollback source" in m.owner_message(outcome, "")
+
+    migrated = cfg.normalize_settings_raw(dict(document))
+    assert SLOTS not in migrated and migrated[SUBAGENTS]
+    before = outcome.snapshot["before"]
+    rolled_back = {k: v for k, v in migrated.items() if not str(k).startswith("_")}
+    for key in (SUBAGENTS, SLOTS, "OUROBOROS_EFFORT_REVIEW", "OUROBOROS_EFFORT_SCOPE_REVIEW",
+                "OUROBOROS_EFFORT_DEEP_SELF_REVIEW", "OUROBOROS_MODEL_DEEP_SELF_REVIEW"):
+        if key in before and before[key] is not None:
+            rolled_back[key] = before[key]
+        else:
+            rolled_back.pop(key, None)
+    again = m.migrate_review_lanes(rolled_back)
+    assert again is not None and again.trigger == outcome.trigger and again.catalog_after == outcome.catalog_after
+    assert again.snapshot["before"] == before
 
 
 def test_the_nminus1_fixture_migrates_to_the_contract_catalog():

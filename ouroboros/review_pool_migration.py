@@ -1347,22 +1347,30 @@ def _seat_label(row: Mapping[str, Any]) -> str:
     return _row_label(row)
 
 
+ROLLBACK_SENTENCE = (
+    f"To roll back, restore {SUBAGENTS_KEY} and {REVIEWER_SLOTS_KEY} (and the effort keys it lists) from the "
+    "snapshot's `before` into settings.json (null = remove the key) and restart; the next read migrates again "
+    "unless you downgrade."
+)
+
+
 def owner_message(outcome: MigrationOutcome, snapshot_path: str, *,
                   environment_retired_keys: Sequence[str] = ()) -> str:
     """The ONE English owner-chat message for a migration (contract §1.5 template).
     ``environment_retired_keys``: the retired review keys the boot found set in the process
     environment (``server_maintenance.environment_retired_review_keys``) — a never-configured
     document is then not told it had no review settings; those keys are named as not read."""
-    where = f"Snapshot: {snapshot_path}." if snapshot_path else "No snapshot could be written."
     if outcome.error:
         return (
             "⚙️ Review settings could not be migrated automatically: "
             f"{outcome.error}. The review lanes setting stays in your document and the subagent "
             "catalog is unchanged; mark reviewers in Settings → Agents to finish. "
-            f"{where}"
+            + (f"Snapshot: {snapshot_path}." if snapshot_path else "No snapshot could be written.")
         )
     if outcome.noop:
         return ""
+    where = (f"Snapshot: {snapshot_path}. {ROLLBACK_SENTENCE}" if snapshot_path
+             else "No snapshot could be written, so there is no rollback source.")
     snap = outcome.snapshot
     summary = snap.get("summary") or {}
     before = snap.get("effective_before") or {}

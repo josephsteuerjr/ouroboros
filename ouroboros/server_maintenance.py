@@ -565,8 +565,10 @@ def _environment_pool_message(snapshot_path: str, catalog_text: str) -> str:
     rows the migration prepared, is the review pool: it names what runs, and says loudly
     when that is nothing (``pool_empty`` — a configured fact, never a default panel)."""
     from ouroboros import reviewer_slot_config as rs
+    from ouroboros.review_pool_migration import ROLLBACK_SENTENCE
 
-    where = f"Snapshot: {snapshot_path}." if snapshot_path else "No snapshot could be written."
+    where = (f"Snapshot: {snapshot_path}. {ROLLBACK_SENTENCE}" if snapshot_path
+             else "No snapshot could be written, so there is no rollback source.")
     head = ("⚙️ Review pool: the subagent catalog set in the environment (OUROBOROS_SUBAGENTS) is in force. "
             "This document had no review settings of its own (no authored review lanes, no saved subagent "
             "catalog), so the factory reviewer rows were prepared for it — but a catalog the environment "
