@@ -487,13 +487,18 @@ def review_pool_migration_records(state: dict | None = None) -> dict:
     return migration_records(state)
 
 
-def review_pool_migration_payload(settings: dict) -> dict | None:
+def review_pool_migration_payload(settings: dict, *, document: dict | None = None) -> dict | None:
     """The review-pool payload's ``migration`` fact for this data root
     (``review_pool_receipts.migration_payload`` over the ledger plus the snapshot files no
-    record names yet): ``{snapshot, reported, trigger, outcome, error, source}`` or ``None``."""
+    record names yet): ``{snapshot, reported, trigger, outcome, error, source}`` or ``None``.
+    ``settings`` is what RUNS; ``document`` the settings document the receipt is judged against
+    (default: ``settings`` — a caller holding the loaded document). The GET handler serves the
+    process projection, which carries no retained lane value, so it passes the document on disk
+    (``review_pool_receipts.document_as_read``) beside it (VD3-06)."""
     from ouroboros.review_pool_receipts import migration_payload
 
-    return migration_payload(settings, DATA_DIR, review_pool_migration_records())
+    return migration_payload(settings if document is None else document, DATA_DIR, review_pool_migration_records(),
+                             running=settings)
 
 
 def _startup_review_pool_notice(settings: dict) -> None:
@@ -535,6 +540,7 @@ def _startup_review_pool_notice(settings: dict) -> None:
         records = receipts.reconcile_records(DATA_DIR, state, update_state)
         if not owner_chat:
             return
+        document = receipts.document_as_read(config.SETTINGS_PATH, settings)
         for digest, record in sorted(records.items(), key=lambda item: str(item[1].get("ts") or "")):
             if record.get("reported"):
                 continue
@@ -544,7 +550,7 @@ def _startup_review_pool_notice(settings: dict) -> None:
                 continue
             outcome = receipts.outcome_from_snapshot(snapshot)
             snapshot_path = str(record.get("snapshot") or "")
-            in_force = receipts.environment_catalog_in_force(outcome, settings)
+            in_force = receipts.environment_catalog_in_force(outcome, document, settings)
             text = (_environment_pool_message(snapshot_path, in_force) if in_force is not None
                     else owner_message(outcome, snapshot_path,
                                        environment_retired_keys=environment_retired_review_keys()))

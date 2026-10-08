@@ -679,6 +679,40 @@ def test_review_pool_payload_names_the_reason_a_broken_lanes_key_was_retained(po
     assert body["pool"] == [] and body["config_error"] == ""
 
 
+@pytest.mark.parametrize("refused", [False, True], ids=["converted_control", "retained_lanes_error"])
+def test_the_live_handler_judges_the_receipt_by_the_document_on_disk_not_the_process_projection(pool_root, monkeypatch,
+                                                                                               refused):
+    """VD3-06, the real path: the server reads the document, the boot receipts it, then
+    ``config.apply_settings_to_env`` projects the LIVE settings keys into the process environment
+    and ``GET /api/review-pool`` is served from that projection (``runtime_environ``). A lane value
+    a refused migration retained lives in the document, not in the projection — so judged against
+    the projection the current ``error`` receipt read as ``history`` and the Settings note hid it.
+    The handler judges the receipt against the document on disk, the same view the direct payload
+    of the loaded document gives; the retained lanes never enter the runtime configuration."""
+    import asyncio
+    import os
+
+    from ouroboros import config as cfg
+    from ouroboros import server_maintenance
+    from ouroboros.gateway import settings as settings_mod
+    from tests.test_review_pool_migration import N1_DOC, _served_from_disk
+
+    monkeypatch.setattr(settings_mod, "_review_pool_costs", lambda items, env: {})
+    monkeypatch.delenv("OUROBOROS_REVIEWER_SLOTS", raising=False)
+    loaded = _served_from_disk(pool_root, monkeypatch, {"OUROBOROS_REVIEWER_SLOTS": _BROKEN_LANES} if refused
+                               else dict(N1_DOC))
+    server_maintenance._startup_review_pool_notice(loaded)  # the boot's receipt (no owner chat: it waits, unreported)
+    cfg.apply_settings_to_env(loaded)  # the server's projection the handler reads
+    assert ("OUROBOROS_REVIEWER_SLOTS" in loaded) is refused and "OUROBOROS_REVIEWER_SLOTS" not in os.environ
+
+    response = asyncio.run(settings_mod.api_review_pool(None))
+    assert response.status_code == 200
+    served = json.loads(response.body)["migration"]
+    assert served == settings_mod.review_pool_payload(loaded)["migration"], "the handler and the document view agree"
+    assert (served["source"], served["outcome"]) == (("error", "error") if refused else ("document", "factory"))
+    assert (served["error"].startswith("OUROBOROS_REVIEWER_SLOTS: ")) is refused and not served["reported"]
+
+
 def test_review_pool_payload_states_which_pool_rows_have_no_credentials(monkeypatch):
     """VD3-08: ``pool_without_credentials`` lists every pool row whose model this install holds
     no credentials for — all of them is the loud fact the Settings note needs; a subscription

@@ -738,13 +738,20 @@ def review_pool_payload(snapshot: Optional[Dict[str, Any]] = None) -> Dict[str, 
     every catalog row (an unmarked row shows its price too); ``migration`` is the lanes-to-pool receipt deciding
     THIS document: ``{snapshot, reported, trigger, outcome: converted|factory|error, error, source: document|
     environment|error|history}``; ``pool_without_credentials``: pool rows whose model has no credentials here."""
+    from ouroboros import config as _config
     from ouroboros.configured_subagents import MAX_CONFIGURED_SUBAGENTS, SUBAGENTS_SETTING, parse_configured_subagents, roster_handles
     from ouroboros.provider_models import model_has_credentials_in_settings
+    from ouroboros.review_pool_receipts import document_as_read
     from ouroboros.reviewer_slot_config import review_pool_slots, review_pool_state, reviewer_slot_last_executions
     from ouroboros.server_maintenance import review_pool_migration_payload
     from ouroboros.settings_integrity import runtime_environ
 
     env = dict(runtime_environ() if snapshot is None else snapshot)
+    # The receipt is judged against the settings DOCUMENT, not the process projection the pool
+    # runs from: the projection carries only the live settings keys, so a lane value a refused
+    # migration kept in the document is absent from it and the current receipt would read as
+    # history (VD3-06). The retained lanes never return to the runtime configuration here.
+    settings_document = env if snapshot is not None else document_as_read(_config.SETTINGS_PATH, env)
     raw = str(env.get(SUBAGENTS_SETTING) or "")
     document = _catalog_document(raw)
     items = document["items"]
@@ -753,7 +760,8 @@ def review_pool_payload(snapshot: Optional[Dict[str, Any]] = None) -> Dict[str, 
         "catalog": {"present": bool(raw.strip()), "enabled": bool(raw.strip()) and document.get("enabled") is not False,
                     "rows": len(items), "eligible": sum(1 for item in items if item.get("review_eligible") is True)},
         "pool": [], "excluded": [], "last_executions": reviewer_slot_last_executions(), "row_costs": {},
-        "config_error": "", "migration": review_pool_migration_payload(env), "pool_without_credentials": [],
+        "config_error": "", "migration": review_pool_migration_payload(env, document=settings_document),
+        "pool_without_credentials": [],
     }
     state = review_pool_state(raw)
     try:

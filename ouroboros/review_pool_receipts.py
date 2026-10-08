@@ -194,6 +194,24 @@ def _document_on_disk(settings_path: Any) -> Optional[Dict[str, Any]]:
     return coerce_settings_raw(raw) if isinstance(raw, dict) else None
 
 
+def document_as_read(settings_path: Any, running: Mapping[str, Any]) -> Mapping[str, Any]:
+    """The settings DOCUMENT a receipt is judged against (:func:`outcome_decides_document`): the file at
+    ``settings_path`` as the read seam leaves it — ``config.normalize_settings_raw``, the migration applied
+    (a replay by digest), NO environment merged — else ``running`` when there is no readable file (the
+    defaults the install runs; the boot's own rule in :func:`persist_boot_receipts`).
+
+    What RUNS (``config.load_settings``) differs from this document in exactly one place: the catalog the
+    environment carries wins over rows the seam minted for a document that authored none
+    (``review_pool_migration.environment_overridable_keys``). The process environment itself cannot witness
+    that — ``config.apply_settings_to_env`` projects the effective catalog back into it before the boot
+    reports, and the projection carries only the live settings keys, so a lane value a refused migration
+    kept in the document is absent from it (VD3-06). The document on disk is the one witness of both."""
+    from ouroboros.config import normalize_settings_raw
+
+    raw = _document_on_disk(settings_path)
+    return running if raw is None else normalize_settings_raw(raw)
+
+
 def _deciding_outcomes(on_disk: Optional[Mapping[str, Any]], document: Mapping[str, Any]) -> Tuple[Any, ...]:
     """The migrations this process computed whose input is ``on_disk`` (by its exact digest) or whose
     result is ``document`` (:func:`outcome_decides_document`)."""
@@ -316,13 +334,16 @@ def outcome_decides_document(outcome: Any, settings: Mapping[str, Any]) -> bool:
     return bool(after) and REVIEWER_SLOTS_KEY not in settings and as_read(settings.get(SUBAGENTS_KEY)) == after
 
 
-def environment_catalog_in_force(outcome: Any, settings: Mapping[str, Any]) -> Optional[str]:
-    """The catalog that RUNS in place of the rows the migration minted for ``outcome``'s
-    document, or ``None`` when the minted rows run (or nothing was minted). The seam's rows
-    are a default only where the document authored no lanes and saved no catalog
-    (``environment_overridable_keys`` over the snapshot's ``before``), and the settings reader
-    lets the environment's catalog win exactly there — so a catalog in force that is not the
-    minted one is the environment's."""
+def environment_catalog_in_force(outcome: Any, document: Mapping[str, Any],
+                                 running: Mapping[str, Any]) -> Optional[str]:
+    """The catalog the ENVIRONMENT carries when it runs in place of the rows the migration
+    minted for ``outcome``'s document, or ``None`` when the minted rows run (or nothing was
+    minted). ``document`` is the settings document as read (:func:`document_as_read`: the file
+    as the seam leaves it, no environment), ``running`` what runs (the environment merged over
+    it). The seam's rows are a default only where the document authored no lanes and saved no
+    catalog (``environment_overridable_keys`` over the snapshot's ``before``), and the settings
+    reader lets the environment's catalog win exactly there — so a catalog in force that is not
+    the minted one is the environment's."""
     from ouroboros.review_pool_migration import REVIEWER_SLOTS_KEY, SUBAGENTS_KEY, environment_overridable_keys
 
     minted = str(outcome.catalog_after or "")
@@ -330,15 +351,19 @@ def environment_catalog_in_force(outcome: Any, settings: Mapping[str, Any]) -> O
     as_read = {key: before[key] for key in (REVIEWER_SLOTS_KEY, SUBAGENTS_KEY) if before.get(key) is not None}
     if not minted or SUBAGENTS_KEY not in environment_overridable_keys(as_read):
         return None
-    running = str(settings.get(SUBAGENTS_KEY) or "")
-    return None if running == minted else running
+    in_force = str(running.get(SUBAGENTS_KEY) or "")
+    return None if in_force == minted else in_force
 
 
-def migration_payload(settings: Mapping[str, Any], data_dir: Any,
-                      records: Optional[Mapping[str, Any]] = None) -> Optional[Dict[str, Any]]:
+def migration_payload(document: Mapping[str, Any], data_dir: Any, records: Optional[Mapping[str, Any]] = None,
+                      *, running: Optional[Mapping[str, Any]] = None) -> Optional[Dict[str, Any]]:
     """The review-pool payload's ``migration`` fact: the newest receipt that still describes the
-    document ``settings`` shows — ``{snapshot, reported, trigger, outcome, error, source}`` — else
-    the newest receipt at all with ``source: history``; ``None`` when there is no receipt."""
+    settings ``document`` (:func:`document_as_read`) — ``{snapshot, reported, trigger, outcome,
+    error, source}`` — else the newest receipt at all with ``source: history``; ``None`` when
+    there is no receipt. ``running`` is what runs beside that document (default: the document
+    itself); it decides ``source: environment`` alone (:func:`environment_catalog_in_force`),
+    never whether a receipt is current."""
+    running = document if running is None else running
     receipts = sorted(known_receipts(data_dir, records).items(), key=lambda item: str(item[1].get("ts") or ""),
                       reverse=True)
     if not receipts:
@@ -347,13 +372,14 @@ def migration_payload(settings: Mapping[str, Any], data_dir: Any,
     for digest, record in receipts:
         snapshot = load_snapshot(data_dir, record)
         outcome = outcome_from_snapshot(snapshot) if snapshot else None
-        if outcome is None or not outcome_decides_document(outcome, settings):
+        if outcome is None or not outcome_decides_document(outcome, document):
             continue
         chosen = (digest, record)
         if outcome.error:
             source = SOURCE_ERROR
         else:
-            source = SOURCE_DOCUMENT if environment_catalog_in_force(outcome, settings) is None else SOURCE_ENVIRONMENT
+            source = (SOURCE_DOCUMENT if environment_catalog_in_force(outcome, document, running) is None
+                      else SOURCE_ENVIRONMENT)
         break
     record = chosen[1]
     return {"snapshot": str(record.get("snapshot") or ""), "reported": bool(record.get("reported")),
@@ -363,6 +389,7 @@ def migration_payload(settings: Mapping[str, Any], data_dir: Any,
 
 __all__ = [
     "STATE_KEY",
+    "document_as_read",
     "environment_catalog_in_force",
     "known_receipts",
     "load_snapshot",
