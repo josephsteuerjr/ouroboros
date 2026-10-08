@@ -44,7 +44,9 @@ def _retrieving(tmp_path):
     request = ReviewRequest(surface='task_acceptance', task_id=task, goal='review the exact record', subject='answer A',
         evidence={'artifacts': [{'name': 'proof.txt', 'size': artifact.stat().st_size}],
                   'source_refs': [previous], 'tool_trajectory_source_ref': trajectory}, retry_key='retrieving')
-    native = ReviewSlot(slot_id='native', model='openai/fake', subagent_id='api-critic', timeout_sec=30)
+    # The pool row's delivery is its own explicit fact (F8): a catalog id alone says nothing.
+    native = ReviewSlot(slot_id='native', model='openai/fake', subagent_id='api-critic', timeout_sec=30,
+                        native_retrieval_override=True)
     session = ReviewSlot(slot_id='session', model='codex', route=ReviewRouteKind.AGENT_SESSION, session_target='codex')
     acceptance_retrieving_work_order(request, [native, session], session_root=str(repo), data_root=author)
     ctx = SimpleNamespace(task_id=task, task_attempt=1, drive_root=author, budget_drive_root=canonical, task_metadata={})
