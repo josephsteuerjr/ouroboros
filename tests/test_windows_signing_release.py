@@ -180,6 +180,7 @@ def test_signing_script_uses_maintained_java_and_judges_the_outcome_itself():
     assert "4afc32e8b7f79bbe1de7e4e7049aaad4e0f754357613b9bbec0e3052f06fd36b" in signing
     assert signing.index("is not the pinned") < signing.index("& $Java -jar")
     assert "$env:JAVA_HOME_11_X64" in signing
+    assert signing.index("$env:CODE_SIGN_TOOL_PATH = $Jar.Directory.Parent.FullName") < signing.index("& $Java -jar")
     assert "-Filter 'java.exe'" not in signing  # not the bundled 2019 JDK
     assert "GITHUB_EVENT_NAME -ne 'push'" in signing and "refs/tags/v$Version" in signing
     # Vendor output is discarded, never printed, parsed or redacted into the log.

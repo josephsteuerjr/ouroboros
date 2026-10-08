@@ -49,7 +49,8 @@ try {
     # the JAR directly. The vendor CLI takes credentials on argv and may echo
     # request details: its output is discarded, never printed or uploaded, and
     # the outcome is judged by exit code, signed file and signature alone.
-    Push-Location $Jar.Directory.Parent.FullName  # the JAR resolves conf\ from its tool root
+    $env:CODE_SIGN_TOOL_PATH = $Jar.Directory.Parent.FullName
+    Push-Location $env:CODE_SIGN_TOOL_PATH  # match the vendor launcher's configuration root
     try {
         & $Java -jar $Jar.FullName sign "-username=$env:ESIGNER_USERNAME" "-password=$env:ESIGNER_PASSWORD" `
             "-credential_id=$env:ESIGNER_CREDENTIAL_ID" "-totp_secret=$env:ESIGNER_TOTP_SECRET" `
