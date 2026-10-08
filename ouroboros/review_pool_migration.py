@@ -33,7 +33,11 @@ Rules (contract §1.5, counter-examples §2 F4-F8):
 5. advisory and deep-review rows become helper rows WITHOUT the mark; a
    reference needs no row at all (preflight is chosen per commit);
 6. no lanes (the shipped default panel ran) -> the factory rows
-   (``factory_review_rows(document)``, ``minted_from: factory_default``);
+   (``factory_review_rows(document)``, ``minted_from: factory_default``); this
+   includes the never-configured install — neither the lanes key nor a catalog
+   (``OUROBOROS_SUBAGENTS`` missing or ``""``: Docker / Colab / a mounted
+   volume without the wizard, or no settings file at all) — but never a
+   structural catalog the owner saved empty: empty is not never-configured;
 7. invalid lanes, unresolvable references or an invalid catalog -> NO partial
    migration: the catalog is untouched, ``MigrationOutcome.error`` carries the
    text, and every lane key stays in the document until the owner saves the
@@ -113,6 +117,10 @@ REVIEW_SEAT_RECOMMENDATION = (
     "child work when its strengths fit."
 )
 SNAPSHOT_SCHEMA = 1
+# What made the document a migration subject (``MigrationOutcome.trigger``, snapshot ``before.trigger``).
+TRIGGER_LANES_KEY = "lanes_key"  # OUROBOROS_REVIEWER_SLOTS present, any value
+TRIGGER_RETIRED_KEYS = "retired_comma_keys"  # only the pre-structured comma keys: the default panel ran
+TRIGGER_NEVER_CONFIGURED = "never_configured"  # neither key, no catalog: the default panel ran
 SNAPSHOT_DIR = "review_migrations"
 SNAPSHOT_SUFFIX = "-slots-to-pool.json"
 
@@ -823,22 +831,34 @@ class MigrationOutcome:
     retained_keys: Tuple[str, ...] = ()  # lane keys that stay (error: the owner must save the catalog)
     error: str = ""
     noop: bool = False  # the catalog was already a pool: lane keys are dropped, nothing rewritten
+    trigger: str = TRIGGER_LANES_KEY  # one of the TRIGGER_* values
+
+
+def migration_trigger(document: Mapping[str, Any]) -> str:
+    """Why a document is a migration subject — one of the ``TRIGGER_*`` values, or
+    ``""`` for a pool document (a structural catalog, no lanes key), which is done.
+
+    The lanes key present (any value, including the ``""`` every 6.90+ document
+    wrote) is the first trigger. A document with neither the lanes key nor a
+    catalog (``OUROBOROS_SUBAGENTS`` missing or ``""``) ran the shipped default
+    panel: a pre-structured-era document still carrying the retired comma keys,
+    or a never-configured install (contract §1.5, the both-absent cell — the
+    common backend read/init seam without the wizard). Both take the factory
+    rows. A catalog the owner saved EMPTY is structural (``items: []``), not
+    ``""``: empty is not never-configured, and it is left exactly as saved.
+    """
+    if REVIEWER_SLOTS_KEY in document:
+        return TRIGGER_LANES_KEY
+    if str(document.get(SUBAGENTS_KEY) or "").strip():
+        return ""
+    if any(key in document for key in RETIRED_COMMA_LIST_SETTING_KEYS):
+        return TRIGGER_RETIRED_KEYS
+    return TRIGGER_NEVER_CONFIGURED
 
 
 def migration_applies(document: Mapping[str, Any]) -> bool:
-    """Whether a document still carries review lanes to migrate.
-
-    The lanes key present (any value, including the ``""`` every 6.90+ document
-    wrote) is the trigger. A document with neither the lanes key nor a catalog is
-    migrated only when it is a pre-structured-era document — one that still
-    carries the retired comma keys — so a fresh install or a partial document is
-    left to onboarding. A pool document (catalog present, no lanes key) is done.
-    """
-    if REVIEWER_SLOTS_KEY in document:
-        return True
-    if str(document.get(SUBAGENTS_KEY) or "").strip():
-        return False
-    return any(key in document for key in RETIRED_COMMA_LIST_SETTING_KEYS)
+    """Whether the read seam has anything to do with this document (:func:`migration_trigger`)."""
+    return bool(migration_trigger(document))
 
 
 _SHA_PRESENCE_KEYS = (
@@ -1124,7 +1144,7 @@ def _error_outcome(document: Mapping[str, Any], catalog: _Catalog, slots_state: 
     snapshot.update({"after": None, "rows": [], "not_in_effect": [], "summary": None, "error": text})
     return MigrationOutcome(
         input_sha256=input_sha256(document), catalog_state=catalog.state, slots_state=slots_state,
-        snapshot=snapshot, retained_keys=present, error=text,
+        snapshot=snapshot, retained_keys=present, error=text, trigger=snapshot["before"]["trigger"],
     )
 
 
@@ -1136,7 +1156,7 @@ def _snapshot_base(document: Mapping[str, Any], catalog_state: str, slots_state:
     for key in (EFFORT_REVIEW_KEY, EFFORT_SCOPE_KEY, EFFORT_DEEP_KEY, DEEP_MODEL_KEY):
         if key in document:
             before[key] = str(document.get(key) if document.get(key) is not None else "")
-    before.update({"catalog_state": catalog_state, "slots_state": slots_state})
+    before.update({"catalog_state": catalog_state, "slots_state": slots_state, "trigger": migration_trigger(document)})
     return {"schema": SNAPSHOT_SCHEMA, "ts": None, "input_sha256": input_sha256(document), "before": before}
 
 
@@ -1180,7 +1200,7 @@ def migrate_review_lanes(loaded: Mapping[str, Any]) -> Optional[MigrationOutcome
                          "error": "", "noop": "the catalog already carries review pool rows"})
         return MigrationOutcome(input_sha256=input_sha256(document), catalog_state=catalog.state,
                                 slots_state=snapshot["before"]["slots_state"], snapshot=snapshot,
-                                consumed_keys=present, noop=True)
+                                consumed_keys=present, noop=True, trigger=snapshot["before"]["trigger"])
     if authored:
         try:
             lanes = parse_reviewer_slots(document, raw_lanes)
@@ -1258,6 +1278,7 @@ def migrate_review_lanes(loaded: Mapping[str, Any]) -> Optional[MigrationOutcome
         input_sha256=snapshot["input_sha256"], catalog_state=catalog.state, slots_state=slots_state,
         snapshot=snapshot, catalog_after=catalog_after,
         consumed_keys=tuple(key for key in REVIEW_POOL_MIGRATED_SETTING_KEYS if key in document),
+        trigger=snapshot["before"]["trigger"],
     )
 
 
@@ -1321,6 +1342,9 @@ def apply_at_read_seam(loaded: Dict[str, Any]) -> Tuple[str, ...]:
         summary = outcome.snapshot.get("summary") or {}
         if outcome.error:
             log.warning("settings: review lanes not migrated: %s", outcome.error)
+        elif outcome.trigger == TRIGGER_NEVER_CONFIGURED:
+            log.info("settings: no review settings configured; the factory review rows run (%s reviewer rows)",
+                     summary.get("rows_marked_after"))
         elif not outcome.noop:
             log.info("settings: review lanes migrated into the review pool (%s seats -> %s reviewer rows)",
                      summary.get("seats_before"), summary.get("rows_marked_after"))
@@ -1353,6 +1377,18 @@ def owner_message(outcome: MigrationOutcome, snapshot_path: str) -> str:
     summary = snap.get("summary") or {}
     before = snap.get("effective_before") or {}
     after_rows = {str(row.get("subagent_id")): row for row in ((snap.get("after") or {}).get(SUBAGENTS_KEY) or {}).get("items", [])}
+    if outcome.trigger == TRIGGER_NEVER_CONFIGURED:
+        # Nothing of the owner's was migrated: the install had no review settings at
+        # all, so the message says what RUNS, not what changed.
+        rows = [f"{rid} ({_seat_label(row)})" for rid, row in after_rows.items() if row.get("review_eligible")]
+        return "\n".join([
+            "⚙️ Review pool initialized. This install had no review settings (no review lanes, no subagent "
+            "catalog), so the factory reviewer rows run as its review pool: the rows of the subagent catalog "
+            "marked “Reviewer”.",
+            f"{summary.get('rows_marked_after', 0)} reviewer rows, {summary.get('distinct_models', 0)} distinct models: "
+            + "; ".join(rows) + ".",
+            f"{where} Adjust in Settings → Agents.",
+        ])
     if outcome.slots_state == "absent":
         head = ("⚙️ Review settings migrated. This install ran the shipped default review lanes (Triad / Scope / "
                 "Advisory / Deep review); they became one review pool: the rows of the subagent catalog marked "
@@ -1413,6 +1449,7 @@ __all__ = [
     "input_sha256",
     "migrate_review_lanes",
     "migration_applies",
+    "migration_trigger",
     "migrations_seen",
     "owner_message",
     "parse_reviewer_slots",

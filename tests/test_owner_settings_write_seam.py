@@ -27,6 +27,7 @@ from starlette.routing import Route
 from starlette.testclient import TestClient
 
 from ouroboros.reviewer_slot_config import review_pool_state
+from ouroboros.settings_defaults import OPENROUTER_REVIEW_DEFAULTS
 
 
 @pytest.fixture
@@ -445,12 +446,12 @@ def test_a_changed_catalog_meets_the_empty_pool_rule_and_the_owner_flag_confirms
         "items"][0]["recommended_use"] == "Edited use."
 
 
-def test_re_posting_the_unsaved_candidate_a_read_showed_is_not_a_catalog_change(
+def test_re_posting_the_catalog_a_read_showed_is_not_a_catalog_change(
     monkeypatch, isolated_settings, _clean_subagent_env,
 ):
-    """With no catalog stored, Settings shows an unsaved candidate and every save re-posts
-    it: an unrelated save is not refused by the empty-pool rule (that pool was already the
-    install's), while an edited candidate is judged like any catalog change."""
+    """With no catalog stored, the read seam shows the factory reviewer rows (a never-configured
+    install) and every save re-posts them: an unrelated save is not refused by the empty-pool rule
+    and persists the shown catalog, while an edit that unmarks every reviewer is judged."""
     from ouroboros.configured_subagents import SUBAGENTS_SETTING
     from ouroboros.gateway import settings as settings_mod
 
@@ -464,19 +465,20 @@ def test_re_posting_the_unsaved_candidate_a_read_showed_is_not_a_catalog_change(
     app.router.routes.append(Route("/api/settings", endpoint=settings_mod.api_settings_get, methods=["GET"]))
     client = TestClient(app)
     shown = client.get("/api/settings").json()["_meta"]["available_subagents"]
-    assert shown["source"] == "undecided" and len(shown["candidate"]["items"]) == 2
-
-    edited = {**shown["candidate"], "items": shown["candidate"]["items"][:1]}
+    assert shown["source"] == "configured" and [r["minted_from"] for r in shown["candidate"]["items"]
+                                                 if r["review_eligible"]] == ["factory_default"] * 3
+    edited = {**shown["candidate"], "items": [{k: v for k, v in row.items() if k != "review_eligible"}
+                                              for row in shown["candidate"]["items"]]}
     refused = client.post("/api/settings", json={SUBAGENTS_SETTING: edited})
     assert refused.status_code == 400 and refused.json()["code"] == "empty_review_pool", refused.text
-    assert judged == [1] and SUBAGENTS_SETTING not in json.loads(isolated_settings.read_text(encoding="utf-8"))
+    assert judged == [3] and SUBAGENTS_SETTING not in json.loads(isolated_settings.read_text(encoding="utf-8"))
 
     saved = client.post("/api/settings", json={SUBAGENTS_SETTING: shown["candidate"], "TOTAL_BUDGET": "25"})
     assert saved.status_code == 200, saved.text
-    assert judged == [1], "re-posting the shown candidate is no catalog change"
+    assert judged == [3], "re-posting the shown catalog is no catalog change"
     stored = json.loads(isolated_settings.read_text(encoding="utf-8"))
-    assert [row["route"]["target_id"] for row in json.loads(stored[SUBAGENTS_SETTING])["items"]] == [
-        "openai/gpt-5.6-sol", "openai/gpt-5.6-luna"]
+    assert [row["route"]["target_id"] for row in json.loads(stored[SUBAGENTS_SETTING])["items"]] == list(
+        OPENROUTER_REVIEW_DEFAULTS["triad"])
 
 
 def test_a_catalog_save_retires_the_stored_review_lanes(monkeypatch, isolated_settings):
@@ -637,9 +639,10 @@ def test_generic_settings_save_rejects_malformed_available_subagents_without_wri
     assert not isolated_settings.exists()
 
 
-def test_settings_get_reports_legacy_actor_source_without_materializing_it(
+def test_settings_get_reads_a_legacy_actor_through_the_seam_without_materializing_it(
     monkeypatch, isolated_settings, _clean_subagent_env,
 ):
+    """A legacy single-harness document reads as the catalog the migration seeds (its session row first)."""
     from ouroboros import config as cfg
     from ouroboros.gateway import settings as settings_mod
 
@@ -662,14 +665,13 @@ def test_settings_get_reports_legacy_actor_source_without_materializing_it(
 
     assert response.status_code == 200, response.text
     projection = response.json()["_meta"]["available_subagents"]
-    assert projection["source"] == "legacy_migrated"
-    assert projection["candidate"]["items"][0]["route"]["credential_profile_id"] == (
-        "owner-profile"
-    )
+    items = projection["candidate"]["items"]
+    assert projection["source"] == "configured" and [r["minted_from"] for r in items if r.get("review_eligible")] == ["factory_default"] * 3
+    assert items[0]["route"]["credential_profile_id"] == "owner-profile" and not items[0].get("review_eligible")
     assert json.loads(isolated_settings.read_text(encoding="utf-8")) == original
 
 
-def test_settings_get_builds_an_unsaved_api_candidate_through_the_shared_compiler(
+def test_settings_get_reads_the_factory_reviewers_in_place_of_an_unsaved_api_candidate(
     monkeypatch, isolated_settings, _clean_subagent_env,
 ):
     from ouroboros import config as cfg
@@ -698,11 +700,9 @@ def test_settings_get_builds_an_unsaved_api_candidate_through_the_shared_compile
 
     assert response.status_code == 200, response.text
     projection = response.json()["_meta"]["available_subagents"]
-    assert projection["source"] == "undecided"
-    assert [row["route"]["target_id"] for row in projection["candidate"]["items"]] == [
-        "openai/gpt-5.6-sol",
-        "openai/gpt-5.6-luna",
-    ]
+    assert projection["source"] == "configured"
+    assert [row["route"]["target_id"] for row in projection["candidate"]["items"]] == list(
+        OPENROUTER_REVIEW_DEFAULTS["triad"])
     assert json.loads(isolated_settings.read_text(encoding="utf-8")) == original
 
 

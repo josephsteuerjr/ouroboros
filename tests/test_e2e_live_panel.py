@@ -9,7 +9,9 @@ import json
 
 from devtools.e2e_live import run_live_lanes, scenarios
 from ouroboros.config import normalize_settings_raw
+from ouroboros.review_model_routes import adaptive_quorum
 from ouroboros.reviewer_slot_config import review_pool_rows
+from ouroboros.settings_defaults import OPENROUTER_REVIEW_DEFAULTS
 
 FAKE_KEY = "sk-or-v1-e2e-live-test-key-value-never-printed-0123456789"
 
@@ -38,6 +40,12 @@ def test_paid_lanes_carry_the_panel_unless_production_panel_or_stub(monkeypatch)
     assert paid["OUROBOROS_EFFORT_REVIEW"] == "low" and paid["OUROBOROS_EFFORT_TASK"] == "medium"
     production = run_live_lanes.effective_settings(run_live_lanes.parse_args(["--out", "/tmp/x", "--production-panel"]), FAKE_KEY)
     assert not production.get("OUROBOROS_REVIEWER_SLOTS") and "OUROBOROS_EFFORT_REVIEW" not in production
+    # The production document names neither lanes nor a catalog: through the read seam it is
+    # a never-configured install and runs the factory OpenRouter triad (quorum 2 of 3), so
+    # the lane reviews with the tree's own default panel instead of an empty pool.
+    assert "OUROBOROS_SUBAGENTS" not in production
+    pool = review_pool_rows(normalize_settings_raw(dict(production)))
+    assert [row.target_id for row in pool] == list(OPENROUTER_REVIEW_DEFAULTS["triad"]) and adaptive_quorum(len(pool)) == 2
     stub = run_live_lanes.effective_settings(run_live_lanes.parse_args(["--stub", "--out", "/tmp/x"]), "")
     assert stub.get("OUROBOROS_REVIEWER_SLOTS") != scenarios.STAND_PANEL_SETTINGS["OUROBOROS_REVIEWER_SLOTS"]
     assert "OUROBOROS_EFFORT_REVIEW" not in stub

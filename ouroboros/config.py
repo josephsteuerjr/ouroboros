@@ -854,6 +854,11 @@ def load_settings_lock_held(*, _settings_lock_held: bool = True) -> dict:
         if key in loaded and settings.get(key) not in {None, ""}:
             continue
         settings[key] = _coerce_setting_value(key, raw_env)
+    if not isinstance(raw, dict):
+        # No document went through the read seam: the never-configured install (contract §1.5,
+        # both-absent cell) reaches the same factory review rows over the env-merged defaults.
+        from ouroboros.review_pool_migration import apply_at_read_seam
+        apply_at_read_seam(settings)
     return settings
 
 

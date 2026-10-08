@@ -604,11 +604,86 @@ def test_f6_c0_is_the_ordinary_upgrade_of_antons_catalog_without_lanes():
     assert {e["subagent_id"]: e["from_seats"] for e in outcome.snapshot["rows"]}["subagent_a2"] == ["slot_2", "scope_slot_1"]
 
 
-def test_a_document_with_neither_lanes_nor_catalog_nor_legacy_keys_is_left_to_onboarding():
-    assert m.migrate_review_lanes({"TOTAL_BUDGET": 1.0}) is None
-    assert m.migrate_review_lanes({"OUROBOROS_MODEL": "x/y", "OPENROUTER_API_KEY": "present"}) is None
+@pytest.mark.parametrize("document", [
+    {"OUROBOROS_MODEL": "x/y", "OPENROUTER_API_KEY": "present"},
+    {"OUROBOROS_MODEL": "x/y", "OPENROUTER_API_KEY": "present", SUBAGENTS: ""},
+    {"TOTAL_BUDGET": 1.0},
+], ids=["provider-key-only", "blank-catalog-string", "no-provider"])
+def test_m1_a_never_configured_document_reads_the_factory_rows_at_the_seam(document):
+    """Contract §1.5, the both-absent cell: an install with neither the lanes key nor a
+    catalog (Docker / Colab / a mounted volume without the wizard) ran the shipped default
+    panel; the read seam mints the factory rows with the mark, and the runtime pool reader
+    sees them. The same document read twice is one migration, never a second set of rows."""
+    from ouroboros import reviewer_slot_config as rs
+
+    assert m.migration_trigger(document) == m.TRIGGER_NEVER_CONFIGURED
+    loaded = cfg.normalize_settings_raw(dict(document))
+    items = json.loads(loaded[SUBAGENTS])["items"]
+    assert _marked(items) == ["review-1", "review-2", "review-3"]
+    assert all(row["minted_from"] == "factory_default" and row["effort"] == "high" for row in items)
+    assert [row["route"]["target_id"] for row in items] == list(OPENROUTER_REVIEW_DEFAULTS["triad"])
+    pool = rs.review_pool_rows(loaded)
+    assert [row.slot_id for row in pool] == ["review-1", "review-2", "review-3"]
+    assert rs.review_pool_state(loaded[SUBAGENTS])["state"] == "structured"
+    (outcome,) = cfg.review_pool_migrations_seen()
+    assert outcome.trigger == m.TRIGGER_NEVER_CONFIGURED and outcome.snapshot["before"]["trigger"] == outcome.trigger
+    assert not outcome.error and not outcome.noop
+    # Idempotent: the migrated document is a pool document — read again, nothing is re-minted.
+    assert m.migrate_review_lanes(dict(loaded)) is None
+    assert cfg.normalize_settings_raw(dict(loaded)) == loaded
+    assert len(cfg.review_pool_migrations_seen()) == 1
+    # The owner hears what RUNS, not a migration story about lanes this install never had.
+    text = m.owner_message(outcome, "snap.json")
+    assert text.startswith("⚙️ Review pool initialized.") and "3 reviewer rows" in text and "Settings → Agents" in text
+    assert "review lanes" not in text.split("\n", 1)[1]
+
+
+@pytest.mark.parametrize("stored", [
+    catalog(),
+    catalog(api_row("helper", "x/y", "high")),
+    catalog(api_row("helper", "x/y", "high", enabled=False)),
+], ids=["items-empty", "unmarked-rows", "disabled-row"])
+def test_m1_a_structural_catalog_the_owner_saved_empty_stays_empty(stored):
+    """Empty is not never-configured: a catalog saved as a structure (``items: []``, or
+    rows the owner left unmarked under ``allow_empty_review_pool``) is the owner's
+    document; the seam mints nothing and the pool reports ``empty`` loudly."""
+    from ouroboros import reviewer_slot_config as rs
+
+    document = {SUBAGENTS: stored, "OPENROUTER_API_KEY": "present"}
+    assert m.migration_trigger(document) == "" and m.migrate_review_lanes(dict(document)) is None
+    loaded = cfg.normalize_settings_raw(dict(document))
+    assert loaded[SUBAGENTS] == stored
+    assert rs.review_pool_rows(loaded) == [] and rs.review_pool_state(stored)["state"] == "empty"
+    assert cfg.review_pool_migrations_seen() == ()
     pool = {SUBAGENTS: catalog(api_row("r", "x/y", "high", review_eligible=True, minted_from="factory_default"))}
     assert m.migrate_review_lanes(pool) is None, "a pool document without the lanes key is done"
+
+
+def test_m1_the_no_settings_file_path_reaches_the_factory_pool(tmp_path, monkeypatch):
+    """``load_settings_lock_held`` without a document (``SETTINGS_DEFAULTS`` + env) is the
+    other never-configured entry: the env-merged defaults go through the same seam, so a
+    container started with provider keys in its environment has a review pool."""
+    from ouroboros import reviewer_slot_config as rs
+
+    monkeypatch.setattr(cfg, "SETTINGS_PATH", tmp_path / "absent" / "settings.json")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "present")
+    settings = cfg.load_settings_lock_held(_settings_lock_held=False)
+    pool = rs.review_pool_rows(settings)
+    assert [row.target_id for row in pool] == list(OPENROUTER_REVIEW_DEFAULTS["triad"])
+    assert all(row["minted_from"] == "factory_default" for row in json.loads(settings[SUBAGENTS])["items"])
+    (outcome,) = cfg.review_pool_migrations_seen()
+    assert outcome.trigger == m.TRIGGER_NEVER_CONFIGURED
+    # Read again: the same digest replays the recorded outcome, one set of rows.
+    assert cfg.load_settings_lock_held(_settings_lock_held=False)[SUBAGENTS] == settings[SUBAGENTS]
+    assert len(cfg.review_pool_migrations_seen()) == 1
+
+
+def test_m1_a_retired_comma_keys_document_is_distinguished_from_a_fresh_install():
+    outcome, _after = _migrated({"OUROBOROS_REVIEW_MODELS": "a/one, b/two", "OPENROUTER_API_KEY": "present"})
+    assert outcome.trigger == m.TRIGGER_RETIRED_KEYS and outcome.slots_state == "absent"
+    assert "shipped default review lanes" in m.owner_message(outcome, "snap.json")
+    lanes_outcome, _after = _migrated({SLOTS: "", "OPENROUTER_API_KEY": "present"})
+    assert lanes_outcome.trigger == m.TRIGGER_LANES_KEY
 
 
 def test_a_pool_catalog_that_still_carries_the_lanes_key_drops_it_without_a_rewrite():
