@@ -22,8 +22,9 @@ Invariants carried from the working prototype (Praxis / praxis-relay):
    straight into content-addressed chat-media artifacts; the tool returns only
    ``{path, sha256, mime, size, usage}``.
 4. Generation is not delivery. Storing the artifact is the tool's commit
-   point; ``send=True`` sends the FIRST image through the existing
-   ``send_photo`` path (≤10 MiB inline; larger stay artifact-only).
+   point; ``send=True`` sends each image up to the photo cap through the
+   existing ``send_photo`` path. Larger images stay artifact-only (path in
+   the result); a failed send never erases the artifact.
 """
 
 from __future__ import annotations
@@ -45,7 +46,7 @@ from ouroboros.gateways.claudexor_images import (
     get_image_result,
     image_operation_supported,
 )
-from ouroboros.tools.owner_delivery import deliver_owner_event
+from ouroboros.tools.core_artifacts import _send_photo
 from ouroboros.tools.registry import ToolContext, ToolEntry
 from ouroboros.tools.tool_result import ToolResult, _publish_tool_result
 from ouroboros.usage_accounting import AttemptRequest, execute_physical_attempt
@@ -60,7 +61,7 @@ _MAX_RESULT_BYTES = 64 * 1024 * 1024
 # Prompt contract mirrored from the upstream API (relay validation): 1..32000.
 _MAX_PROMPT_CHARS = 32000
 
-# send_photo's inline delivery cap (10 MiB); only the FIRST image is sent.
+# send_photo's inline delivery cap (10 MiB); larger images stay artifact-only.
 _PHOTO_INLINE_CAP = 10 * 1024 * 1024
 
 # Upstream generation bound (relay images.rs upstream timeout) and the
@@ -268,7 +269,8 @@ def _generate_image(ctx: ToolContext, prompt: str, n: int = 1, quality: str = "a
 
     drive = getattr(ctx, "budget_drive_root", None) or getattr(ctx, "drive_root", None)
     artifact_rows: List[Dict[str, Any]] = []
-    first_sent = False
+    delivery_submitted = 0
+    delivery_failed: List[int] = []
     for row in data_rows:
         if not isinstance(row, dict):
             continue
@@ -289,12 +291,24 @@ def _generate_image(ctx: ToolContext, prompt: str, n: int = 1, quality: str = "a
                 acknowledge_image_result(gateway, op_id_ref[0], stored["sha256"])
             except Exception:
                 log.exception("imagegen: ack failed for %s", op_id_ref[0])
-            if send and not first_sent and len(raw) <= _PHOTO_INLINE_CAP:
-                first_sent = True
-                deliver_owner_event(ctx, {
-                    "type": "send_photo", "image_base64": b64, "mime": mime,
-                    "caption": caption or "",
-                })
+            if send:
+                # The existing photo verb stamps chat_id; a bare event without
+                # it is silently dropped outside a bound Project. Its cap is
+                # distinct from the engine's per-image result limit.
+                index = len(artifact_rows)
+                if len(raw) > _PHOTO_INLINE_CAP:
+                    delivery_failed.append(index)
+                    continue
+                try:
+                    receipt = _send_photo(ctx, file_path=stored["path"], caption=caption if index == 1 else "")
+                except Exception:
+                    log.exception("imagegen: owner photo submission failed for image %s", index)
+                    delivery_failed.append(index)
+                    continue
+                if receipt.startswith("OK:"):
+                    delivery_submitted += 1
+                else:
+                    delivery_failed.append(index)
 
     if not artifact_rows:
         return _refuse(ctx, "⚠️ IMAGE_ERROR: engine response contained no decodable image payload.", "IMAGE_ERROR")
@@ -304,6 +318,8 @@ def _generate_image(ctx: ToolContext, prompt: str, n: int = 1, quality: str = "a
         "generated": len(artifact_rows),
         "images": [{"path": row["path"], "sha256": row["sha256"], "mime": row["mime"],
                     "size": row["size"]} for row in artifact_rows],
+        "delivery": {"requested": bool(send), "submitted": delivery_submitted,
+                     "failed_indices": delivery_failed},
         "usage": result_body.get("usage") if isinstance(result_body.get("usage"), dict) else {},
     }
     return _publish_tool_result(ctx, ToolResult(
@@ -336,8 +352,9 @@ def get_tools() -> List[ToolEntry]:
                     "is stored as a content-addressed artifact; base64 never enters the "
                     "conversation. Image quota is a separate bucket from the text quota — "
                     "an image 429 does not park the account's text lane. send=true sends "
-                    "the FIRST image to the owner chat as a photo (<=10 MiB; the rest stay "
-                    "artifact-only). Requires an engine that implements "
+                    "each image up to 10 MiB to the owner chat as a photo; "
+                    "larger images stay artifact-only, with an explicit unsent "
+                    "index. Requires an engine that implements "
                     "POST /v2/image-operations; older engines get a typed refusal — the "
                     "engine-side route family ships in a companion Claudexor PR."
                 ),
@@ -354,7 +371,7 @@ def get_tools() -> List[ToolEntry]:
                             "description": "Edit mode: 1–5 input images (PNG/JPEG/WebP, <=32 MiB each).",
                         },
                         "caption": {"type": "string", "description": "Photo caption when send=true."},
-                        "send": {"type": "boolean", "description": "Send the first image to the owner chat (default true)."},
+                        "send": {"type": "boolean", "description": "Send each image up to 10 MiB as a photo; larger ones stay artifact-only (default true)."},
                     },
                     "required": ["prompt"],
                 },

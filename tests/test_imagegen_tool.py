@@ -136,10 +136,6 @@ class TestGenerateImageTool:
         _patch_gateway(monkeypatch, gw)
         captured = []
         _patch_accounting(monkeypatch, captured)
-        sent = []
-        monkeypatch.setattr(
-            ig, "deliver_owner_event", lambda ctx, ev: sent.append(ev) or "live"
-        )
         ctx = _Ctx(tmp_path)
         out = _generate_image(ctx, "a castle", send=True)
         assert out.startswith("OK:") or "OK" in out
@@ -152,26 +148,69 @@ class TestGenerateImageTool:
         assert "b64_json" not in json.dumps(summary)  # base64 never in tool text
         import pathlib
         assert pathlib.Path(img["path"]).exists()
-        assert sent and sent[0]["type"] == "send_photo"
-        # The delivery event legitimately carries the photo payload (transport
-        # seam, not model context); the invariant is about the TOOL RESULT text.
+        assert summary["delivery"] == {"requested": True, "submitted": 1, "failed_indices": []}
+        assert len(ctx.pending_events) == 1
+        assert ctx.pending_events[0]["type"] == "send_photo"
+        assert ctx.pending_events[0]["chat_id"] == 123
+        # The delivery event carries bytes; the model-visible result never does.
 
-    def test_only_first_image_sent(self, monkeypatch, tmp_path):
-        png = _png_bytes(64)
+    def test_all_images_submitted_to_the_same_chat(self, monkeypatch, tmp_path):
+        png = _png_bytes(128)
         b64 = base64.b64encode(png).decode()
         body = {"data": [{"b64_json": b64}, {"b64_json": b64}], "usage": {}}
         gw = _FakeGateway(result_body=body)
         _patch_gateway(monkeypatch, gw)
         captured = []
         _patch_accounting(monkeypatch, captured)
-        sent = []
-        monkeypatch.setattr(
-            ig, "deliver_owner_event", lambda ctx, ev: sent.append(ev) or "live"
-        )
         ctx = _Ctx(tmp_path)
-        out = _generate_image(ctx, "two castles", n=2, send=True)
-        assert json.loads(out.split("\n", 1)[1])["generated"] == 2
-        assert len(sent) == 1  # ONLY the first image is sent
+        out = _generate_image(ctx, "two castles", n=2, caption="castle", send=True)
+        summary = json.loads(out.split("\n", 1)[1])
+        assert summary["generated"] == 2
+        assert summary["delivery"] == {"requested": True, "submitted": 2, "failed_indices": []}
+        assert [ev["type"] for ev in ctx.pending_events] == ["send_photo", "send_photo"]
+        assert [ev["chat_id"] for ev in ctx.pending_events] == [123, 123]
+        assert [ev["caption"] for ev in ctx.pending_events] == ["castle", ""]
+        # Drive the actual supervisor consumer without a Project binding. Without
+        # chat_id this handler returns silently and no owner sees the images.
+        from types import SimpleNamespace
+
+        from supervisor import events_chat_delivery as delivery
+
+        seen = []
+        bridge = SimpleNamespace(send_photo=lambda chat_id, raw, **kw: (seen.append((chat_id, raw, kw)) or (True, "ok")))
+        monkeypatch.setattr(delivery, "_bound_project_chat_id", lambda *_a: None)
+        host = SimpleNamespace(bridge=bridge, DRIVE_ROOT=tmp_path)
+        for event in ctx.pending_events:
+            delivery._handle_send_photo(event, host)
+        assert [item[0] for item in seen] == [123, 123]
+        assert [item[1] for item in seen] == [png, png]
+
+    def test_large_image_remains_artifact_without_a_false_delivery_claim(self, monkeypatch, tmp_path):
+        png = _png_bytes(128)
+        body = {"data": [{"b64_json": base64.b64encode(png).decode()}]}
+        _patch_gateway(monkeypatch, _FakeGateway(result_body=body))
+        _patch_accounting(monkeypatch, [])
+        monkeypatch.setattr(ig, "_PHOTO_INLINE_CAP", 64)
+        ctx = _Ctx(tmp_path)
+        out = _generate_image(ctx, "large castle", send=True)
+        summary = json.loads(out.split("\n", 1)[1])
+        assert summary["delivery"] == {"requested": True, "submitted": 0, "failed_indices": [1]}
+        assert not ctx.pending_events
+        from pathlib import Path
+        assert Path(summary["images"][0]["path"]).read_bytes() == png
+
+    def test_send_failure_keeps_artifact_and_names_unsent_index(self, monkeypatch, tmp_path):
+        png = _png_bytes(128)
+        body = {"data": [{"b64_json": base64.b64encode(png).decode()}]}
+        _patch_gateway(monkeypatch, _FakeGateway(result_body=body))
+        _patch_accounting(monkeypatch, [])
+        ctx = _Ctx(tmp_path)
+        ctx.current_chat_id = None
+        out = _generate_image(ctx, "unrouted castle", send=True)
+        summary = json.loads(out.split("\n", 1)[1])
+        assert summary["generated"] == 1
+        assert summary["delivery"] == {"requested": True, "submitted": 0, "failed_indices": [1]}
+        assert not ctx.pending_events
 
     def test_image_429_typed_refusal(self, monkeypatch, tmp_path):
         class Err(Exception):
