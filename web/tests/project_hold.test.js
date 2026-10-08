@@ -24,7 +24,8 @@ test('held task is stationary across hydrated Chat, Project and Main receipt', (
     assert.deepEqual(status, { kind: 'online', text: hold.label, showDots: false });
     assert.equal(summarizeProjectActivities([{ ...held, required_question_unavailable: true }]).label, hold.label);
     assert.equal(summarizeProjectActivities([held]).motion, false);
-    assert.deepEqual(handoffPhase(held, null), { text: hold.label, className: 'warn' });
+    assert.equal(handoffPhase(held, null).text, hold.label);
+    assert.equal(handoffPhase(held, null).motion, false);
     assert.equal(handoffPhase(held, { status: 'failed' }).text, 'Failed');
     assert.equal(handoffPhase(held, null, false).text, 'Activity unconfirmed');
 });
@@ -65,10 +66,12 @@ test('same-ID recovery clears the hold; independent work and budget remain truth
 
 test('Main handoff keeps a budget pause beside the Project wait, as the sidebar does', () => {
     const paused = { ...held, phase: 'budget_paused' };
-    assert.deepEqual(handoffPhase(paused, null), { text: `Paused · ${hold.label}`, className: 'warn' });
+    assert.equal(handoffPhase(paused, null).text, `Paused · ${hold.label}`);
+    assert.equal(handoffPhase(paused, null).motion, false);
     assert.equal(handoffPhase(paused, null).text, summarizeProjectActivities([paused]).label);
-    assert.deepEqual(handoffPhase({ ...held, phase: 'budget_pausing' }, null), { text: `Pausing… · ${hold.label}`, className: 'warn' });
-    assert.deepEqual(handoffPhase(held, null), { text: hold.label, className: 'warn' });
+    assert.equal(handoffPhase({ ...held, phase: 'budget_pausing' }, null).text, `Pausing… · ${hold.label}`);
+    assert.equal(handoffPhase({ ...held, phase: 'budget_pausing' }, null).motion, false);
+    assert.equal(handoffPhase(held, null).text, hold.label);
     assert.equal(handoffPhase(paused, { status: 'cancelled' }).text, 'Cancelled');
 });
 

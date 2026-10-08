@@ -2234,6 +2234,7 @@ export function createChatInstance({
                 taskId,
                 projectId,
                 projectName,
+                taskName: opts.taskName || '',
                 handoffId: opts.handoffId || '',
                 originProjected: Boolean(opts.originProjected),
                 originId: opts.originId || '',
@@ -2288,7 +2289,9 @@ export function createChatInstance({
         `;
         if (attachments.length) chatMedia.mountAttachments(bubble, attachments, shown);
         if (!isProgress && shown) chatMedia.attachCopyControl(bubble, String(shown));
-        if (systemType === 'project_handoff' && handoffs) handoffs.mount(bubble, { taskId, projectId, projectName, title: text, handoffId: opts.handoffId, kind: 'receipt' });
+        if (['project_handoff', 'project_started'].includes(systemType) && handoffs) handoffs.mount(bubble, {
+            taskId, projectId, projectName, title: opts.taskName || text, handoffId: opts.handoffId,
+            kind: systemType === 'project_started' ? 'started' : 'receipt' });
         else if (PROJECT_ROW_TYPES.has(systemType)) decorateProjectRow(bubble, { role, projectId, projectName,
             terminalTime: opts.terminalTime, addedAt: ts, completion: systemType === 'project_completion_summary' });
         syncSavedProjectContext(bubble, opts.originProjected, opts.originId);
@@ -2309,7 +2312,7 @@ export function createChatInstance({
         const a = msg.completion_answer;
         return addMessage(a || text, a ? 'assistant' : 'system', !!(a || msg.markdown), msg.ts || null, false, {
             ...opts, systemType: msg.system_type, projectId: msg.project_id || '',
-            projectName: msg.project_name || '', handoffId: msg.handoff_id || '', terminalTime: msg.terminal_time || null,
+            projectName: msg.project_name || '', taskName: msg.task_name || '', handoffId: msg.handoff_id || '', terminalTime: msg.terminal_time || null,
         });
     }
 

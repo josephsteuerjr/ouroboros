@@ -820,8 +820,7 @@ export function clearStickyCardState(record) {
     // A recycled slot must not inherit the previous cycle's finalizing hold —
     // nor the outcome observed under it (#1110), which would otherwise paint the
     // new cycle's chip with the old cycle's Failed.
-    record.finalizingHold = false;
-    record.observedOutcome = '';
+    Object.assign(record, { finalizingHold: false, censusPhase: '', observedOutcome: '' });
     // The activity clock is cycle state too: a recycled slot ('active') would
     // otherwise open showing the previous cycle's "updated" time.
     record.latestActivityTs = '';

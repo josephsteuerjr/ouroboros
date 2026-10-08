@@ -151,7 +151,8 @@ test('a direct owner Pause agrees between the actual card and header, then Resum
         assert.equal(fx.status(), 'Paused');
         fx.census([{ ...row, phase: 'thinking' }], true);
         assert.equal(fx.status(), 'Thinking...');
-        assert.equal(fx.card(id).querySelector('[data-live-phase]')?.textContent, 'Working');
+        assert.equal(fx.card(id).querySelector('[data-live-phase]')?.textContent, 'Thinking');
+        assert.equal(fx.card(id).querySelector('[data-live-phase]')?.dataset.motion, '1');
     } finally { fx.instance.destroy(); restoreDom(fx.prior); }
 });
 

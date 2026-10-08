@@ -1014,11 +1014,19 @@ the rest of the chat surface.
 
 **Project question mirror.** A Project question the owner has not answered appears in Main as the Project's own quiz card — the same `buildQuizCard` form with the question through the chat markdown pipeline, the options with their details and the `recommended` badge, the stake, the assumption or waiting line, the status and the own-answer field — inside the same assistant bubble. The one addition is the Project reference ("References and actions") in the head beside the `Question` chip: its inline pill (the `--project` tints, the Project name in project ink with `↗`) opens that exact question in its Project, with the card's shared keyboard ring. A long Project name yields first (the chip is capped and ellipsized, its title names the Project whole) so the status keeps its place; a phone column wraps the head. Every lifecycle state reads as it does in the Project: waiting, open, resumed and finished questions stay answerable, and a replaced question stays as a read-only record. An unreadable source keeps what Main already knew; with nothing known the copy says `Status unavailable`, takes no answer and keeps its chip, and a row that cannot carry the form yet shows `Open the original question for its text.` until it can. The first confirmed answer from any source — a press in Main, the Project form or another device, a history or census snapshot — shows the recorded result (the chosen option, `Owner's answer: …`, `You answered`) for five seconds and then removes only the Main copy, through the ordinary message retirement and without moving the reader's viewport; the Project keeps its card. The countdown starts once and later observations never restart it. When focus was inside the copy it stays there while the result shows, then moves to the next Main question, or to the composer for a keyboard owner, never summoning a touch keyboard. A copy that learns its form and its answer in one delivery shows that result for the same five seconds. An answered question never enters Main again: fresh history, a reconnect or a stale open snapshot cannot bring the copy back. Main remembers the lifecycle of a bounded number of questions; a question it no longer remembers mounts a safe unknown copy, whose answer controls appear only after a fresh canonical record confirms it unanswered. A failed, missing or wrong-project canonical read leaves a safe `Status unavailable` copy with its Project chip and no answer controls; the chip opens the original Project form, while a later owned refresh retries the Main copy, so an unavailable read never turns a stale open snapshot into an answerable form and never permanently suppresses a legitimate unanswered question. The mirror and the quiz header share the lifecycle wording above.
 
-**Project handoff.** Each independent Main request transferred into a Project retains
-one compact chronological anchor, not one mutable capsule for the whole Project.
-The anchor names the work, projects its observed phase and ends with the shared
-Project reference. It uses Project colour, not a warning treatment. Binding alone
-means neither Working nor Done; unavailable activity stays explicitly unconfirmed.
+**Project work entries.** An agent-created Project and each independent Main request
+transferred into a Project use the same compact Project-colour card. The work title
+is primary, followed by one Project reference and the existing time; there is no
+System heading or extra created/transferred caption. Structured `task_name` names
+the work without repeating the Project; older history uses its retained task result.
+Creation and transfer remain distinct durable events with their own publication
+eligibility and identities. A card follows its particular work, never the Project's
+latest unrelated task. Binding alone means neither Working nor Done.
+The task card, compact entry and Project indicator share per-task status facts.
+Confirmed working/thinking/finalizing can move; queue, pause/pausing, actual waits
+and unknown activity stay still. Movement belongs to the status itself, survives
+reload and respects reduced motion. A known outcome stays primary while unfinished
+finalization is a separate quiet fact. An answered/resumed question is not a wait.
 A manually converted card opens its room; an agent-created handoff does not steal
 focus. A converted card is always visible — two cards of one owner message both stay —
 and the durable receipt row shows only when no card carries the transfer; a folded
@@ -1027,10 +1035,10 @@ references fold visually into that anchor only while it is mounted; their durabl
 records remain, including their plain-text presentation to non-browser consumers.
 A converted card whose Main receipt is not durable keeps a dashed border and a plain
 warning names the gap; the binding still holds. Genuine initiator work and failures
-are not hidden. A later final answer remains a separate message at its completion
-time, never a replacement for the handoff.
+are not hidden. Folding never lends another task's outcome to the visible card.
+A later final answer remains a separate message at its completion time.
 
-**Project completion mirror.** A Project root that ended with Ouroboros's own final answer reaches Main as an ordinary Ouroboros message: that answer through the chat markdown pipeline, in the assistant voice, because the bytes are model-authored — the host stamps the answer on the completion row only for a model-authored final, so the browser never infers authorship. A long answer is folded to about seven lines; the fold is a visual clamp over the complete, selectable text, with a fade only when it really hides something, and never a cut. Under it sits one control, the Project reference ("References and actions"). The durable row and its wire frame stay `role="system"`: like the Project question mirror, this is a browser presentation of model-authored bytes, not a change of the row's author. The message carries no status word, cause sentence, title or duration, so a host verdict on that answer (a warning, an unaccepted review) is not shown in Main: it stays loud on the task's card in the Project, one press away. Copy copies the answer. An ending with no model-authored answer (a provider failure, a stop, preserved output), a start row, and every row written before the answer rode the row keep the System row, which ends with that same reference: the voice of a row never chooses how the UI points at its Project. One durable row either way: its plain text is unchanged, so the Telegram mirror, Ouroboros's own context and one-ending-one-notification behave as before.
+**Project completion mirror.** A Project root that ended with Ouroboros's own final answer reaches Main as an ordinary Ouroboros message: that answer through the chat markdown pipeline, in the assistant voice, because the bytes are model-authored — the host stamps the answer on the completion row only for a model-authored final, so the browser never infers authorship. A long answer is folded to about seven lines; the fold is a visual clamp over the complete, selectable text, with a fade only when it really hides something, and never a cut. Under it sits one control, the Project reference ("References and actions"). The durable row and its wire frame stay `role="system"`: like the Project question mirror, this is a browser presentation of model-authored bytes, not a change of the row's author. The message carries no status word, cause sentence, title or duration, so a host verdict on that answer (a warning, an unaccepted review) is not shown in Main: it stays loud on the task's card in the Project, one press away. Copy copies the answer. An ending with no model-authored answer (a provider failure, a stop, preserved output), and every completion row written before the answer rode the row keep the System row, which ends with that same reference: the voice of a row never chooses how the UI points at its Project. One durable row either way: its plain text is unchanged, so the Telegram mirror, Ouroboros's own context and one-ending-one-notification behave as before.
 
 The row under a Project lifecycle row or a routed message is the shared `createSystemMessageActions` composition around the Project reference. It owns token-based space above and below the controls, wrapping and clearance for the focus ring; a control never sits in a clipped/nowrap text line. This is a row composition, not a new card framework or a global button-margin rule.
 
@@ -1157,7 +1165,7 @@ on both root and child cards, preserving terminal task phase and controls.
 The row keeps its live position; history admits carrier evidence before summaries,
 progress or references choose their presentation. Block
 presence is consistent across reload and reconnect. A turn moved into a Project
-with `ensure_project_scope` lives there; Main retains its Started annotation.
+with `ensure_project_scope` lives there; Main retains its compact Project work entry.
 `N notes` in the collapsed header counts timeline items, the evidence row
 among them.
 
