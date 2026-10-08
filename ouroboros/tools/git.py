@@ -505,13 +505,10 @@ def _preflight_and_tests_gate(
     named = bool(preflight_reviewer) and not skip_advisory_pre_review
     message = deterministic_preflight(ctx, commit_message, classification_paths or None)
     reason = "infra_failure" if preflight_evidence_unavailable(message) else "preflight"
-    _diff_aware = (os.environ.get("OUROBOROS_PREFLIGHT_DIFF_AWARE", "true") or "true").strip().lower() in ("true", "1", "yes")
-    _doc_only = _diff_aware and _diff_is_doc_only(classification_paths)
     _managed_needs_proof = _managed_candidate_needs_proof(ctx)
-    # A named preflight carries the advisory's own tests rule (skip_tests only); without one the
-    # diff-aware doc-only exemption of the former compensating run stands. A managed resolution
-    # always pays the suite before review.
-    if not message and ((not skip_tests and (named or not _doc_only)) or _managed_needs_proof):
+    # The retired advisory's own tests rule, for every commit: the suite runs unless the author
+    # says skip_tests (documentation has tests too), and a managed resolution always pays it.
+    if not message and (not skip_tests or _managed_needs_proof):
         ctx.emit_progress_fn(
             "Managed candidate lacks a pre-commit test proof — running the mandatory hermetic suite before review..."
             if _managed_needs_proof else "Running the tests preflight before the review panel...")
@@ -522,9 +519,7 @@ def _preflight_and_tests_gate(
         # Q10 single-run: the green preflight IS the managed pre-commit proof —
         # recorded by the shared admission helper (commit_admission SSOT).
     elif not message:
-        ctx.emit_progress_fn("Tests preflight skipped ("
-                             + " + ".join(label for label, on in (("skip_tests", skip_tests), ("doc_only", _doc_only)) if on)
-                             + ").")
+        ctx.emit_progress_fn("Tests preflight skipped (skip_tests).")
     if message and not review_enforcement_blocks("blocking"):
         from ouroboros.tools.review import _handle_review_block_or_warning
 

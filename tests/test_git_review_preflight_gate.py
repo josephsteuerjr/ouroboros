@@ -676,13 +676,18 @@ def test_a_named_row_looks_after_the_checks_and_the_tests(candidate, monkeypatch
 
 
 @pytest.mark.parametrize("named", [False, True])
-def test_a_doc_only_diff_pays_the_suite_only_under_a_named_look(candidate, monkeypatch, named):
-    monkeypatch.setenv("OUROBOROS_PREFLIGHT_DIFF_AWARE", "true")
+def test_a_doc_only_diff_pays_the_suite_like_any_other_diff(candidate, monkeypatch, named):
+    """Documentation has tests too (version rows, canon tables, inventories): a ``.md``-only
+    diff runs the suite whether or not a row is named — the retired advisory's rule for every
+    commit; ``skip_tests`` is the one exemption."""
     calls = []
     _suite(monkeypatch, calls)
     _look(monkeypatch, calls)
     assert _gate(candidate, paths=("docs/notes.md",), preflight_reviewer="api-scout" if named else "") is None
-    assert calls.count("tests") == (1 if named else 0)
+    assert calls.count("tests") == 1
+    calls.clear()
+    assert _gate(candidate, paths=("docs/notes.md",), skip_tests=True) is None
+    assert calls.count("tests") == 0
 
 
 def test_a_syntax_error_blocks_before_the_tests_and_the_look(candidate, monkeypatch):

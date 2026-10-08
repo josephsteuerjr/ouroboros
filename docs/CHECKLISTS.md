@@ -38,8 +38,8 @@ explicit work-order review obligations.
 - `commit_reviewed` runs, ahead of the panel: the free deterministic checks
   (size headroom as information and warnings, release metadata of the staged
   index, syntax of staged `.py` files), the tests preflight under its own policy
-  (`skip_tests`; a doc-only diff is exempt when no row is named; a managed
-  resolution always pays the suite), then the named row's look, then ONE review
+  (`skip_tests` is the one exemption, a documentation-only diff included; a
+  managed resolution always pays the suite), then the named row's look, then ONE review
   wave in which every pool seat answers both parts of the brief. The commit
   records its preflight fact: `performed` with the record id, `skipped` for an
   explicit `skip_advisory_review=True`, `not_performed` when no row was named.
