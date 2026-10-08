@@ -26,6 +26,8 @@ from starlette.applications import Starlette
 from starlette.routing import Route
 from starlette.testclient import TestClient
 
+from ouroboros.reviewer_slot_config import review_pool_state
+
 
 @pytest.fixture
 def isolated_settings(tmp_path, monkeypatch):
@@ -390,8 +392,8 @@ _OWNER_CATALOG = {"enabled": True, "items": [{
 
 
 def _spy_on_the_pool_judge(monkeypatch, record):
-    """Package A's real ``review_pool_save_error`` with a call log: the tests below
-    pin WHEN the gateway asks the judge; what it answers is A's own rule."""
+    """Package A's real ``review_pool_save_error`` behind a call log: the tests pin WHEN the
+    gateway asks the judge; what it answers is A's own rule."""
     from ouroboros import reviewer_slot_config
 
     real = reviewer_slot_config.review_pool_save_error
@@ -420,8 +422,7 @@ def test_a_changed_catalog_meets_the_empty_pool_rule_and_the_owner_flag_confirms
     refused = client.post("/api/settings", json={SUBAGENTS_SETTING: _OWNER_CATALOG})
     assert refused.status_code == 400, refused.text
     assert refused.json()["code"] == "empty_review_pool" and refused.json()["saved"] is False
-    verdict = real(json.dumps(_OWNER_CATALOG), allow_empty=False)
-    assert verdict and refused.json()["error"] == verdict
+    assert refused.json()["error"] == real(json.dumps(_OWNER_CATALOG), allow_empty=False) != ""
     assert not isolated_settings.exists()
     assert judged == [("Use for owner-selected work.", False)]
 
@@ -435,7 +436,6 @@ def test_a_changed_catalog_meets_the_empty_pool_rule_and_the_owner_flag_confirms
     assert again.status_code == 200, again.text
     assert len(judged) == 1, "re-posting the stored catalog is not a catalog change"
 
-    # Marking the row is the edit that satisfies the rule: judged, and accepted.
     edited = {**_OWNER_CATALOG, "items": [{**_OWNER_CATALOG["items"][0], "recommended_use": "Edited use.",
                                            "review_eligible": True}]}
     accepted = client.post("/api/settings", json={SUBAGENTS_SETTING: edited})
@@ -480,11 +480,10 @@ def test_re_posting_the_unsaved_candidate_a_read_showed_is_not_a_catalog_change(
 
 
 def test_a_catalog_save_retires_the_stored_review_lanes(monkeypatch, isolated_settings):
-    """The pool replaces the former review lanes. The read seam migrates readable lanes
-    into catalog marks itself; the one cell where ``OUROBOROS_REVIEWER_SLOTS`` is still
-    in the loaded document is lanes it cannot read. There, even a re-posted catalog is
-    judged (retiring the lanes never empties review silently), and the save that writes
-    a catalog drops the key from the document."""
+    """The pool replaces the former review lanes. The read seam migrates readable lanes into
+    catalog marks itself; ``OUROBOROS_REVIEWER_SLOTS`` is still in the loaded document only
+    when it cannot read them. There, even a re-posted catalog is judged (retiring the lanes
+    never empties review silently), and the save that writes a catalog drops the key."""
     from ouroboros.configured_subagents import SUBAGENTS_SETTING, normalize_configured_subagents
 
     _rows, unmarked = normalize_configured_subagents(_OWNER_CATALOG)
@@ -500,8 +499,7 @@ def test_a_catalog_save_retires_the_stored_review_lanes(monkeypatch, isolated_se
     assert refused.status_code == 400, refused.text
     assert refused.json()["code"] == "empty_review_pool"
     assert judged == [unmarked]
-    stored = json.loads(isolated_settings.read_text(encoding="utf-8"))
-    assert stored["OUROBOROS_REVIEWER_SLOTS"] == unreadable_lanes, "a refusal writes nothing"
+    assert json.loads(isolated_settings.read_text(encoding="utf-8"))["OUROBOROS_REVIEWER_SLOTS"] == unreadable_lanes
 
     marked = {**_OWNER_CATALOG, "items": [{**_OWNER_CATALOG["items"][0], "review_eligible": True}]}
     _rows, canonical = normalize_configured_subagents(marked)
@@ -510,14 +508,12 @@ def test_a_catalog_save_retires_the_stored_review_lanes(monkeypatch, isolated_se
     assert accepted.status_code == 200, accepted.text
     assert judged == [unmarked, canonical]
     stored = json.loads(isolated_settings.read_text(encoding="utf-8"))
-    assert "OUROBOROS_REVIEWER_SLOTS" not in stored
-    assert stored[SUBAGENTS_SETTING] == canonical
+    assert "OUROBOROS_REVIEWER_SLOTS" not in stored and stored[SUBAGENTS_SETTING] == canonical
 
 
 def _pool_world(monkeypatch, *, records=None):
-    """The endpoint's durable-state seams (the last-run file, package C's migration
-    records, the tariff lookup) bound in memory; the pool itself is package A's real
-    reading of the catalog under test."""
+    """The endpoint's durable-state seams (the last-run file, package C's migration records,
+    the tariff lookup) bound in memory; the pool itself is package A's real reading."""
     from ouroboros import reviewer_slot_config, server_maintenance
     from ouroboros.gateway import settings as settings_mod
 
@@ -591,11 +587,8 @@ def test_review_pool_endpoint_types_a_bad_catalog_and_names_the_migration_snapsh
 
     assert response.status_code == 200
     body = json.loads(response.body)
-    from ouroboros.reviewer_slot_config import review_pool_state
-
-    expected = review_pool_state(json.dumps(unreadable))
-    assert expected["state"] == "error" and "delivery" in expected["error"]
-    assert body["config_error"] == expected["error"]
+    expected = review_pool_state(json.dumps(unreadable))["error"]
+    assert expected and "delivery" in expected and body["config_error"] == expected
     assert body["pool"] == [] and body["excluded"] == [] and body["row_costs"] == {}
     assert body["catalog"]["eligible"] == 4
     assert body["migration"] == {"snapshot": records["newer"]["snapshot"], "reported": False}

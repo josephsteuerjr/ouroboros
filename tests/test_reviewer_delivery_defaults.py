@@ -106,7 +106,7 @@ def test_the_triad_multi_model_row_runs_its_native_delivery(monkeypatch, tmp_pat
     assert slot.native_retrieval and request.messages == [] and request.session_task.startswith("WORK ORDER")
 
 
-def test_a_pool_rows_delivery_is_native_unless_the_row_says_packet(monkeypatch, isolated_settings):
+def test_a_pool_rows_delivery_is_native_unless_the_row_says_packet(monkeypatch, isolated_settings):  # noqa: F811
     """The catalog's reading of delivery, through the owner's save and the pool's own
     endpoint: an api row saved without ``delivery`` reads natively (the catalog
     default — the lane reader's packet default does not carry over); a row saved
