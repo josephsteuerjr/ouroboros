@@ -177,7 +177,7 @@ def _shared_read_refusal(ctx: ToolContext, target: pathlib.Path, operation: str 
     from ouroboros.tool_access import build_resolved_resource_binding
     from ouroboros.tools.tool_resolution import _root_containing_absolute_path
     from ouroboros.presence_authority import presence_ceiling_from_context, presence_ceiling_allows_binding
-    from ouroboros.protected_artifacts import block_reason_for_path
+    from ouroboros.protected_artifacts import _artifact_records, _operation_denied, block_reason_for_path
 
     try:
         root = _root_containing_absolute_path(ctx, "read_file", str(target))
@@ -188,9 +188,18 @@ def _shared_read_refusal(ctx: ToolContext, target: pathlib.Path, operation: str 
                 presence_ceiling_allows_binding(ceiling, other)
                 for other in _granted_root_bindings(ctx, ceiling, binding)):
             return "Presence resource ceiling does not allow reading this child target"
-        # Policy paths keep their caller-relative meaning, not the child's base.
-        if operation and (refusal := block_reason_for_path(ctx, target, operation)):
-            return refusal
+        if operation:
+            # Only relative policy needs the caller's active root (including a
+            # project room). B's read binding must never become the policy base.
+            relative_policy = any(
+                _operation_denied(record, operation)
+                and any(str(path).strip() and not pathlib.Path(str(path).strip()).expanduser().is_absolute()
+                        for path in record.get("paths") or [])
+                for record in _artifact_records(ctx))
+            policy_binding = (build_resolved_resource_binding(
+                ctx, root="active_workspace", operation="read", path=".") if relative_policy else None)
+            if refusal := block_reason_for_path(ctx, target, operation, policy_binding):
+                return refusal
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
         return str(exc)
     return ""

@@ -566,6 +566,64 @@ def test_direct_chat_project_room_parent_verifies_child_folder(env, b_is_room):
     assert load_effective_task_result(drive, "child")["child_result_disposition"] == "integrated"
 
 
+@pytest.mark.parametrize("operation", ["read_bytes", "hash"])
+@pytest.mark.parametrize("b_is_room", [False, True])
+def test_project_room_relative_policy_uses_caller_room(env, monkeypatch, operation, b_is_room):
+    parent, a, b, drive = env
+    parent.workspace_root, parent.workspace_mode = None, ""
+    parent.is_direct_chat = True
+    parent.task_metadata = {"_project_room_dir": str(a)}
+    b = a if b_is_room else b
+    # B's ordinary read binding has B as its base; it must not rebase A's policy.
+    monkeypatch.setattr("ouroboros.tool_access._user_files_root", lambda: b)
+    if operation == "hash":
+        monkeypatch.setattr("ouroboros.workspace_patch_capture._PATCH_FILE_REFERENCE_BYTES", 1)
+    art = capture(parent, b, drive)
+    if operation == "hash":
+        assert json.loads((art / "workspace_patch.json").read_text())["file_output_changes"]
+    parent.task_contract = {"resource_policy": {"protected_artifacts": [{
+        "id": "room-only", "paths": ["a.txt"], "deny": [operation]}]}}
+    registry = ToolRegistry(repo_dir=parent.repo_dir, drive_root=drive)
+    registry.set_context(parent)
+    read = registry.execute_result("read_file", {"root": "active_workspace", "path": "a.txt"})
+    assert ("RESOURCE_POLICY_BLOCKED" in read.text) == (operation == "read_bytes"), read.text
+    before = snapshot(a), snapshot(b), snapshot(art)
+    result = registry.execute_result("integrate_subagent_patch", {"task_id": "child"})
+    if b_is_room:
+        assert "RESOURCE_POLICY_BLOCKED" in result.text, result.text
+        assert repr(operation) in result.text
+        assert result.status == "blocked"
+        assert verdict(drive)["outcome"] == "shared_workspace_read_refused"
+        assert_unabsorbed(drive)
+    else:
+        assert "Verified external_workspace child" in result.text, result.text
+        assert load_effective_task_result(drive, "child")["child_result_disposition"] == "integrated"
+    assert verdict(drive)["target_root"] == str(b.resolve())
+    assert verdict(drive)["applied"] is False
+    assert (snapshot(a), snapshot(b), snapshot(art)) == before
+
+
+@pytest.mark.parametrize("room", ["missing_path", "note_only"])
+@pytest.mark.parametrize("absolute_policy", [False, True])
+def test_unavailable_project_room_does_not_block_independent_child(env, room, absolute_policy):
+    parent, a, b, drive = env
+    parent.workspace_root, parent.workspace_mode = None, ""
+    parent.is_direct_chat = True
+    parent.task_metadata = ({"_project_room_dir": str(a.parent / "missing")}
+                            if room == "missing_path" else {"_project_room_note": "room unavailable"})
+    if absolute_policy:
+        parent.task_contract = {"resource_policy": {"protected_artifacts": [{
+            "id": "parent-only", "paths": [str(a / "a.txt")], "deny": ["read_bytes", "hash"]}]}}
+    art = capture(parent, b, drive)
+    before = snapshot(a), snapshot(b), (art / "workspace.patch").read_bytes()
+    out = invoke(parent)
+    assert "Verified external_workspace child" in out, out
+    assert verdict(drive)["target_root"] == str(b.resolve())
+    assert verdict(drive)["applied"] is False
+    assert (snapshot(a), snapshot(b), (art / "workspace.patch").read_bytes()) == before
+    assert load_effective_task_result(drive, "child")["child_result_disposition"] == "integrated"
+
+
 def test_inherited_acting_parent_verifies_its_child_at_b(env):
     from ouroboros.contracts.task_constraint import normalize_task_constraint
     parent, a, b, drive = env
