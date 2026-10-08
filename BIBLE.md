@@ -406,14 +406,14 @@ their application in Cyber Pro follows P0 and the P3 rule above:
   durable memory is not immune. These files share the Ship-of-Theseus
   protection of the constitutional core.
 - **Audited advisory skip only.** Outside Cyber Pro, a commit without a
-  preflight is a recorded fact; `skip_advisory_review` remains the explicit
-  audited waiver of advisory-carried obligations/debt. The choice is
+  preflight is a recorded fact; `skip_advisory_review` explicitly records
+  `preflight: skipped`. It does not waive obligations or debt. The choice is
   LLM-first, not a hardcoded allowlist of change types. Every skip is
-  explicit and durably audited. It cannot waive independently applicable
-  tests, the panel, the coupling question, staged-fingerprint revalidation,
-  or final commit/tag/SHA binding. In Cyber Pro these remain recorded evidence and
-  provenance facts; they never become an internal veto or permission request.
-  Silent skip is forbidden outside Cyber Pro.
+  explicit and durably audited. Independently applicable checks and tests,
+  the panel, the coupling question, staged-fingerprint revalidation,
+  and final commit/tag/SHA binding still run. In Cyber Pro these remain recorded
+  evidence and provenance facts; they never become an internal veto or permission
+  request. Silent skip is forbidden outside Cyber Pro.
 - **Selected enforcement, independent evidence.** The owner selects review
   enforcement (`blocking` or `advisory`) outside Cyber Pro; in Cyber Pro
   Ouroboros may select it itself and retains final judgment regardless of

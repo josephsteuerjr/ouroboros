@@ -49,12 +49,11 @@ explicit work-order review obligations.
   preflight stale (`review_status` reports `stale_from_edit` and its editor);
   staleness informs and gates nothing, and a look at a changed worktree is a new
   record.
-- `skip_advisory_review=True` records `preflight: skipped` and remains the
-  explicit audited waiver of advisory-carried obligations/debt. It changes
-  neither the independently applicable test policy, the panel, the coupling
-  question, nor pre/post fingerprint and exact commit/tag binding; unresolved
-  obligations/debt remain visible. Explain the judgment in the surrounding task
-  narrative.
+- `skip_advisory_review=True` records only `preflight: skipped`; it does not
+  waive obligations or debt. Independently applicable checks and tests, the panel,
+  the coupling question, pre/post fingerprint and exact commit/tag binding still
+  run; unresolved obligations/debt remain visible. Explain the judgment in the
+  surrounding task narrative.
 - **Loud advisory enforcement (BIBLE P3 bound):** the owner chooses enforcement
   outside Cyber Pro; Cyber may configure its own review and continue under P0;
   `advisory` is legitimate ONLY while every decision blocking enforcement would
