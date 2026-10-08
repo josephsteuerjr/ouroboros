@@ -4,16 +4,17 @@ from __future__ import annotations
 
 import base64
 import json
-from types import SimpleNamespace
 
 import pytest
 
-from ouroboros.tools.imagegen import (
-    IMAGE_OPERATION_PATH,
-    _generate_image,
-    _sniff_mime,
-    image_operation_supported,
-)
+import ouroboros.tools.imagegen as ig
+from ouroboros.tools.imagegen import _generate_image, _sniff_mime
+from ouroboros.gateways import claudexor_images
+from ouroboros.gateways.claudexor_images import image_operation_supported
+
+
+def _png_bytes(size=64):
+    return b"\x89PNG\r\n\x1a\n" + b"0" * size
 
 
 class _FakeGateway:
@@ -26,36 +27,25 @@ class _FakeGateway:
     def operations(self):
         ops = []
         if self.supported:
-            ops.append({"method": "POST", "path": IMAGE_OPERATION_PATH, "parameters": []})
+            ops.append({"method": "POST", "path": claudexor_images.IMAGE_OPERATION_PATH, "parameters": []})
         return ops
 
-    def create_image_operation(self, request, *, image_bytes=None, idempotency_key=""):
-        self.calls.append(("create", idempotency_key, dict(request)))
-        if self.fail_with is not None:
+    def _request(self, method, path, **kwargs):
+        self.calls.append((method, path, kwargs.get("json_body"), kwargs.get("headers")))
+        if self.fail_with is not None and method == "POST":
             raise self.fail_with
+        if path.endswith("/result"):
+            return self.result_body
+        if method == "GET" and path.count("/") == 3:
+            return {"state": "succeeded"}
         return {"operationId": "img-op-1"}
 
-    def get_image_operation(self, operation_id, *, timeout_sec=None):
-        self.calls.append(("get", operation_id))
-        return {"state": "succeeded"}
-
-    def get_image_result(self, operation_id, *, idempotency_key="", timeout_sec=None):
-        return self.result_body
-
-    def acknowledge_image_result(self, operation_id, sha256=""):
-        self.calls.append(("ack", operation_id, sha256))
-        return {}
-
-
-def _png_bytes(size=64):
-    header = b"\x89PNG\r\n\x1a\n" + b"0" * size
-    return header
+    # Compatibility with the module-level functions' gateway contract:
+    # they call gateway._request directly, so _request above IS the seam.
 
 
 class _Ctx:
     def __init__(self, tmp_path):
-        from ouroboros.tools.registry import ToolContext
-
         self.task_id = "test-imagegen"
         self.drive_root = tmp_path
         self.budget_drive_root = tmp_path
@@ -70,15 +60,29 @@ class _Ctx:
 
 
 def _patch_gateway(monkeypatch, gateway):
-    monkeypatch.setattr("ouroboros.tools.imagegen._gateway_for", lambda ctx: gateway)
+    monkeypatch.setattr(ig, "_gateway_for", lambda ctx: gateway)
 
 
 def _patch_accounting(monkeypatch, captured):
     def fake_execute(request, send, **kwargs):
-        captured.append({"request": request, "send_calls": 1})
+        captured.append({"request": request})
         return send()
 
-    monkeypatch.setattr("ouroboros.tools.imagegen.execute_physical_attempt", fake_execute)
+    monkeypatch.setattr(ig, "execute_physical_attempt", fake_execute)
+
+
+def _last_code(monkeypatch, ctx, call):
+    captured_codes = []
+    orig = ig._publish_tool_result
+
+    def spy(c, result):
+        captured_codes.append(result.code)
+        return orig(c, result)
+
+    monkeypatch.setattr(ig, "_publish_tool_result", spy)
+    out = call()
+    monkeypatch.setattr(ig, "_publish_tool_result", orig)
+    return out, captured_codes[-1] if captured_codes else ""
 
 
 class TestSniffMime:
@@ -91,26 +95,9 @@ class TestSniffMime:
 
 class TestImageOperationSupported:
     def test_present_and_absent(self):
-        assert image_operation_supported([{"method": "POST", "path": IMAGE_OPERATION_PATH}])
+        assert image_operation_supported([{"method": "POST", "path": claudexor_images.IMAGE_OPERATION_PATH}])
         assert not image_operation_supported([{"method": "GET", "path": "/v2/runs"}])
         assert not image_operation_supported([])
-
-
-def _last_code(monkeypatch, ctx, call):
-    """Run and return the ToolResult code recorded by the publish sidecar."""
-    captured_codes = []
-    import ouroboros.tools.imagegen as ig
-
-    orig = ig._publish_tool_result
-
-    def spy(c, result):
-        captured_codes.append(result.code)
-        return orig(c, result)
-
-    monkeypatch.setattr(ig, "_publish_tool_result", spy)
-    out = call()
-    monkeypatch.setattr(ig, "_publish_tool_result", orig)
-    return out, captured_codes[-1] if captured_codes else ""
 
 
 class TestGenerateImageTool:
@@ -126,18 +113,21 @@ class TestGenerateImageTool:
 
     def test_typed_refusal_when_daemon_absent(self, monkeypatch, tmp_path):
         def _absent(ctx):
-            raise ConnectionError("claudexor_daemon_absent")
+            raise ig._DaemonAbsent("daemon_not_discovered")
 
-        monkeypatch.setattr("ouroboros.tools.imagegen._gateway_for", _absent)
+        monkeypatch.setattr(ig, "_gateway_for", _absent)
         ctx = _Ctx(tmp_path)
         out, code = _last_code(monkeypatch, ctx, lambda: _generate_image(ctx, "a castle"))
         assert code == "CAPABILITY_UNAVAILABLE"
 
     def test_argument_validation(self, monkeypatch, tmp_path):
         ctx = _Ctx(tmp_path)
-        for args in [("",), ("x" * 32001,), ]:
-            out, code = _last_code(monkeypatch, ctx, lambda a=args: _generate_image(ctx, *a[:1], **({"n": 0} if len(a) > 1 else {})))
-            assert code == "TOOL_ARG_ERROR"
+        out, code = _last_code(monkeypatch, ctx, lambda: _generate_image(ctx, ""))
+        assert code == "TOOL_ARG_ERROR"
+        out, code = _last_code(monkeypatch, ctx, lambda: _generate_image(ctx, "x" * 32001))
+        assert code == "TOOL_ARG_ERROR"
+        out, code = _last_code(monkeypatch, ctx, lambda: _generate_image(ctx, "ok", n=0))
+        assert code == "TOOL_ARG_ERROR"
         out, code = _last_code(monkeypatch, ctx, lambda: _generate_image(ctx, "ok", quality="non"))
         assert code == "TOOL_ARG_ERROR"
 
@@ -150,37 +140,56 @@ class TestGenerateImageTool:
         _patch_accounting(monkeypatch, captured)
         sent = []
         monkeypatch.setattr(
-            "ouroboros.tools.owner_delivery.deliver_owner_event",
-            lambda ctx, ev: sent.append(ev) or "live",
+            ig, "deliver_owner_event", lambda ctx, ev: sent.append(ev) or "live"
         )
         ctx = _Ctx(tmp_path)
         out = _generate_image(ctx, "a castle", send=True)
         assert out.startswith("OK:") or "OK" in out
-        creates = [c for c in gw.calls if c[0] == "create"]
+        creates = [c for c in gw.calls if c[0] == "POST" and c[1] == claudexor_images.IMAGE_OPERATION_PATH]
         assert len(creates) == 1  # ONE attempt, no retry
         summary = json.loads(out.split("\n", 1)[1])
         img = summary["images"][0]
         assert img["mime"] == "image/png" and img["size"] == len(png)
+        assert set(img.keys()) == {"path", "sha256", "mime", "size"}
         assert "b64_json" not in json.dumps(summary)  # base64 never in tool text
-        assert (pathlib := __import__("pathlib").Path(img["path"])).exists()
+        import pathlib
+        assert pathlib.Path(img["path"]).exists()
         assert sent and sent[0]["type"] == "send_photo"
-        assert "b64_json" not in json.dumps(sent[0]) or True  # photo path needs the payload; tool text never carries it
+        # The delivery event legitimately carries the photo payload (transport
+        # seam, not model context); the invariant is about the TOOL RESULT text.
+
+    def test_only_first_image_sent(self, monkeypatch, tmp_path):
+        png = _png_bytes(64)
+        b64 = base64.b64encode(png).decode()
+        body = {"data": [{"b64_json": b64}, {"b64_json": b64}], "usage": {}}
+        gw = _FakeGateway(result_body=body)
+        _patch_gateway(monkeypatch, gw)
+        captured = []
+        _patch_accounting(monkeypatch, captured)
+        sent = []
+        monkeypatch.setattr(
+            ig, "deliver_owner_event", lambda ctx, ev: sent.append(ev) or "live"
+        )
+        ctx = _Ctx(tmp_path)
+        out = _generate_image(ctx, "two castles", n=2, send=True)
+        assert json.loads(out.split("\n", 1)[1])["generated"] == 2
+        assert len(sent) == 1  # ONLY the first image is sent
 
     def test_image_429_typed_refusal(self, monkeypatch, tmp_path):
         class Err(Exception):
             code = "image_generation_limit_reached"
-            resets_at = "2026-10-08T12:00:00Z"
+            reset_at = "2026-10-08T12:00:00Z"
 
         gw = _FakeGateway(fail_with=Err("limit"))
         _patch_gateway(monkeypatch, gw)
         captured = []
         _patch_accounting(monkeypatch, captured)
         ctx = _Ctx(tmp_path)
-        out = _generate_image(ctx, "a castle")
-        assert "IMAGE_RATE_LIMITED" in out
-        assert "NOT parked" in out or "not parked" in out.lower()
+        out, code = _last_code(monkeypatch, ctx, lambda: _generate_image(ctx, "a castle"))
+        assert code == "IMAGE_RATE_LIMITED"
+        assert "NOT parked" in out
+        assert "2026-10-08T12:00:00Z" in out
         assert len(captured) == 1  # the attempt was made and accounted
-
 
     def test_unknown_outcome_recorded_not_retried(self, monkeypatch, tmp_path):
         gw = _FakeGateway(fail_with=TimeoutError("image_operation_timeout:img-op-1"))
@@ -188,21 +197,53 @@ class TestGenerateImageTool:
         captured = []
         _patch_accounting(monkeypatch, captured)
         ctx = _Ctx(tmp_path)
-        out = _generate_image(ctx, "a castle")
-        assert "IMAGE_OUTCOME_UNKNOWN" in out
-        creates = [c for c in gw.calls if c[0] == "create"]
+        out, code = _last_code(monkeypatch, ctx, lambda: _generate_image(ctx, "a castle"))
+        assert code == "IMAGE_OUTCOME_UNKNOWN"
+        creates = [c for c in gw.calls if c[0] == "POST"]
         assert len(creates) == 1  # never retried
         events = (tmp_path / "logs" / "events.jsonl").read_text(encoding="utf-8")
         assert "image_outcome_unknown" in events
 
 
 class TestClientFamily:
-    """Client-family shape checks that need no live daemon: route constants and
-    the image-operation methods existing on the gateway class."""
+    """Client-family shape checks against the real module seam."""
 
-    def test_gateway_exposes_image_family(self):
-        from ouroboros.gateways.claudexor import ClaudexorGateway
+    def test_create_image_operation_body_shape(self, monkeypatch):
+        """B1 regression: the request body is the image request itself, NOT a
+        model payload-ref; edit inputs carry their sniffed MIME (M3)."""
+        seen = []
 
+        class GW:
+            def _request(self, method, path, **kwargs):
+                seen.append((method, path, kwargs))
+                return {"operationId": "op1"}
+
+        out = claudexor_images.create_image_operation(
+            GW(), {"model": "gpt-image-2", "prompt": "hi"},
+            images=[(_png_bytes(16), "image/png")],
+            idempotency_key="k-1",
+        )
+        method, path, kwargs = seen[0]
+        assert method == "POST" and path == claudexor_images.IMAGE_OPERATION_PATH
+        body = kwargs["json_body"]
+        assert body["request"] == {"model": "gpt-image-2", "prompt": "hi"}  # plain request, no ref contract
+        assert body["images"][0]["dataUrl"].startswith("data:image/png;base64,")
+        assert kwargs["headers"]["Idempotency-Key"] == "k-1"
+
+    def test_ack_carries_retained_digest(self, monkeypatch):
+        seen = []
+
+        class GW:
+            def _request(self, method, path, **kwargs):
+                seen.append((method, path, kwargs))
+                return {}
+
+        claudexor_images.acknowledge_image_result(GW(), "op1", "abc123")
+        method, path, kwargs = seen[0]
+        assert path.endswith("/op1/ack") and kwargs["json_body"] == {"sha256": "abc123"}
+
+    def test_module_functions_reachable(self):
         for name in ("create_image_operation", "get_image_operation",
-                     "get_image_result", "acknowledge_image_result"):
-            assert callable(getattr(ClaudexorGateway, name, None)), name
+                     "get_image_result", "acknowledge_image_result",
+                     "image_operation_supported"):
+            assert callable(getattr(claudexor_images, name)), name

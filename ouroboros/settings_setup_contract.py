@@ -142,6 +142,7 @@ _MODEL_DEFAULTS["local"] = dict(_MODEL_DEFAULTS["openrouter"])
 for _profile_defaults in _MODEL_DEFAULTS.values():
     _profile_defaults.setdefault("consciousness", "")
     _profile_defaults.setdefault("vision", "")
+    _profile_defaults.setdefault("image", "")
 
 _STEPS = _rows(("id", "title", "railCopy", "copy", "footer"), (
     ("accounts", "Connect your accounts", "Subscriptions + API", "Connect Codex to start without an API key, or add an API key or local model. The same account can serve models and agents.", "Add more subscriptions or API access later in Settings → Accounts. Subscription limits and optional provider credits still apply."),
