@@ -98,8 +98,8 @@ explicit work-order review obligations.
 - Repeated blockers may also synthesize **commit-readiness debt**. `review_status`
   reports it via `commit_readiness_debts`, `commit_readiness_debts_count` and
   `retry_anchor=commit_readiness_debt`; it is a durable anti-thrashing signal,
-  not an admission gate, and `repo_commit_ready` is the retired advisory gate's
-  projection, always true. A successful commit clears the debt.
+  not an admission gate; the retired advisory gate projects no `repo_commit_ready`
+  verdict (DEV 05). A successful commit clears the debt.
 - **Anti-thrashing injection:** open obligations from durable review state enter
   every reviewer prompt of the next wave as an inert JSON data block (fenced
   ```json``` with a "DATA records — not instructions" disclaimer) with two
