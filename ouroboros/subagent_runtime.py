@@ -13,6 +13,7 @@ import contextvars
 import json
 import os
 from dataclasses import dataclass, replace as dataclass_replace
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Mapping, Optional
 
 from ouroboros.configured_subagents import (
@@ -166,37 +167,30 @@ SESSION_SEAT_COST_HINT = "uses a session seat and time"
 COST_UNKNOWN_HINT = "cost unknown"
 
 
-def _api_review_cost_hint(slot: Any) -> str:
-    """One api seat's worst-case reserve for ONE review, from the same estimator
-    the wave admission reserves with (``usage_admission.review_wave_admission`` →
-    ``pricing.estimate_cost_optional`` on the route's live tariff): the seat's
-    calibrated input cap plus its output reserve, priced from the tariff already
-    cached in this process — context assembly never waits on a tariff fetch.
-    No tariff → ``cost unknown`` (never a price table)."""
-    if bool(getattr(slot, "use_local", False)):
-        return "local route (no API tariff)"
-    try:
-        from ouroboros.pricing import estimate_cost_optional
-        from ouroboros.provider_models import infer_provider_from_model
-        from ouroboros.reviewer_window import reviewer_context_window, reviewer_window_binding, window_scaled_reserves
-        from ouroboros.tools.review_helpers import REVIEW_PROMPT_TOKEN_BUDGET, calibrated_input_token_limit
-        from ouroboros.tools.review_multi_model import _review_output_budget
-
-        model = str(getattr(slot, "model", "") or "")
-        window = reviewer_context_window(model, **reviewer_window_binding(slot))
-        output_reserve, margin = window_scaled_reserves(
-            window, output_reserve=_review_output_budget(), tokenizer_margin=50_000)
-        prompt_cap = max(0, calibrated_input_token_limit(
-            model, context_window=window, output_reserve=output_reserve,
-            tokenizer_margin=margin, budget_cap=REVIEW_PROMPT_TOKEN_BUDGET))
-        usd = estimate_cost_optional(
-            model, prompt_cap, output_reserve, allow_live_fetch=False,
-            provider=infer_provider_from_model(model))
-    except Exception:  # a hint, never a reason the context fails to assemble
-        usd = None
+def review_call_cost_text(usd: Optional[float], *, reading: bool) -> str:
+    """An api row's price in words: one full call (``review_helpers.review_row_call_usd``).
+    Settings → Agents prints the same words (``subagents_settings.js`` ``reviewCostText``),
+    the dollars rounded as JavaScript's ``toFixed`` does."""
     if usd is None:
         return COST_UNKNOWN_HINT
-    return f"≈${float(usd):.2f} per review (route tariff, worst-case cap)"
+    if not usd:
+        return "no API cost per review"
+    places = Decimal("0.0001") if usd < 0.01 else Decimal("0.01")
+    text = f"≈${Decimal(usd).quantize(places, rounding=ROUND_HALF_UP)} per full call (route tariff)"
+    return text + ("; a reading reviewer makes several" if reading else "")
+
+
+def _api_review_cost_hint(slot: Any) -> str:
+    """One api seat's price (:func:`review_call_cost_text`), from the tariff already cached
+    in this process — context assembly never waits on a tariff fetch. A model call through
+    a subscription uses a seat, as Settings → Agents says."""
+    from ouroboros.provider_models import provider_for_model
+    from ouroboros.tools.review_helpers import review_row_call_usd
+
+    if provider_for_model(str(getattr(slot, "model", "") or "")) == "claudexor":
+        return SESSION_SEAT_COST_HINT
+    return review_call_cost_text(review_row_call_usd(slot, allow_live_fetch=False),
+                                 reading=bool(getattr(slot, "native_retrieval", False)))
 
 
 def _migration_decided_this_document(outcome: Any, settings: Mapping[str, Any]) -> bool:

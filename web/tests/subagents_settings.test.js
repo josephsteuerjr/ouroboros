@@ -1322,8 +1322,11 @@ test('a price is the route tariff or plainly unknown, and a seat is spoken as ti
     assert.equal(reviewCostText(api, { usd_per_review: 0.5, basis: 'unknown' }), 'cost unknown');
     assert.equal(reviewCostText(api, { usd_per_review: null, basis: 'route_tariff' }), 'cost unknown');
     assert.equal(reviewCostText(api, { usd_per_review: 0, basis: 'route_tariff' }), 'no API cost per review');
-    assert.equal(reviewCostText(api, { usd_per_review: 1.234, basis: 'route_tariff' }), '≈$1.23 per review (route tariff, worst-case cap)');
-    assert.equal(reviewCostText(api, { usd_per_review: 0.0042, basis: 'route_tariff' }), '≈$0.0042 per review (route tariff, worst-case cap)');
+    // One full call of the row, never a cap on a whole review: a reading reviewer makes several.
+    assert.equal(reviewCostText(api, { usd_per_review: 1.234, basis: 'route_tariff' }),
+        '≈$1.23 per full call (route tariff); a reading reviewer makes several');
+    assert.equal(reviewCostText(apiRow({ delivery: 'packet' }), { usd_per_review: 0.0042, basis: 'route_tariff' }),
+        '≈$0.0042 per full call (route tariff)');
 });
 
 test('a minted row names its origin, and a copy keeps the mark but never the origin', () => {
@@ -1391,7 +1394,8 @@ test('review-pool facts price saved rows by their loaded route; an edited route 
         pool: [{ subagent_id: 'api_scout', last_execution: { observed_model: 'openai/gpt-5.6-luna', record_id: 'rev_7' } }],
         last_executions: { codex_builder: { effective: { route: 'agent_session:codex', model: 'gpt-5.6-sol-high' } } },
     });
-    assert.equal(dom.row(0).facts.textContent, 'In the review pool · ≈$0.42 per review (route tariff, worst-case cap)');
+    assert.equal(dom.row(0).facts.textContent,
+        'In the review pool · ≈$0.42 per full call (route tariff); a reading reviewer makes several');
     assert.equal(dom.row(0).notes.textContent, 'Last run as openai/gpt-5.6-luna (record rev_7)');
     assert.equal(dom.row(1).facts.textContent, 'uses a session seat and time');
     assert.equal(dom.row(1).notes.textContent, 'Last run as codex session · gpt-5.6-sol-high');

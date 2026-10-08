@@ -175,7 +175,8 @@ def test_a_reviewer_row_names_its_delivery_cost_and_last_run(role_ui):
     assert native.locator("[data-subagent-review-notes]").inner_text() == (
         "Last run as API model · gpt-test · account personal (record rev_42)")
     facts = direct.locator("[data-subagent-review-facts]").inner_text()
-    assert "In the review pool" in facts and "≈$0.42 per review" in facts
+    assert "In the review pool" in facts and "≈$0.42 per full call (route tariff)" in facts
+    assert "reading reviewer" not in facts, "the several-calls clause belongs to a reading row"
     assert agent.locator("[data-subagent-field=\"delivery\"]").count() == 0, "delivery is for API reviewers"
     delivery = direct.locator('[data-subagent-field="delivery"]')
     assert delivery.input_value() == "packet"

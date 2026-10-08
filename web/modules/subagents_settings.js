@@ -234,14 +234,16 @@ export function reviewPoolErrors(setting, { judged = false, allowEmpty = false }
         : 'No row is marked Reviewer. Mark at least one row, or tick “Save without reviewers”.'];
 }
 
-/** The price of one review by this row, or its non-money equivalent; unknown is never zero. */
+/** The price of one full call of this row (the words `## Review` prints), or its non-money equivalent;
+ * a reading reviewer makes several calls; unknown is never zero. */
 export function reviewCostText(row, cost = null) {
     if (routeSupportsAccount(row?.route || {})) return 'uses a session seat and time';
     if (!cost) return 'price appears after saving';
     const usd = cost.usd_per_review;
     if (cost.basis !== 'route_tariff' || typeof usd !== 'number' || !Number.isFinite(usd)) return 'cost unknown';
     if (usd === 0) return 'no API cost per review';
-    return `≈$${usd < 0.01 ? usd.toFixed(4) : usd.toFixed(2)} per review (route tariff, worst-case cap)`;
+    const text = `≈$${usd < 0.01 ? usd.toFixed(4) : usd.toFixed(2)} per full call (route tariff)`;
+    return row?.delivery === 'packet' ? text : `${text}; a reading reviewer makes several`;
 }
 
 /** What actually ran the last time this row reviewed, with its review record. */

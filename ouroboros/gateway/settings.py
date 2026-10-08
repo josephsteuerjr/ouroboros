@@ -678,39 +678,25 @@ def review_pool_save_judgement(raw: Any, stored: Dict[str, Any], *, allow_empty:
 
 
 def _review_pool_costs(items: list, snapshot: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
-    """Per-review price of every catalog row. A session, or a model call through a
-    subscription, uses a seat and time; an API row is priced by the reservation math
-    that admits a review wave at the packs' worst-case caps (the managed-update floor's
-    convention); a route without a tariff stays unknown — there are no price tables."""
-    from ouroboros.model_slots import PROCESSING_PREFERENCE_KEY, normalize_processing_preference
+    """The price of every catalog row. A session, or a model call through a subscription,
+    uses a seat and time; an API row's ``usd_per_review`` is ``review_row_call_usd``: one
+    full call of the row, the number ``## Review`` shows for its seat (a reading reviewer
+    makes several); a route without a tariff stays unknown — there are no price tables."""
+    from ouroboros.model_slots import resolve_processing_preference
     from ouroboros.provider_models import provider_for_model
+    from ouroboros.tools.review_helpers import review_row_call_usd
 
     costs: Dict[str, Dict[str, Any]] = {}
-    priced: list = []
     for item in items:
         row_id, route = str(item.get("subagent_id") or ""), item.get("route") or {}
         target = str(route.get("target_id") or "")
         seat = route.get("kind") == "agent_session" or provider_for_model(target) == "claudexor"
-        costs[row_id] = {"usd_per_review": None, "basis": "subscription_seat" if seat else "unknown"}
-        if target and not seat:
-            priced.append((row_id, target, normalize_processing_preference(
-                item.get("processing_preference") or snapshot.get(PROCESSING_PREFERENCE_KEY) or "")))
-    try:
-        from ouroboros.tools.review_helpers import REVIEW_PROMPT_TOKEN_BUDGET
-        from ouroboros.tools.review_multi_model import _review_output_budget
-        from ouroboros.usage_admission import review_wave_admission
-
-        bounds = review_wave_admission(
-            root_task_id="settings-review-pool", models=[seat[1] for seat in priced],
-            prompt_chars=int(REVIEW_PROMPT_TOKEN_BUDGET) * 4, max_completion_tokens=_review_output_budget(),
-            remaining_usd_override=0.0, processing_preferences=[seat[2] for seat in priced],
-        ).get("slot_bounds") or []
-    except Exception:
-        log.debug("review pool price estimate failed open", exc_info=True)
-        bounds = []
-    for (row_id, _target, _processing), bound in zip(priced, bounds):
-        if bound is not None:
-            costs[row_id] = {"usd_per_review": float(bound), "basis": "route_tariff"}
+        usd = None if seat or not target else review_row_call_usd({
+            "slot_id": row_id, "model": target, "profile_id": str(route.get("credential_profile_id") or ""),
+            "processing_preference": resolve_processing_preference(
+                override=item.get("processing_preference") or None, settings=snapshot)})
+        costs[row_id] = ({"usd_per_review": None, "basis": "subscription_seat" if seat else "unknown"}
+                         if usd is None else {"usd_per_review": float(usd), "basis": "route_tariff"})
     return costs
 
 

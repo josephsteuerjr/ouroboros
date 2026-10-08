@@ -303,6 +303,7 @@ def review_wave_admission(
     categories: str | Sequence[str] = "",
     slot_ids: str | Sequence[str] = "",
     processing_preferences: str | Sequence[str] = "",
+    allow_live_fetch: bool = True,
 ) -> Dict[str, Any]:
     """Read-only whole-wave admission through each slot's reservation math.
 
@@ -316,6 +317,7 @@ def review_wave_admission(
     aligned per-slot values. Price each seat under its own sending scope, so the
     caller's warm cache split cannot stand in for a reviewer's cold prefix.
     Returned per-slot bounds and both remainders disclose the binding cause.
+    ``allow_live_fetch=False`` prices from tariffs already cached in this process.
     """
     from ouroboros import usage_accounting as ua
 
@@ -413,6 +415,7 @@ def review_wave_admission(
                         # The captured preference projected onto the provider-neutral reservation mode.
                         submitted_processing_mode={"standard": "default", "fast": "priority", "economy": "flex"}.get(
                             str(seat_processing[index] or "").strip().lower(), ""),
+                        allow_live_fetch=allow_live_fetch,
                     )
                 )
             result["slot_bounds"].append(None if bound is None else round(float(bound), 6))
