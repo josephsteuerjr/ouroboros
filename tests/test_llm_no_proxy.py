@@ -304,11 +304,16 @@ def test_chat_remote_passes_no_proxy_to_anthropic():
     assert captured_timeout[0] == 88.0
 
 
-def test_chat_remote_no_proxy_retries_openrouter_parameter_rejection():
+def test_chat_remote_no_proxy_retries_openrouter_parameter_rejection(monkeypatch):
     """OpenRouter no_proxy path retries once without optional sampling params."""
     from ouroboros.llm import LLMClient
 
     LLMClient._REJECTED_PARAMS_CACHE.clear()
+    # Premise: a cold no_proxy worker with no capability metadata yet strips nothing
+    # up front, so temperature reaches the first send and only the provider's
+    # rejection removes it. Metadata warmed by an earlier test would strip it first.
+    monkeypatch.setattr(LLMClient, "_SUPPORTED_PARAMS_FETCHED", False)
+    monkeypatch.setattr(LLMClient, "_SUPPORTED_PARAMS_CACHE", {})
     client = LLMClient(api_key="test-or-key")
     target = client._resolve_remote_target("anthropic/claude-opus-4.8")
     messages = [{"role": "user", "content": "hello"}]
