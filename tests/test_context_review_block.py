@@ -142,9 +142,12 @@ def test_a_catalog_with_no_marked_row_is_an_empty_pool_a_loud_fact_not_a_default
     assert (block["source"], block["error"], block["pool"], block["pool_empty"]) == ("empty", "", [], True)
     assert "default" not in (block["source"], text.split('"rule"')[0]), "no shipped panel is implied"
     assert block["rule"] and block["surfaces"]["commit_gate"].startswith("every pool row")
-    # No catalog at all is the same empty pool, not an error.
+    # No catalog at all is a never-configured install: the read seam mints the factory
+    # rows (`factory_review_rows`), so the block shows that pool — not an empty one.
     monkeypatch.delenv(SUBAGENTS_SETTING)
-    assert _block()[0]["source"] == "empty"
+    never_configured, _ = _block()
+    assert (never_configured["source"], never_configured["pool_empty"]) == ("structured", False)
+    assert [row["seat_id"] for row in never_configured["pool"]] == ["review-1", "review-2", "review-3"]
 
 
 def test_an_invalid_catalog_is_an_error_with_an_empty_pool_not_an_absent_one(monkeypatch):
