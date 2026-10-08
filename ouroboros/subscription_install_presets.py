@@ -656,7 +656,7 @@ def compile_model_settings(model_catalog: Sequence[Mapping[str, Any]],
     the proposal, not an invented model family or a CLI alias table.
     """
     from ouroboros.model_slots import MODEL_ROLE_SETTINGS
-    from ouroboros.settings_defaults import SETTINGS_DEFAULTS
+    from ouroboros.settings_defaults import RETIRED_SETTING_KEYS, SETTINGS_DEFAULTS
 
     main = str(settings.get("OUROBOROS_MODEL") or "")
     if main and (model_has_credentials_in_settings(main, dict(settings))
@@ -671,6 +671,8 @@ def compile_model_settings(model_catalog: Sequence[Mapping[str, Any]],
     for role, key in MODEL_ROLE_SETTINGS.items():
         if role == "websearch":
             continue  # Provider-owned web-search tools are a separate capability.
+        if key in RETIRED_SETTING_KEYS:
+            continue  # Never honored: the next load drops it with a retired-key notice to the owner.
         current = str(settings.get(key) or "")
         if current and current != str(SETTINGS_DEFAULTS.get(key) or ""):
             continue
