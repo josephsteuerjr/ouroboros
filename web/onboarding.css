@@ -986,7 +986,7 @@ textarea::placeholder {
   padding: 0 11px;
 }
 
-/* Reviewer mark, its price and origin wrap as one line under the route. */
+/* Reviewer mark, its price and origin share the card head: an unmarked card keeps its height. */
 .available-subagent-review {
   display: flex;
   flex-wrap: wrap;

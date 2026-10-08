@@ -306,24 +306,22 @@ function reviewPoolSummary(state) {
     };
 }
 
-function reviewBlockHtml(row, state, index) {
-    const ordinal = index + 1;
-    const marked = row.review_eligible === true;
+function reviewMarkHtml(row, state, index) {
     const minted = MINTED_FROM[row.minted_from] || '';
-    const notes = reviewNotes(row, state, index);
-    const delivery = marked && row.route.kind === ROUTE_KIND_API_MODEL
-        ? selectHtml(`data-subagent-field="delivery" aria-label="Review delivery for Subagent ${ordinal}"`, [{ label: '', options: [
-            { value: 'native', label: 'Reads the work itself' },
-            { value: 'packet', label: 'Packet — for models without tool calling' },
-        ] }], row.delivery === 'packet' ? 'packet' : 'native') : '';
     return `
-            <div class="available-subagent-review">
-                <label class="available-subagent-reviewer"><input class="ui-checkbox" type="checkbox" data-subagent-field="review_eligible" aria-label="Subagent ${ordinal} reviews"${marked ? ' checked' : ''}> Reviewer</label>
-                <span class="available-subagent-review-facts" data-subagent-review-facts>${escapeHtml(reviewFacts(row, state))}</span>
-                ${minted ? `<span class="available-subagent-minted" data-subagent-minted>${escapeHtml(minted)}</span>` : ''}
-                ${delivery}
-            </div>
-            <div class="available-subagent-meta" data-subagent-review-notes data-run-history${notes ? '' : ' hidden'}>${escapeHtml(notes)}</div>`;
+                <div class="available-subagent-review">
+                    <label class="available-subagent-reviewer"><input class="ui-checkbox" type="checkbox" data-subagent-field="review_eligible" aria-label="Subagent ${index + 1} reviews"${row.review_eligible === true ? ' checked' : ''}> Reviewer</label>
+                    <span class="available-subagent-review-facts" data-subagent-review-facts>${escapeHtml(reviewFacts(row, state))}</span>
+                    ${minted ? `<span class="available-subagent-minted" data-subagent-minted>${escapeHtml(minted)}</span>` : ''}
+                </div>`;
+}
+
+function reviewDeliveryHtml(row, index) {
+    if (row.review_eligible !== true || row.route.kind !== ROUTE_KIND_API_MODEL) return '';
+    return selectHtml(`data-subagent-field="delivery" aria-label="Review delivery for Subagent ${index + 1}"`, [{ label: '', options: [
+        { value: 'native', label: 'Reads the work itself' },
+        { value: 'packet', label: 'Packet — for models without tool calling' },
+    ] }], row.delivery === 'packet' ? 'packet' : 'native');
 }
 
 export function validateAvailableSubagentsSetting(setting, { uniqueEngines = false, processingPreference = '' } = {}) {
@@ -444,6 +442,7 @@ export function availableSubagentRowMarkup(row, state, index = 0) {
         { accountsKnown: state.accountsKnown && Boolean(split.harness) },
     );
     const status = rowStatus(row, state);
+    const notes = reviewNotes(row, state, index);
     const errors = rowErrors(row, index, new Set());
     const meta = rowMeta(row, state, errors);
     const invalid = Boolean(row._uiAttempted) && errors.length > 0;
@@ -459,6 +458,7 @@ export function availableSubagentRowMarkup(row, state, index = 0) {
                 <h4 class="available-subagent-heading" id="${escapeHtml(headingId)}">Subagent ${ordinal}</h4>
                 <div class="available-subagent-route-identity-wrap">${routeIdentity}</div>
                 <span class="settings-inline-status" data-subagent-status data-tone="${escapeHtml(status.tone)}" title="${escapeHtml(status.text)}">${escapeHtml(status.label)}</span>
+                ${reviewMarkHtml(row, state, index)}
                 <div class="available-subagent-actions">
                     <button type="button" class="btn btn-default" data-subagent-duplicate aria-label="Duplicate Subagent ${ordinal}">Duplicate</button>
                     <button type="button" class="btn btn-default" data-subagent-remove aria-label="Remove Subagent ${ordinal}">Remove</button>
@@ -476,12 +476,13 @@ export function availableSubagentRowMarkup(row, state, index = 0) {
                     ? selectHtml(`data-subagent-field="account" aria-label="Account for Subagent ${ordinal}"`, [{ label: '', options: profileOptions }], row.route.credential_profile_id || '')
                     : ''}
                 ${effortSelectHtml(`data-subagent-field="effort" aria-label="Reasoning effort for Subagent ${ordinal}"`, row.effort || '', 'route default')}
+                ${reviewDeliveryHtml(row, index)}
                 ${session ? selectHtml(`id="actor-${escapeHtml(rowKey)}-access" data-subagent-field="access" aria-label="Access for Subagent ${ordinal}"`, [{ label: '', options: [
                     { value: 'full', label: 'Full system access (default)' },
                     { value: 'workspace_write', label: 'Working files' },
                 ] }], row.access || 'full') : ''}
             </div>
-            ${reviewBlockHtml(row, state, index)}
+            <div class="available-subagent-meta" data-subagent-review-notes data-run-history${notes ? '' : ' hidden'}>${escapeHtml(notes)}</div>
             ${processingDetailsHtml(`data-subagent-field="processing_preference" aria-label="Processing for Subagent ${ordinal}"`, row.processing_preference, state.processingPreference)}
             ${session ? `<div class="ui-field-help" id="actor-${escapeHtml(rowKey)}-access-help">Full system access can reach outside the working folder. The selected agent must support it. Explicit task restrictions still apply.</div>` : ''}
             <div id="actor-${escapeHtml(rowKey)}-meta" class="available-subagent-meta ui-field-help" data-subagent-meta${meta.history ? ' data-run-history' : ''}${meta.tone ? ` data-tone="${escapeHtml(meta.tone)}"` : ''} title="${escapeHtml(meta.text)}"${meta.text ? '' : ' hidden'}>${escapeHtml(meta.text)}</div>

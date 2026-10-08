@@ -22,12 +22,11 @@ const SETTINGS_TABS = [
 ];
 // Guard markers: renderTabStrip emits behavior/advanced tabs at runtime.
 
-// Review effort is a property of each reviewer row in Agents → Available
-// subagents. Behavior keeps the surface-level lanes.
+// Review effort, Deep Self-Review's included, is a property of the catalog row
+// that runs it (Agents → Available subagents). Behavior keeps the surface-level lanes.
 const EFFORT_FIELDS = [
     ['s-effort-task', 'Task / Chat', 'medium'],
     ['s-effort-evolution', 'Evolution', 'high'],
-    ['s-effort-deep-self-review', 'Deep Self-Review', 'high'],
     ['s-effort-consciousness', 'Consciousness', ''],  // '' = the Task / Chat effort (a wake-up is a Main turn)
 ];
 
