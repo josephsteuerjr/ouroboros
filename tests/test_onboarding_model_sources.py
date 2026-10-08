@@ -24,13 +24,13 @@ OWNER_DRAFT = {"enabled": True, "items": [{
 
 @pytest.fixture
 def pool_seams(monkeypatch):
-    """Package A's catalog fields, factory reviewer rows and empty-pool judge, bound for
-    this tree (``raising=False``: the symbols arrive with package A)."""
-    from ouroboros import configured_subagents, reviewer_slot_config, subscription_install_presets
+    """The factory reviewer rows as a controlled double (fixed rows that are NOT the
+    provider sequence, so the gateway is seen to carry the factory's output rather than
+    its own), and package A's real empty-pool judge behind a call log."""
+    from ouroboros import reviewer_slot_config, subscription_install_presets
 
-    seen = {"factory": [], "judged": [], "verdict": ""}
-    monkeypatch.setattr(configured_subagents, "_ROW_KEYS", configured_subagents._ROW_KEYS
-                        | {"review_eligible", "delivery", "minted_from", "coupling_focus"})
+    seen = {"factory": [], "judged": []}
+    real_judge = reviewer_slot_config.review_pool_save_error
 
     def factory(doc):
         seen["factory"].append(dict(doc))
@@ -38,10 +38,10 @@ def pool_seams(monkeypatch):
 
     def judge(raw, *, allow_empty):
         seen["judged"].append(raw)
-        return seen["verdict"]
+        return real_judge(raw, allow_empty=allow_empty)
 
-    monkeypatch.setattr(subscription_install_presets, "factory_review_rows", factory, raising=False)
-    monkeypatch.setattr(reviewer_slot_config, "review_pool_save_error", judge, raising=False)
+    monkeypatch.setattr(subscription_install_presets, "factory_review_rows", factory)
+    monkeypatch.setattr(reviewer_slot_config, "review_pool_save_error", judge)
     return seen
 
 
@@ -53,11 +53,14 @@ def test_an_owner_draft_the_pool_rule_refuses_writes_nothing_until_confirmed(onb
     """When package A's rule refuses the pool of the visible draft, the WHOLE onboarding
     write is refused; ``allow_empty_review_pool`` is the owner's confirmation and rides
     on the request only, never into the document."""
-    pool_seams["verdict"] = "no reviewers marked; mark at least one row or save with `allow_empty_review_pool`"
+    from ouroboros.reviewer_slot_config import review_pool_save_error
+
+    verdict = review_pool_save_error(json.dumps(OWNER_DRAFT), allow_empty=False)
+    assert verdict, "an unmarked draft is the rule's refusal case"
     refused = onboarding.client.post("/api/onboarding/complete", json={**WIZARD_PAYLOAD, "OUROBOROS_SUBAGENTS": OWNER_DRAFT})
     assert refused.status_code == 400, refused.text
     assert refused.json()["code"] == "empty_review_pool" and refused.json()["saved"] is False
-    assert refused.json()["error"] == pool_seams["verdict"]
+    assert refused.json()["error"] == verdict
     assert not onboarding.settings_path.exists()
     assert _ids(json.loads(pool_seams["judged"][-1])) == ["helper"]
 
@@ -167,7 +170,7 @@ def test_main_review_recovery_moves_only_marked_rows_onto_main_and_keeps_their_i
          "route": {"kind": "agent_session", "target_id": "cursor=gpt-5.6-sol-xhigh"}},
         helper,
         {"subagent_id": "own-api", "recommended_use": "Checks.", "review_eligible": True, "enabled": False,
-         "effort": "low", "minted_from": "review_lane", "coupling_focus": True, "delivery": "packet",
+         "effort": "low", "minted_from": "review_lane", "delivery": "packet",
          "route": {"kind": "api_model", "target_id": "openai/gpt-5.6-luna"}},
     ]}, settings)
 
@@ -176,7 +179,7 @@ def test_main_review_recovery_moves_only_marked_rows_onto_main_and_keeps_their_i
     assert moved["items"][0] == {"subagent_id": "own-session", "recommended_use": "Reads.", "review_eligible": True,
                                  "route": on_main, "effort": "xhigh", "processing_preference": "standard"}
     assert moved["items"][2] == {"subagent_id": "own-api", "recommended_use": "Checks.", "enabled": False,
-                                 "review_eligible": True, "minted_from": "review_lane", "coupling_focus": True,
+                                 "review_eligible": True, "minted_from": "review_lane",
                                  "route": on_main, "effort": "low", "processing_preference": "standard"}
 
 

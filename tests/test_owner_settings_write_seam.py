@@ -389,29 +389,39 @@ _OWNER_CATALOG = {"enabled": True, "items": [{
 }]}
 
 
+def _spy_on_the_pool_judge(monkeypatch, record):
+    """Package A's real ``review_pool_save_error`` with a call log: the tests below
+    pin WHEN the gateway asks the judge; what it answers is A's own rule."""
+    from ouroboros import reviewer_slot_config
+
+    real = reviewer_slot_config.review_pool_save_error
+
+    def judge(raw, *, allow_empty):
+        record(raw, allow_empty)
+        return real(raw, allow_empty=allow_empty)
+
+    monkeypatch.setattr(reviewer_slot_config, "review_pool_save_error", judge)
+    return real
+
+
 def test_a_changed_catalog_meets_the_empty_pool_rule_and_the_owner_flag_confirms_it(
     monkeypatch, isolated_settings,
 ):
     """Package A's empty-pool rule judges a catalog save as THIS save produces it: its
     text is a typed ``empty_review_pool`` 400 that writes nothing; ``allow_empty_review_pool``
     is the owner's confirmation; a save that re-posts the stored catalog is not judged."""
-    from ouroboros import reviewer_slot_config
     from ouroboros.configured_subagents import SUBAGENTS_SETTING
 
     judged = []
-    verdict = {"text": "no reviewers marked; mark at least one row or save with `allow_empty_review_pool`"}
-
-    def judge(raw, *, allow_empty):
-        judged.append((json.loads(raw)["items"][0]["recommended_use"], allow_empty))
-        return verdict["text"]
-
-    monkeypatch.setattr(reviewer_slot_config, "review_pool_save_error", judge, raising=False)
+    real = _spy_on_the_pool_judge(
+        monkeypatch, lambda raw, allow_empty: judged.append((json.loads(raw)["items"][0]["recommended_use"], allow_empty)))
     client = TestClient(_settings_app(monkeypatch, isolated_settings))
 
     refused = client.post("/api/settings", json={SUBAGENTS_SETTING: _OWNER_CATALOG})
     assert refused.status_code == 400, refused.text
     assert refused.json()["code"] == "empty_review_pool" and refused.json()["saved"] is False
-    assert refused.json()["error"] == verdict["text"]
+    verdict = real(json.dumps(_OWNER_CATALOG), allow_empty=False)
+    assert verdict and refused.json()["error"] == verdict
     assert not isolated_settings.exists()
     assert judged == [("Use for owner-selected work.", False)]
 
@@ -425,8 +435,9 @@ def test_a_changed_catalog_meets_the_empty_pool_rule_and_the_owner_flag_confirms
     assert again.status_code == 200, again.text
     assert len(judged) == 1, "re-posting the stored catalog is not a catalog change"
 
-    verdict["text"] = ""
-    edited = {**_OWNER_CATALOG, "items": [{**_OWNER_CATALOG["items"][0], "recommended_use": "Edited use."}]}
+    # Marking the row is the edit that satisfies the rule: judged, and accepted.
+    edited = {**_OWNER_CATALOG, "items": [{**_OWNER_CATALOG["items"][0], "recommended_use": "Edited use.",
+                                           "review_eligible": True}]}
     accepted = client.post("/api/settings", json={SUBAGENTS_SETTING: edited})
     assert accepted.status_code == 200, accepted.text
     assert judged[-1] == ("Edited use.", False)
@@ -440,17 +451,11 @@ def test_re_posting_the_unsaved_candidate_a_read_showed_is_not_a_catalog_change(
     """With no catalog stored, Settings shows an unsaved candidate and every save re-posts
     it: an unrelated save is not refused by the empty-pool rule (that pool was already the
     install's), while an edited candidate is judged like any catalog change."""
-    from ouroboros import reviewer_slot_config
     from ouroboros.configured_subagents import SUBAGENTS_SETTING
     from ouroboros.gateway import settings as settings_mod
 
     judged = []
-
-    def judge(raw, *, allow_empty):
-        judged.append(len(json.loads(raw)["items"]))
-        return "no reviewers marked; mark at least one row or save with `allow_empty_review_pool`"
-
-    monkeypatch.setattr(reviewer_slot_config, "review_pool_save_error", judge, raising=False)
+    _spy_on_the_pool_judge(monkeypatch, lambda raw, allow_empty: judged.append(len(json.loads(raw)["items"])))
     isolated_settings.write_text(json.dumps({
         "OPENROUTER_API_KEY": "configured", "OUROBOROS_MODEL": "openai/gpt-5.6-sol",
         "OUROBOROS_MODEL_LIGHT": "openai/gpt-5.6-luna",
@@ -475,49 +480,50 @@ def test_re_posting_the_unsaved_candidate_a_read_showed_is_not_a_catalog_change(
 
 
 def test_a_catalog_save_retires_the_stored_review_lanes(monkeypatch, isolated_settings):
-    """The pool replaces the former review lanes: the save that writes a catalog drops
-    ``OUROBOROS_REVIEWER_SLOTS`` from the document, and while that key is still stored
-    even a re-posted catalog is judged, so retiring the lanes never empties review silently."""
-    from ouroboros import reviewer_slot_config
+    """The pool replaces the former review lanes. The read seam migrates readable lanes
+    into catalog marks itself; the one cell where ``OUROBOROS_REVIEWER_SLOTS`` is still
+    in the loaded document is lanes it cannot read. There, even a re-posted catalog is
+    judged (retiring the lanes never empties review silently), and the save that writes
+    a catalog drops the key from the document."""
     from ouroboros.configured_subagents import SUBAGENTS_SETTING, normalize_configured_subagents
 
-    _rows, canonical = normalize_configured_subagents(_OWNER_CATALOG)
-    lanes = json.dumps({"triad": [{"slot_id": "t1", "route": {"kind": "api_chat", "target_id": "openai/gpt-5.6-luna"}}]})
-    isolated_settings.write_text(json.dumps({SUBAGENTS_SETTING: canonical, "OUROBOROS_REVIEWER_SLOTS": lanes}),
+    _rows, unmarked = normalize_configured_subagents(_OWNER_CATALOG)
+    unreadable_lanes = json.dumps({"triad": [{"slot_id": "t1"}]})
+    isolated_settings.write_text(json.dumps({SUBAGENTS_SETTING: unmarked, "OUROBOROS_REVIEWER_SLOTS": unreadable_lanes}),
                                  encoding="utf-8")
     judged = []
-    monkeypatch.setattr(reviewer_slot_config, "review_pool_save_error",
-                        lambda raw, *, allow_empty: judged.append(raw) or "", raising=False)
+    _spy_on_the_pool_judge(monkeypatch, lambda raw, allow_empty: judged.append(raw))
+    client = TestClient(_settings_app(monkeypatch, isolated_settings))
 
-    response = TestClient(_settings_app(monkeypatch, isolated_settings)).post(
-        "/api/settings", json={SUBAGENTS_SETTING: _OWNER_CATALOG})
+    refused = client.post("/api/settings", json={SUBAGENTS_SETTING: _OWNER_CATALOG})
 
-    assert response.status_code == 200, response.text
-    assert judged == [canonical]
+    assert refused.status_code == 400, refused.text
+    assert refused.json()["code"] == "empty_review_pool"
+    assert judged == [unmarked]
+    stored = json.loads(isolated_settings.read_text(encoding="utf-8"))
+    assert stored["OUROBOROS_REVIEWER_SLOTS"] == unreadable_lanes, "a refusal writes nothing"
+
+    marked = {**_OWNER_CATALOG, "items": [{**_OWNER_CATALOG["items"][0], "review_eligible": True}]}
+    _rows, canonical = normalize_configured_subagents(marked)
+    accepted = client.post("/api/settings", json={SUBAGENTS_SETTING: marked})
+
+    assert accepted.status_code == 200, accepted.text
+    assert judged == [unmarked, canonical]
     stored = json.loads(isolated_settings.read_text(encoding="utf-8"))
     assert "OUROBOROS_REVIEWER_SLOTS" not in stored
     assert stored[SUBAGENTS_SETTING] == canonical
 
 
-def _pool_world(monkeypatch, *, state=None, records=None):
-    """Bind the pool seams of packages A and C the endpoint reads (absent before they land)."""
-    from types import SimpleNamespace
-
-    from ouroboros import configured_subagents, reviewer_slot_config, server_maintenance
+def _pool_world(monkeypatch, *, records=None):
+    """The endpoint's durable-state seams (the last-run file, package C's migration
+    records, the tariff lookup) bound in memory; the pool itself is package A's real
+    reading of the catalog under test."""
+    from ouroboros import reviewer_slot_config, server_maintenance
     from ouroboros.gateway import settings as settings_mod
 
-    monkeypatch.setattr(configured_subagents, "_ROW_KEYS",
-                        configured_subagents._ROW_KEYS | {"review_eligible", "delivery", "minted_from"})
-    monkeypatch.setattr(reviewer_slot_config, "review_pool_state",
-                        lambda raw: state or {"state": "structured", "error": ""}, raising=False)
-    monkeypatch.setattr(reviewer_slot_config, "review_pool_slots", lambda env: [
-        SimpleNamespace(subagent_id="api-critic", effort="high"),
-        SimpleNamespace(subagent_id="session-critic", effort="xhigh"),
-        SimpleNamespace(subagent_id="bare-critic", effort="low"),
-    ], raising=False)
     monkeypatch.setattr(reviewer_slot_config, "reviewer_slot_last_executions", lambda: {
         "api-critic": {"surface": "commit_gate", "observed_model": "openai/gpt-5.6-luna", "record_id": "rec-1"}})
-    monkeypatch.setattr(server_maintenance, "review_pool_migration_records", lambda: records or {}, raising=False)
+    monkeypatch.setattr(server_maintenance, "review_pool_migration_records", lambda: records or {})
     monkeypatch.setattr(settings_mod, "_review_pool_costs", lambda items, env: {
         "api-critic": {"usd_per_review": 0.12, "basis": "route_tariff"},
         "session-critic": {"usd_per_review": None, "basis": "subscription_seat"},
@@ -578,14 +584,18 @@ def test_review_pool_endpoint_types_a_bad_catalog_and_names_the_migration_snapsh
         "newer": {"ts": "20261007T214000Z", "snapshot": "state/review_migrations/20261007T214000Z-slots-to-pool.json",
                   "reported": None},
     }
-    settings_mod = _pool_world(monkeypatch, state={"state": "error", "error": "row 2: unknown delivery 'x'"},
-                               records=records)
-    monkeypatch.setenv("OUROBOROS_SUBAGENTS", json.dumps(_POOL_CATALOG))
+    settings_mod = _pool_world(monkeypatch, records=records)
+    unreadable = {**_POOL_CATALOG, "items": [{**_POOL_CATALOG["items"][0], "delivery": "x"}, *_POOL_CATALOG["items"][1:]]}
+    monkeypatch.setenv("OUROBOROS_SUBAGENTS", json.dumps(unreadable))
     response = asyncio.run(settings_mod.api_review_pool(None))
 
     assert response.status_code == 200
     body = json.loads(response.body)
-    assert body["config_error"] == "row 2: unknown delivery 'x'"
+    from ouroboros.reviewer_slot_config import review_pool_state
+
+    expected = review_pool_state(json.dumps(unreadable))
+    assert expected["state"] == "error" and "delivery" in expected["error"]
+    assert body["config_error"] == expected["error"]
     assert body["pool"] == [] and body["excluded"] == [] and body["row_costs"] == {}
     assert body["catalog"]["eligible"] == 4
     assert body["migration"] == {"snapshot": records["newer"]["snapshot"], "reported": False}
