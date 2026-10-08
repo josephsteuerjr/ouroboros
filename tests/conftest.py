@@ -5,6 +5,7 @@
 # runtime cleanup) live in ``tests/_shared.py`` instead.
 import asyncio
 import functools
+import json
 import os
 import pathlib
 import shutil
@@ -694,6 +695,45 @@ def _restore_gateway_settings_bindings_between_tests():
             if value is None:
                 continue
             setattr(_gateway_settings, name, value)
+
+
+def shared_settings_document_left_behind(root: pathlib.Path | None) -> list[str] | None:
+    """The keys of a ``settings.json`` a test left at the worker-shared pytest data root,
+    or ``None`` when nothing was left (or there is no bound root). The file is REMOVED so the
+    victims stay green; the caller names the leaker. Plain function so the contract is
+    testable without pytest plumbing."""
+    if root is None:
+        return None
+    path = root / "settings.json"
+    if not path.exists():
+        return None
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+        keys = sorted(document) if isinstance(document, dict) else ["<not a JSON object>"]
+    except (OSError, ValueError):
+        keys = ["<unreadable>"]
+    path.unlink()
+    return keys
+
+
+@pytest.fixture(autouse=True)
+def _no_settings_document_left_at_the_shared_root():
+    """``config.SETTINGS_PATH`` is bound ONCE per xdist worker (``_bind_pytest_runtime_roots``)
+    and nothing resets the file between tests, so a test that persists a document there hands
+    its settings to every later test of that worker — a document without a subagent catalog
+    reads, since the read seam mints the factory reviewer rows for it, as a disk catalog that
+    shadowed the victims' ``OUROBOROS_SUBAGENTS`` (five ``delegate_start`` refusals in
+    tests/test_delegated_skill_payload.py after ``test_extensions_api.py``'s settings POST,
+    whose ``server.save_settings`` patch never covered the gateway's owner writer). Name the
+    leaker, not the victim: the test that left the file fails, and the file is removed."""
+    yield
+    keys = shared_settings_document_left_behind(_PYTEST_DATA_DIR)
+    if keys is not None:
+        pytest.fail(
+            "this test left a settings document at the worker-shared pytest data root "
+            f"({_PYTEST_DATA_DIR / 'settings.json'}; keys: {', '.join(keys)}); point "
+            "ouroboros.config.SETTINGS_PATH at the test's own tree (monkeypatch) or patch the writer it reaches"
+        )
 
 
 @pytest.fixture(autouse=True)
