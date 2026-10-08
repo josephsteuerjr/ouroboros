@@ -1,8 +1,9 @@
-"""Every reviewed commit runs the tests before its panel, and lands only in the system repository.
+"""Reviewed commits apply the test policy before the pool panel in the system repository.
 
 The advisory bypass this module used to pin is gone with the advisory (decision 3A): the
-deterministic checks and the tests preflight run ahead of the triad + scope panel for every
-commit, whether a preflight row was named, nothing was named, or the look was skipped.
+deterministic checks and required tests run ahead of the review pool panel. A doc-only diff
+without a named preflight row is exempt from the suite under the diff-aware test policy;
+naming a row requires the suite. Skipping the look does not waive applicable tests.
 """
 import subprocess
 
