@@ -456,10 +456,14 @@ def _startup_review_pool_notice(settings: dict) -> None:
     ``state/review_migrations/<ts>-slots-to-pool.json`` (the lanes and keys as read,
     every effective seat before, the catalog after, the row report) written ONCE per
     document digest, and ONE English owner-chat message (``review_pool_migration.owner_message``)
-    once an owner chat is bound. A migration that could not finish is recorded and reported
+    once an owner chat is bound.     A migration that could not finish is recorded and reported
     the same way (its snapshot carries the error; the lane keys stay in the document for the
     owner's catalog save). A no-op outcome (the catalog was already a pool) leaves no
-    receipt: nothing changed.
+    receipt: nothing changed. ``settings`` is what RUNS (the environment merged over the
+    document): when the rows the seam minted for a document without review settings of its
+    own were overridden by the catalog the environment carries
+    (``review_pool_migration.environment_overridable_keys``), the message says so and names
+    THAT pool — loudly empty when none of its rows is marked — instead of the minted rows.
     """
     try:
         from ouroboros.config import review_pool_migrations_seen
@@ -485,7 +489,10 @@ def _startup_review_pool_notice(settings: dict) -> None:
                 log.info("review pool migration snapshot written: %s", record["snapshot"])
             if record.get("reported") or not owner_chat:
                 continue
-            text = owner_message(outcome, str(record.get("snapshot") or ""))
+            snapshot_path = str(record.get("snapshot") or "")
+            in_force = _environment_catalog_in_force(outcome, settings)
+            text = (_environment_pool_message(snapshot_path, in_force) if in_force is not None
+                    else owner_message(outcome, snapshot_path))
             if not text:
                 continue
             send_with_budget(owner_chat, text, role="system", system_type=REVIEW_POOL_NOTICE_TYPE)
@@ -493,6 +500,48 @@ def _startup_review_pool_notice(settings: dict) -> None:
             _record_review_pool_migration(update_state, outcome.input_sha256, record)
     except Exception:
         log.debug("review pool migration notice failed", exc_info=True)
+
+
+def _environment_catalog_in_force(outcome: Any, settings: dict) -> str | None:
+    """The catalog that RUNS in place of the rows the migration minted for ``outcome``'s
+    document, or ``None`` when the minted rows run (or nothing was minted). The seam's
+    rows are a default only where the document authored no lanes and saved no catalog
+    (``environment_overridable_keys`` over the snapshot's ``before``: the lanes key and
+    the catalog as read), and the settings reader lets the environment's catalog win
+    exactly there — so a catalog in force that is not the minted one is the environment's."""
+    from ouroboros.review_pool_migration import REVIEWER_SLOTS_KEY, SUBAGENTS_KEY, environment_overridable_keys
+
+    minted = str(getattr(outcome, "catalog_after", None) or "")
+    before = (getattr(outcome, "snapshot", None) or {}).get("before") or {}
+    as_read = {key: before[key] for key in (REVIEWER_SLOTS_KEY, SUBAGENTS_KEY) if before.get(key) is not None}
+    if not minted or SUBAGENTS_KEY not in environment_overridable_keys(as_read):
+        return None
+    running = str(settings.get(SUBAGENTS_KEY) or "")
+    return None if running == minted else running
+
+
+def _environment_pool_message(snapshot_path: str, catalog_text: str) -> str:
+    """The ONE owner-chat message when the catalog the environment carries, not the factory
+    rows the migration prepared, is the review pool: it names what runs, and says loudly
+    when that is nothing (``pool_empty`` — a configured fact, never a default panel)."""
+    from ouroboros import reviewer_slot_config as rs
+
+    where = f"Snapshot: {snapshot_path}." if snapshot_path else "No snapshot could be written."
+    head = ("⚙️ Review pool: the subagent catalog set in the environment (OUROBOROS_SUBAGENTS) is in force. "
+            "This document had no review settings of its own (no authored review lanes, no saved subagent "
+            "catalog), so the factory reviewer rows were prepared for it — but a catalog the environment "
+            "carries is explicit configuration and runs instead; the factory rows do not.")
+    state = rs.review_pool_state(catalog_text)
+    if state["state"] == "error":
+        body = f"That catalog cannot be read ({state['error']}): no review runs until it is repaired."
+    elif state["state"] == "empty":
+        body = ("None of its rows is marked “Reviewer”, so the review pool is empty (pool_empty): reviews will not "
+                "run and will report not performed.")
+    else:
+        rows = rs.review_pool_rows({"OUROBOROS_SUBAGENTS": catalog_text})
+        body = (f"{len(rows)} reviewer rows, {len({row.target_id for row in rows})} distinct models: "
+                + "; ".join(f"{row.slot_id} ({row.target_id})" for row in rows) + ".")
+    return "\n".join([head, body, f"{where} Adjust in Settings → Agents or in the environment."])
 
 
 def _record_review_pool_migration(update_state, digest: str, record: dict) -> None:

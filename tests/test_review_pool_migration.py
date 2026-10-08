@@ -898,14 +898,21 @@ def test_m1_a_direct_provider_structural_empty_catalog_stays_empty(key):
     {"OUROBOROS_MODEL": "x/y", "OPENROUTER_API_KEY": "present"},
     {"OUROBOROS_MODEL": "x/y", "OPENROUTER_API_KEY": "present", SUBAGENTS: ""},
     {"TOTAL_BUDGET": 1.0},
-], ids=["provider-key-only", "blank-catalog-string", "no-provider"])
-def test_m1_an_environment_catalog_wins_over_the_factory_rows_of_a_never_configured_file(
+    {"OUROBOROS_REVIEW_MODELS": "a/one, b/two", "OPENROUTER_API_KEY": "present"},
+    {SLOTS: "", SUBAGENTS: "", "OPENROUTER_API_KEY": "present"},
+    {SLOTS: "  ", "OPENROUTER_API_KEY": "present"},
+], ids=["provider-key-only", "blank-catalog-string", "no-provider", "retired-comma-keys", "ui-saved-blank-lanes",
+        "whitespace-lanes"])
+def test_m1_an_environment_catalog_wins_over_the_factory_rows_of_a_document_that_authored_none(
         tmp_path, monkeypatch, document):
-    """The factory rows the seam mints for a never-configured document stand in for an
-    ABSENT catalog; they are not the owner's disk value. A catalog the environment carries
-    (``docker run -e OUROBOROS_SUBAGENTS=…`` over a mounted volume the wizard never saw)
-    therefore wins over them, exactly as it won over the absence before M1 — without the
-    environment catalog the same file still reads the factory pool (M1 stays)."""
+    """The factory rows the seam mints for a document that authored NO review lanes and saved
+    no catalog stand in for an ABSENT catalog; they are not the owner's disk value. That is
+    the never-configured install, the pre-structured document whose retired comma keys never
+    entered the panel (canon 11: such an install ran the shipped default rows), and the
+    6.90+ document the UI saved with ``""`` for both keys (N1). A catalog the environment
+    carries (``docker run -e OUROBOROS_SUBAGENTS=…`` over a mounted volume the wizard never
+    saw) therefore wins over them, exactly as it won over the absence before M1 — without
+    the environment catalog the same file still reads the factory pool (M1 stays)."""
     from ouroboros import reviewer_slot_config as rs
 
     path = tmp_path / "settings.json"
@@ -917,6 +924,7 @@ def test_m1_an_environment_catalog_wins_over_the_factory_rows_of_a_never_configu
     settings = cfg.load_settings_lock_held(_settings_lock_held=False)
     assert settings[SUBAGENTS] == env_pool
     assert [row.slot_id for row in rs.review_pool_rows(settings)] == ["mine"]
+    assert m.environment_overridable_keys(document) == {SUBAGENTS}
 
     monkeypatch.delenv(SUBAGENTS)
     factory = cfg.load_settings_lock_held(_settings_lock_held=False)
@@ -927,20 +935,72 @@ def test_m1_an_environment_catalog_wins_over_the_factory_rows_of_a_never_configu
 @pytest.mark.parametrize("document", [
     {SLOTS: lanes(triad=[direct("t1", "lane/model", "high")], scope=[direct("s1", "lane/model", "high")]),
      "OPENROUTER_API_KEY": "present"},
-    {"OUROBOROS_REVIEW_MODELS": "a/one, b/two", "OPENROUTER_API_KEY": "present"},
     {SUBAGENTS: catalog(api_row("saved", "disk/model", "high", review_eligible=True))},
-], ids=["authored-lane", "retired-comma-keys", "saved-catalog"])
+    {SLOTS: "", SUBAGENTS: catalog(api_row("helper", "disk/model", "high"))},
+], ids=["authored-lane", "saved-catalog", "blank-lanes-over-a-saved-unmarked-catalog"])
 def test_rows_the_owner_authored_on_disk_still_shadow_an_environment_catalog(tmp_path, monkeypatch, document):
-    """The other side of the same rule: a catalog the owner saved, or rows minted from the
-    owner's own lanes or retired comma keys, ARE the document's decision and keep shadowing
-    the environment the way every disk-authored key does."""
+    """The other side of the same rule: a catalog the owner saved (marked or not — the
+    migration marks or mints INTO it), or rows minted from the owner's own lanes, ARE the
+    document's decision and keep shadowing the environment the way every disk-authored key
+    does."""
     path = tmp_path / "settings.json"
     path.write_text(json.dumps(document), encoding="utf-8")
     monkeypatch.setattr(cfg, "SETTINGS_PATH", path)
+    assert m.environment_overridable_keys(document) == frozenset()
     monkeypatch.setenv(SUBAGENTS, catalog(api_row("mine", "env/model", "high", review_eligible=True)))
     settings = cfg.load_settings_lock_held(_settings_lock_held=False)
     assert "mine" not in settings[SUBAGENTS]
     assert settings[SUBAGENTS] == cfg.normalize_settings_raw(dict(document))[SUBAGENTS]
+
+
+def test_n1_the_ui_saved_n_minus_1_document_does_not_shadow_an_environment_catalog(tmp_path, monkeypatch):
+    """N1 (FIX4's disclosed residual): the real N-1 document the UI saved —
+    ``OUROBOROS_REVIEWER_SLOTS: ""`` and ``OUROBOROS_SUBAGENTS: ""`` beside the retired comma
+    keys — authored no lanes and no catalog, so the rows the seam mints for it are a default.
+    Beside an environment catalog: the environment's rows are the pool (not lost); when none
+    of them is marked the pool is loudly EMPTY (``pool_empty`` in the ``## Review`` block, no
+    migration receipt claimed for it) — never silently the factory rows. Without the
+    environment catalog the document still reads its factory rows (M1 stays)."""
+    import os
+
+    from ouroboros import reviewer_slot_config as rs
+    from ouroboros import subagent_runtime
+    from ouroboros.settings_integrity import task_settings_snapshot
+
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps(N1_DOC), encoding="utf-8")
+    monkeypatch.setattr(cfg, "SETTINGS_PATH", path)
+    for key in m._SHA_PRESENCE_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    assert m.migration_trigger(N1_DOC) == m.TRIGGER_LANES_KEY, "the UI wrote the lanes key as \"\": the first trigger"
+
+    def block(settings):
+        snapshot = task_settings_snapshot(settings, {**os.environ, SUBAGENTS: settings[SUBAGENTS]})
+        return json.loads(subagent_runtime.review_facts_block(snapshot).split("\n\n", 1)[1])
+
+    marked = catalog(api_row("mine", "env/model", "high", review_eligible=True))
+    monkeypatch.setenv(SUBAGENTS, marked)
+    settings = cfg.load_settings_lock_held(_settings_lock_held=False)
+    assert [row.slot_id for row in rs.review_pool_rows(settings)] == ["mine"], "the environment catalog is not lost"
+    assert settings[SUBAGENTS] == marked and m.environment_overridable_keys(N1_DOC) == {SUBAGENTS}
+    facts = block(settings)
+    assert (facts["source"], facts["pool_empty"], [row["seat_id"] for row in facts["pool"]]) == ("structured", False, ["mine"])
+
+    unmarked = catalog(api_row("helper", "env/model", "high"))
+    monkeypatch.setenv(SUBAGENTS, unmarked)
+    settings = cfg.load_settings_lock_held(_settings_lock_held=False)
+    assert settings[SUBAGENTS] == unmarked and rs.review_pool_rows(settings) == []
+    assert rs.review_pool_state(settings[SUBAGENTS]) == {"state": "empty", "error": ""}
+    facts = block(settings)
+    assert (facts["source"], facts["pool_empty"], facts["pool"], facts["error"]) == ("empty", True, [], "")
+    assert "migration_snapshot" not in facts, "the environment's pool was not decided by the document's migration"
+
+    monkeypatch.delenv(SUBAGENTS)
+    factory = cfg.load_settings_lock_held(_settings_lock_held=False)
+    items = json.loads(factory[SUBAGENTS])["items"]
+    assert _marked(items) == ["review-1", "review-2", "review-3"]
+    assert all(row["minted_from"] == "factory_default" for row in items if row.get("review_eligible"))
+    assert [row.slot_id for row in rs.review_pool_rows(factory)] == ["review-1", "review-2", "review-3"]
 
 
 def test_m1_a_retired_comma_keys_document_is_distinguished_from_a_fresh_install():
@@ -1168,6 +1228,53 @@ def test_without_an_owner_chat_the_snapshot_is_written_but_the_message_waits(boo
     assert "shipped default review lanes" in sent[0][1]
     server_maintenance._startup_review_pool_notice(loaded)
     assert len(sent) == 1
+
+
+@pytest.mark.parametrize("document", [N1_DOC, {"OUROBOROS_MODEL": "x/y", "OPENROUTER_API_KEY": "present"}],
+                         ids=["ui-saved-n-minus-1", "never-configured"])
+def test_n1_the_boot_notice_names_the_environment_pool_in_force_not_the_minted_rows(boot, monkeypatch, document):
+    """N1: when the environment's catalog runs in place of the rows the seam minted for a
+    document without review settings of its own, the owner is told THAT — which rows run,
+    or that none is marked (``pool_empty``) — not that the factory rows run or that the
+    default lanes became the pool. The snapshot is still written: it is the receipt of
+    what the migration computed for the document. Without the environment catalog the
+    message is the migration's own."""
+    root, sent = boot
+    state.update_state(lambda st: st.__setitem__("owner_chat_id", 7))
+    path = root / "settings.json"
+    path.write_text(json.dumps(document), encoding="utf-8")
+    monkeypatch.setattr(cfg, "SETTINGS_PATH", path)
+    for key in m._SHA_PRESENCE_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    minted_claims = ("factory reviewer rows run", "became one review pool", "— new row", "— marked")
+
+    def boot_with(env_catalog):
+        m._MIGRATIONS_SEEN.clear()
+        state.update_state(lambda st: st.pop(server_maintenance.REVIEW_POOL_MIGRATION_STATE_KEY, None))
+        if env_catalog is None:
+            monkeypatch.delenv(SUBAGENTS, raising=False)
+        else:
+            monkeypatch.setenv(SUBAGENTS, env_catalog)
+        settings = cfg.load_settings_lock_held(_settings_lock_held=False)
+        before = len(sent)
+        server_maintenance._startup_review_pool_notice(settings)
+        assert len(sent) == before + 1
+        return sent[-1][1]
+
+    text = boot_with(catalog(api_row("mine", "env/model", "high", review_eligible=True)))
+    assert "the subagent catalog set in the environment (OUROBOROS_SUBAGENTS) is in force" in text
+    assert "1 reviewer rows, 1 distinct models: mine (env/model)." in text and "the factory rows do not" in text
+    assert not any(claim in text for claim in minted_claims)
+    assert len(_snapshots(root)) == 1 and _snapshots(root)[0].name in text
+
+    text = boot_with(catalog(api_row("helper", "env/model", "high")))
+    assert "is in force" in text and "the review pool is empty (pool_empty)" in text
+    assert "will not run and will report not performed" in text and not any(claim in text for claim in minted_claims)
+
+    text = boot_with(None)
+    assert "is in force" not in text and "pool_empty" not in text
+    assert text == m.owner_message(cfg.review_pool_migrations_seen()[0], f"state/review_migrations/{_snapshots(root)[-1].name}")
+    assert ("Review pool initialized" in text) == (m.migration_trigger(document) == m.TRIGGER_NEVER_CONFIGURED)
 
 
 def test_a_refused_migration_is_recorded_and_reported_with_its_error(boot):
