@@ -477,7 +477,7 @@ def test_commit_contract_fingerprint_tracks_resolved_review_efforts(monkeypatch)
     RESOLVED efforts, so a pool row's effort change lapses refusal/replay. PR-3:
     the pool reads no global review effort — a row with no effort of its own
     reviews at the pool default — so only the ROW's value moves the fingerprint.
-    (The scope-review effort leg is the lane's, removed with it by package B.)"""
+    (The scope-review effort leg was the lane's; the fold that read it is gone, I3-B2.)"""
     import json
 
     from ouroboros.tools.commit_gate import commit_review_contract_fingerprint
@@ -491,7 +491,6 @@ def test_commit_contract_fingerprint_tracks_resolved_review_efforts(monkeypatch)
 
     monkeypatch.setenv("OUROBOROS_SUBAGENTS", _catalog("high"))
     monkeypatch.setenv("OUROBOROS_EFFORT_REVIEW", "high")
-    monkeypatch.setenv("OUROBOROS_EFFORT_SCOPE_REVIEW", "high")
     base = commit_review_contract_fingerprint()
     assert base and len(base) == 64
     monkeypatch.setenv("OUROBOROS_EFFORT_REVIEW", "low")
@@ -501,7 +500,7 @@ def test_commit_contract_fingerprint_tracks_resolved_review_efforts(monkeypatch)
     monkeypatch.setenv("OUROBOROS_SUBAGENTS", _catalog("high"))
     assert base == commit_review_contract_fingerprint()
     monkeypatch.setenv("OUROBOROS_EFFORT_SCOPE_REVIEW", "low")
-    assert base != commit_review_contract_fingerprint()
+    assert base == commit_review_contract_fingerprint()  # the retired scope-lane effort is not a pool fact either
 
 
 def _write_history(drive_root, skill, rows):

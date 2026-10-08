@@ -50,9 +50,10 @@ def test_contributor_config_roundtrip_keeps_direct_api_delivery(monkeypatch, del
     assert resolved['pool_slots'][0].get('delivery', '') == (delivery or 'native')
     monkeypatch.setenv('OUROBOROS_SUBAGENTS', _frozen_pool_catalog(resolved))
     assert review_pool_rows()[0].native_retrieval is (not refused)
-    assert _diff_size_refusal(SimpleNamespace(contributor=True), resolved, 101, 100) is refused
-    assert _diff_size_refusal(SimpleNamespace(contributor=True), resolved, 100, 100) is False
-    assert _diff_size_refusal(SimpleNamespace(contributor=False), resolved, 101, 100) is True
+    # I3-D1: the cap binds a packet seat on either lane; the operator lane is not refused on its own.
+    for lane in (SimpleNamespace(contributor=True), SimpleNamespace(contributor=False)):
+        assert _diff_size_refusal(lane, resolved, 101, 100) is refused
+        assert _diff_size_refusal(lane, resolved, 100, 100) is False
 
 
 def test_contributor_mixed_panel_keeps_packet_limit():

@@ -30,7 +30,7 @@ def test_shared_project_receipts_bind_final_retirement_after_all_slots_settle(tm
     from scripts.contributor_review_evidence import bind_execution_receipts
 
     config = {
-        "triad_slots": [{
+        "pool_slots": [{
             "slot_id": slot_id,
             "route": {
                 "kind": "agent_session",
@@ -39,7 +39,6 @@ def test_shared_project_receipts_bind_final_retirement_after_all_slots_settle(tm
             },
             "effort": "high",
         } for slot_id in ("slot_1", "slot_2")],
-        "scope_slots": [],
     }
     actors = []
     for index, slot_id in enumerate(("slot_1", "slot_2"), start=1):
@@ -76,7 +75,7 @@ def test_shared_project_receipts_bind_final_retirement_after_all_slots_settle(tm
                 },
             },
         )
-        actors.append(("triad", {
+        actors.append(("pool", {
             "slot_id": slot_id, "status": "responded",
             "prompt_ref": prompt_ref, "response_ref": response_ref,
         }))

@@ -951,19 +951,17 @@ def _apply_contributor_landing_obligations(
     }
 
 
-def _diff_size_refusal(args, resolved_config: dict, reviewable_chars: int, cap: int) -> bool:
-    """The cap binds packet recipients; configured retrieving actors read files.
-
-    Scope rows always retrieve; only triad rows can receive a packet. The
-    operator lane keeps the cap for every panel. Native API actors remain paid
-    seats even though they do not receive a packet.
+def _diff_size_refusal(_args, resolved_config: dict, reviewable_chars: int, cap: int) -> bool:
+    """The cap binds where the gate's admission binds: a pool seat that receives
+    the diff as prompt text. Retrieving seats (sessions, native api rows) read
+    the files and are not bound, so a panel of retrieving seats is never refused
+    here — on either lane; the per-model capacity itself stays the gate's
+    (``fit_triad_prompt`` refuses typed, $0, where a packet does not fit).
     """
     from ouroboros.reviewer_slot_config import row_plan_retrieves
 
     if reviewable_chars <= cap:
         return False
-    if not getattr(args, "contributor", False):
-        return True
     return any(
         not row_plan_retrieves({
             "routes": [(row.get("route") or {}).get("kind")],

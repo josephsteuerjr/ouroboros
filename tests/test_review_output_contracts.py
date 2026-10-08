@@ -93,18 +93,3 @@ class TestReviewContractModes:
         assert "NO_FINDINGS" in REVIEW_JSON_ARRAY_CONTRACT
         assert "NO_FINDINGS" not in REVIEW_JSON_MATRIX_CONTRACT
         assert "one entry per required checklist item" in REVIEW_JSON_MATRIX_CONTRACT
-
-    def test_rendered_scope_prompt_offers_no_all_clear(self):
-        """The scope parser rejects an empty array as all eight items missing,
-        so the prompt it is paired with must not advertise the sentinel."""
-        from ouroboros.tools.review_synthesis import build_scope_review_prompt
-
-        rendered = "".join(
-            part for part in build_scope_review_prompt(
-                "files", scope_checklist="cl", canonical_docs="docs",
-                intent_context="intent", history_block="hist", diff_text="diff",
-                repo_pack_placeholder="atlas", critical_calibration="calib",
-            ) if isinstance(part, str)
-        )
-        assert "NO_FINDINGS" not in rendered
-        assert "one entry per required checklist item" in rendered
