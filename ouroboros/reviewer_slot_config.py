@@ -200,16 +200,6 @@ class ReviewerSlotConfig:
     deep_review: Optional[ConfiguredReviewerSlot] = None
 
 
-# removed by package A after package C freezes the lane readers.
-def structured_reviewer_slots_raw() -> str:
-    return str(runtime_setting(REVIEWER_SLOTS_ENV, "") or "").strip()
-
-
-# removed by package A after package C freezes the lane readers.
-def structured_reviewer_slots_present() -> bool:
-    return bool(structured_reviewer_slots_raw())
-
-
 def _valid_effort(value: Any, where: str) -> str:
     if value is None:
         return ""
@@ -798,12 +788,8 @@ def _default_config() -> ReviewerSlotConfig:
 # removed by package A after package C freezes the lane readers (its remaining
 # readers are the lane consumers packages B/D/E move to ``review_pool_slots``).
 def load_reviewer_slot_config() -> ReviewerSlotConfig:
-    """The lane loader: structured when present, the shipped default panel otherwise;
-    inside ``composed_review_panel`` the composition that wave was given."""
-    composed = _COMPOSED_PANEL.get()
-    if composed is not None:
-        return composed
-    raw = structured_reviewer_slots_raw()
+    """The lane loader: structured when present, the shipped default panel otherwise."""
+    raw = str(runtime_setting(REVIEWER_SLOTS_ENV, "") or "").strip()
     if raw:
         return parse_reviewer_slots(raw)
     return _default_config()
@@ -847,41 +833,6 @@ def composed_pool_seats() -> Optional[Tuple[PoolSeat, ...]]:
     projection reads a seat's ``parts`` from here; the ledger's ``seat_parts``
     derives them from delivery for the configured pool)."""
     return _COMPOSED_POOL.get()
-
-
-# removed by package D (``review_change.compose_panel`` → ``composed_review_pool``):
-# the PR-2 lane-shaped seam, kept so the author's wave composes until D lands; it
-# threads the triad rows into the composed POOL and keeps scope on the lane seam.
-_COMPOSED_PANEL: "_contextvars.ContextVar[Optional[ReviewerSlotConfig]]" = _contextvars.ContextVar(
-    "review_composed_panel", default=None)
-
-
-@_contextlib.contextmanager
-def composed_review_panel(triad: Sequence[ConfiguredReviewerSlot], scope: Sequence[ConfiguredReviewerSlot]):
-    """Every panel reader in this block sees exactly these triad/scope rows; the
-    advisory and deep-review rows stay the configured ones."""
-    from ouroboros.config import REVIEW_POOL_DEFAULT_EFFORT
-
-    seats = tuple(
-        PoolSeat(_delivery_slot(row, effort_surface="review", role_hint="multi-model review",
-                                effort_fallback=REVIEW_POOL_DEFAULT_EFFORT),
-                 ("change", "coupling") if row.retrieves else ("change",))
-        for row in triad
-    )
-    token = _COMPOSED_PANEL.set(replace(load_reviewer_slot_config(), triad=tuple(triad), scope=tuple(scope)))
-    pool_token = _COMPOSED_POOL.set(seats)
-    try:
-        yield
-    finally:
-        _COMPOSED_POOL.reset(pool_token)
-        _COMPOSED_PANEL.reset(token)
-
-
-# removed by package D (``catalog_review_row`` names the row by handle or id).
-def roster_review_row(slot_id: str, subagent_id: str) -> ConfiguredReviewerSlot:
-    """A configured subagent seated as one reviewer row (its roster route and
-    effort); an unknown or disabled roster id raises the parser's ValueError."""
-    return _resolve_actor_slot(slot_id, subagent_id, "", f"review seat {slot_id!r}")
 
 
 def row_at_effort_order(row: ConfiguredReviewerSlot, effort: str) -> Optional[ConfiguredReviewerSlot]:
@@ -1560,6 +1511,4 @@ __all__ = [
     "project_reviewer_slots_into_env",
     "acceptance_delivery_disclosure",
     "reviewer_slot_save_check",
-    "structured_reviewer_slots_present",
-    "structured_reviewer_slots_raw",
 ]

@@ -303,7 +303,6 @@ class ReviewCoordinator:
             "plan_review",
             "skill_review",
             "task_acceptance",
-            "advisory_review",
         }
         route_owned_executor = (
             str(getattr(getattr(self._run_slot, "__func__", None), "__module__", ""))

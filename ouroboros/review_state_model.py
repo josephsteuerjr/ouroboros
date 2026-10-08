@@ -800,21 +800,6 @@ class AdvisoryReviewState:
         self._coalesce_open_obligations()
         return _rs()._dedupe_strings(touched_ids)
 
-    def resolve_obligations(
-        self,
-        resolved_ids: List[str],
-        resolved_by: str = "",
-        repo_key: str | None = None,
-    ) -> int:
-        count = 0
-        for ob in _rs()._filter_repo_scope(self.open_obligations, repo_key):
-            if ob.obligation_id not in resolved_ids or ob.status != "still_open":
-                continue
-            ob.status = "resolved"
-            ob.resolved_by = resolved_by
-            count += 1
-        return count
-
     def get_open_obligations(self, repo_key: str | None = None) -> List[ObligationItem]:
         return [
             ob for ob in _rs()._filter_repo_scope(self.open_obligations, repo_key)

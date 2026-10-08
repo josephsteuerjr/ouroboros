@@ -141,8 +141,8 @@ def get_review_enforcement() -> str:
     return raw if raw in {"advisory", "blocking"} else default_val
 
 
-# removed by package B (the scope lane's model list; its last readers are
-# ``review_substrate.scope_reviewer_slots`` and ``tools/scope_review.py``).
+# removed by package B (the scope lane's model list; the fold that read it is gone
+# with I3-B2, its remaining readers are the lane-era tests and the ``config`` re-export).
 def get_scope_review_models() -> list[str]:
     """Return effective scope reviewer models, preserving duplicate model IDs."""
     default_str = ",".join(OPENROUTER_REVIEW_DEFAULTS["scope"])
