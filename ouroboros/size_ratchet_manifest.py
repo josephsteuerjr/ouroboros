@@ -192,6 +192,7 @@ BAND_PATHS = {
     "tests/test_chat_attachments.py": "New owner chat attachments contract suite: measured refs, the confined upload route, the pending guard, one canonical row with the same views live and on replay, skill/transport ingress and the Windows handle proof share one upload/ingress harness; splitting it would duplicate those fixtures.",
     "tests/test_child_drive_settlement.py": "Entered the band from 850 lines with the exact-review repair probes (current-bytes custody of mutable files, per-row input closure across mailbox cleanup, create-only placement, cancel-under-lock, generation fences, lock order): one probe per finding beside the settlement suite they constrain; split when a second custody surface lands.",
     "tests/test_claudexor_runtime_delivery.py": "One suite pins managed runtime delivery end to end: closure install, exact Node selection and both POSIX tar.gz and Windows ZIP Node/npm toolchain extraction.",
+    "tests/test_claudexor_startup_failure.py": "The shared-log exit matrix reuses diagnostic fixtures in the existing classifier and startup-latch test owner.",
     "tests/test_commit_gate.py": None,
     "tests/test_cybergym_dispatch.py": "CyberGym dispatch tests cover completion-order admission, transient gateway pauses and budget-refusal recovery through one existing fake campaign harness.",
     "tests/test_cybergym_docker.py": "CyberGym workspace custody tests cover atomic gateway transfer, recovery and durable-result acknowledgement using the same attested fake container fixtures.",
