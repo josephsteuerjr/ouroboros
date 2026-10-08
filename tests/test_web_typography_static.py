@@ -166,8 +166,10 @@ def test_chat_reading_ladder_is_relative_and_read_only_by_chat_headings() -> Non
     """The one exception to the closed scale (docs/DESIGN.md §1): Markdown
     headings in a full rich chat answer step up from the bubble's own reading
     text. The steps are relative, so they cannot become a fifth UI size, and
-    only the rich answer's heading rules may read them: compact Markdown in a
-    bubble (a Skill Review report) keeps its --type-body labels."""
+    only the rich answer's heading rules may read them — shared, in the same
+    rules, with a delivered document in the reader (DESIGN "Document reading"):
+    compact Markdown in a bubble (a Skill Review report) keeps its --type-body
+    labels."""
     root = _root_declarations("web/ui.css")
     ladder = {"--md-heading-major": "1.25em", "--md-heading-minor": "1.125em"}
     assert {name: root.get(name) for name in ladder} == ladder
@@ -178,8 +180,8 @@ def test_chat_reading_ladder_is_relative_and_read_only_by_chat_headings() -> Non
         if any(f"var({name})" in body for name in ladder)
     ]
     assert readers == [
-        ".chat-bubble .message:where(.ui-rich-content) :is(.md-h1, .md-h2)",
-        ".chat-bubble .message:where(.ui-rich-content) .md-h3",
+        ".chat-bubble .message:where(.ui-rich-content) :is(.md-h1, .md-h2), .document-reader-markdown :is(.md-h1, .md-h2)",
+        ".chat-bubble .message:where(.ui-rich-content) .md-h3, .document-reader-markdown .md-h3",
     ], readers
 
 

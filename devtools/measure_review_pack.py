@@ -162,19 +162,14 @@ def _panel_rows(plan: dict) -> list[dict]:
 
 
 def _checklist_section(repo: pathlib.Path) -> str:
-    """``review._load_checklist_section()`` read from the TARGET checkout.
+    """``review._load_checklist_section()`` (body layer) read from the TARGET checkout.
 
     The runtime reads the checklist from its own REPO_ROOT (a frozen contract);
-    this measurer measures one checkout, so the same section + archive come from
-    ``repo``."""
-    path = repo / "docs" / "CHECKLISTS.md"
-    text = path.read_text(encoding="utf-8")
-    header = "## Repo Commit Checklist"
-    start = text.find(header)
-    if start == -1:
-        raise ValueError(f"Section {header!r} not found in {path}")
-    end = text.find("\n## ", start + len(header))
-    section = text[start:] if end == -1 else text[start:end]
+    this measurer measures one checkout, so the same layered sections + archive
+    come from ``repo`` (``review_helpers.load_checklist_layers`` pointed at it)."""
+    from ouroboros.tools.review_helpers import load_checklist_layers
+
+    section = load_checklist_layers("body", repo / "docs" / "CHECKLISTS.md")
     archive = (repo / "docs" / "CHECKLISTS_ARCHIVE.md").read_text(encoding="utf-8").strip()
     return f"{section}\n\n{archive}" if archive else section
 
@@ -203,7 +198,10 @@ def _governance_prefix(
     carries: tier 1 rides the cache-marked stable prefix, the change-class
     selection and the navigation maps open the dynamic tail. A panel with no api
     row assembles no packet, so it asks for no governance — the same branch the
-    runtime takes. Everything is read from ``repo``, never from this checkout."""
+    runtime takes. The principal checklist and repository documents are read
+    from ``repo``; the shared ownership section follows the runtime loader and
+    comes from the executing checkout. Cross-checkout measurements therefore
+    retain that disclosed mixed-source boundary."""
     from ouroboros.tools import review
     from ouroboros.tools.governance_context import GovernanceContext, governance_context
 
@@ -218,10 +216,10 @@ def _governance_prefix(
         already_inline=("BIBLE.md", "docs/CHECKLISTS_ARCHIVE.md"),
     ) if api_models else GovernanceContext()
     stable = review._REVIEW_PROMPT_TEMPLATE_STABLE.format(
-        preamble=review.REVIEW_PREAMBLE,
+        preamble=review.review_preamble("body"),
         critical_calibration=review.CRITICAL_FINDING_CALIBRATION,
         json_contract=review.REVIEW_JSON_ARRAY_CONTRACT,
-        anti_pattern_lock_guard=review.REPO_ANTI_PATTERN_LOCK_GUARD,
+        anti_pattern_lock_guard=review.anti_pattern_lock_guard("body"),
         checklist_section=checklist,
     ) + (f"\n{governance.stable_inline}\n" if governance.stable_inline.strip() else "")
     tail = "\n\n".join(

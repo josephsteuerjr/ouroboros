@@ -799,8 +799,8 @@ def test_reflection_preparation_failure_degrades_the_checkpoint_with_a_typed_row
     monkeypatch.setattr(pipeline, "_run_reflection", post_task_synthesis._run_reflection)
     monkeypatch.setattr(reflection, "should_generate_reflection", lambda *a, **k: True)
 
-    def unwritable(*_args, **_kwargs):
-        f.stages.append("retain")
+    def unwritable(_context, source_id, *_args, **_kwargs):
+        f.stages.append("retain:" + source_id)
         raise RuntimeError("retention store unwritable")
 
     monkeypatch.setattr(chat_chain, "retain_memory_source", unwritable)
@@ -811,7 +811,8 @@ def test_reflection_preparation_failure_degrades_the_checkpoint_with_a_typed_row
     checkpoint = load_task_result(f.root, f.task["id"])["root_phase_checkpoint"]
     assert checkpoint["post_task_synthesis"] == "degraded"
     assert not checkpoint.get("post_task_stop_reason")
-    assert f.stages == ["facts", "scratch", "retain", "backlog"]
+    # The receipt record's failed retention is disclosed in the prompt; the input's own fails the stage.
+    assert f.stages == ["facts", "scratch", "retain:task_delivery_receipts", "retain:task_input_reflection", "backlog"]
     assert not f.engine.creates, "a failed preparation buys no reflection call"
     [entry] = entries
     assert entry["reflection"].startswith("(reflection generation failed")

@@ -247,11 +247,17 @@ def discover_daemon(home: Optional[pathlib.Path] = None) -> DaemonEndpoint:
     surfaces — talks to that one, and the operator's personal daemon is left
     alone. An unprovisioned owned home falls through to the operator layout,
     which is the entire pre-D30 behavior; the cutover is the owner's own
-    provisioning action, never a silent boot-time switch.
+    provisioning action, never a silent boot-time switch. An attach-only
+    selection (``review_run_isolation.attach_home``) answers with that home or a
+    typed refusal — never the operator layout.
     """
     if home is None:
-        from ouroboros.claudexor_daemon import owned_daemon_provisioned, owned_descriptor_path
+        from ouroboros.claudexor_daemon import attached_endpoint, owned_daemon_provisioned, owned_descriptor_path
+        from ouroboros.review_run_isolation import attach_home
 
+        selected = attach_home()
+        if selected is not None:
+            return attached_endpoint(selected)
         if owned_daemon_provisioned():
             return _endpoint_from_descriptor(owned_descriptor_path())
     root = pathlib.Path(home) if home is not None else operator_home()

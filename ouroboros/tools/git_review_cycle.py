@@ -548,12 +548,13 @@ def _reset_commit_review_state(ctx):
     ctx._last_review_critical_findings = []
     ctx._last_review_block_reason = ""
     ctx._last_review_advisory_findings = []
-    ctx._last_scope_raw_result = {}
+    ctx._last_scope_raw_result, ctx._last_review_structured = {}, {}
     ctx._review_degraded_reasons = []
     ctx._current_review_tool_name = "commit_reviewed"
-    ctx._current_review_retry_key = ""
+    ctx._current_review_retry_key = ctx._current_review_record_id = ""
     ctx._review_reconcile_only = False
     ctx._review_frozen_rows = {}
+    ctx._last_review_slot_executions = {}
     ctx._review_custody_lost = False
     ctx._current_review_attempt_number = None
     ctx._author_commit_source = None
@@ -593,7 +594,7 @@ def _reconcile_advisory_before_preparation(ctx, commit_message, *, goal, scope, 
     return ""
 
 
-from ouroboros.tools.commit_gate import _return_commit_feedback  # noqa: E402
+from ouroboros.tools.commit_gate import _return_commit_feedback, settle_commit_review_ledger  # noqa: E402
 
 
 def _run_reviewed_stage_cycle(
@@ -810,6 +811,9 @@ def _run_reviewed_stage_cycle(
         advisory_list = getattr(ctx, "_review_advisory", None)
         if isinstance(advisory_list, list):
             advisory_list.extend(scope_advisory)
+    settle_commit_review_ledger(ctx, commit_message, goal=goal, scope=scope, pre_fingerprint=pre_fingerprint,
+                                advisory_paths=advisory_paths, blocked=blocked, block_reason=block_reason,
+                                combined_findings=combined_findings, author_source=author_source, advisory_replay=advisory_replay)
     post_fingerprint = _git()._fingerprint_staged_diff(pathlib.Path(ctx.repo_dir))
     if author_source is None and _git()._review_custody_pending(ctx) and (pending_message := _git()._finalize_pending_review(
             ctx, commit_message, commit_start,
@@ -825,6 +829,7 @@ def _run_reviewed_stage_cycle(
                 if bool(getattr(ctx, "_review_custody_lost", False))
                 else "review_late_result_pending"
             ),
+            "review_record_id": str(getattr(ctx, "_current_review_record_id", "") or ""),
             "pre_fingerprint": pre_fingerprint,
             "post_fingerprint": post_fingerprint,
         }
@@ -870,9 +875,8 @@ def _run_reviewed_stage_cycle(
         if block_reason == "critical_findings":
             blocked_message = _publish_review_blocked(ctx, blocked_message)
         return {
-            "status": "blocked",
-            "message": blocked_message,
-            "block_reason": block_reason,
+            "status": "blocked", "message": blocked_message, "block_reason": block_reason,
+            "review_record_id": str(getattr(ctx, "_current_review_record_id", "") or ""),
             "pre_fingerprint": pre_fingerprint,
             "post_fingerprint": post_fingerprint,
             "combined_findings": combined_findings,
@@ -881,8 +885,7 @@ def _run_reviewed_stage_cycle(
         "passed" if advisory_replay is None and not material and scope_result is not None
         and getattr(scope_result, "status", "") == "responded" and getattr(ctx, "_last_triad_raw_results", []) else "not_confirmed")
     return {
-        "status": "passed",
-        "message": "",
+        "status": "passed", "message": "", "review_record_id": str(getattr(ctx, "_current_review_record_id", "") or ""),
         "pre_fingerprint": pre_fingerprint,
         "post_fingerprint": post_fingerprint,
     }

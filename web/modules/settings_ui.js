@@ -468,7 +468,6 @@ export function renderSettingsPage() {
                             <input id="s-task-review-mode" type="hidden" value="auto">
                             ${renderSegmentedField({
                                 target: 's-task-review-mode',
-                                modifier: 'data-task-review-group',
                                 options: [
                                     { value: 'off', label: 'Off' },
                                     { value: 'auto', label: 'Auto' },
@@ -613,7 +612,6 @@ export function renderSettingsPage() {
                             <input id="s-update-channel" type="hidden" value="stable">
                             ${renderSegmentedField({
                                 target: 's-update-channel',
-                                modifier: 'data-update-channel-group',
                                 title: 'Applies immediately; no restart required.',
                                 options: [
                                     { value: 'stable', label: 'Stable' },
@@ -778,6 +776,7 @@ export function renderSettingsPage() {
                             <label class="theme-choice-label" id="s-appearance-theme-label">Theme</label>
                             <div data-theme-control aria-labelledby="s-appearance-theme-label"></div>
                             <div class="settings-inline-note theme-status" data-theme-status role="status" aria-live="polite"></div>
+                            <div class="settings-inline-note" data-shell-storage-status role="status" aria-live="polite"></div>
                         </div>
                     </div>
 
@@ -786,13 +785,15 @@ export function renderSettingsPage() {
                         <div class="settings-section-copy">
                             While this client is running, Ouroboros can pull you back to a question or a
                             finished task. Notifications arrive whether or not this window has focus, and
-                            clicking one opens its source; a banner from the tray or menu-bar indicator
-                            opens the window as you left it. Sound silences this client's tone and the
-                            macOS sound; a Windows tray balloon follows Windows' own sound setting.
+                            clicking one opens its source where the system supports it. The desktop app hands
+                            them to the system's own notifications where the system allows it, and that system
+                            decides their sound; otherwise a browser banner or an alert inside the app. Sound off
+                            asks for them silently. Test asks the system for permission when it has not been asked yet.
                             <br><strong>Per device, not per account:</strong> like the theme above, these choices
                             are stored by this client alone and never sent to the server.
-                            Where this system exposes no notifications, or permission is denied, alerts appear
-                            inside the app instead. Do Not Disturb and OS permissions still decide what you see.
+                            Where this system exposes no notifications, or permission is denied, alerts fall back
+                            to a browser banner this client allows, or to the app. Do Not Disturb and OS
+                            permissions still decide what you see.
                         </div>
                         <div class="settings-effort-card">
                             <label class="local-toggle ui-field ui-field-inline">

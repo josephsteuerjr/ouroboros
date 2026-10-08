@@ -169,7 +169,7 @@ def test_triad_prompt_keeps_distinct_goal_and_scope_in_production_wiring(
     monkeypatch.setattr(_rbc, "capture_staged_diff",
                         lambda _repo, *, unified=3: "diff --git a/x.py b/x.py\n+x = 1")
     monkeypatch.setattr(review, "_preflight_check", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(review, "_load_checklist_section", lambda: "checklist")
+    monkeypatch.setattr(review, "_load_checklist_section", lambda *_a, **_k: "checklist")
     monkeypatch.setattr(review, "load_governance_doc", lambda *_args, **_kwargs: "governance")
     monkeypatch.setattr(review, "build_touched_file_pack", lambda *_args, **_kwargs: ("files", []))
     monkeypatch.setattr(review._cfg, "get_review_models", lambda: ["test/reviewer"])

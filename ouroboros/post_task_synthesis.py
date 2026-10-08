@@ -386,7 +386,9 @@ def _child_task_evidence(env: Any, task: Dict[str, Any], limit: int = 6000) -> t
     """Compact evidence from child/subagent results for parent experience review.
 
     Returns the prompt text AND the rows it was rendered from: the caller needs
-    the typed child outcomes, and one walk is the only walk (P7)."""
+    the typed child outcomes. This one child-evidence walk serves admission and
+    the prompt; a qualified reflection separately reads canonical receipt lineage
+    without changing this walk's source or eligibility semantics."""
     task_id = str(task.get("id") or "")
     if not task_id:
         return "", []
@@ -724,15 +726,23 @@ def _run_reflection(env: Any, llm: Any, task: Dict[str, Any],
         cost_usd=synthesis_cost,
         child_failure_classes=child_classes,
     ):
+        from ouroboros.presence_delivery import receipts_prompt_section, task_delivery_receipts
+
         trace_summary = build_trace_summary(llm_trace, all_calls=True)
         reflection_usage = dict(usage)
         # Reflection's legacy durable cost_usd field now records this
         # same subtree snapshot instead of silently reverting to own cost.
         reflection_usage["cost"] = synthesis_cost
+        canonical_root = pathlib.Path(task.get("budget_drive_root") or env.drive_root)
+        # Episodic evidence for this one new prompt, read only once a reflection
+        # will be written: the transport receipts the host already appended to the
+        # canonical chat chain for this task's lineage (no store, no wait), shown
+        # bounded and retained whole as a source this reflection's read_file opens.
+        receipts = task_delivery_receipts(canonical_root, task)
         from ouroboros.tools.registry import ToolContext
         knowledge_context = ToolContext(
             repo_dir=getattr(env, "repo_dir", env.drive_root),
-            drive_root=pathlib.Path(task.get("budget_drive_root") or env.drive_root),
+            drive_root=canonical_root,
             project_id=str(task.get("project_id") or ""),
             task_id=str(task.get("id") or ""))
         entry = generate_reflection(
@@ -741,7 +751,8 @@ def _run_reflection(env: Any, llm: Any, task: Dict[str, Any],
             review_evidence=review_evidence,
             child_evidence=child_evidence,
             usage_snapshot_text=_synthesis_usage_snapshot_text(usage),
-            sealed_final_text=sealed_final_prompt_section(sealed_final),
+            sealed_final_text=(sealed_final_prompt_section(sealed_final)
+                               + receipts_prompt_section(receipts, knowledge_context)),
             child_failure_classes=child_classes,
             knowledge_context=knowledge_context,
         )

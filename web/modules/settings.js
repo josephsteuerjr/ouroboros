@@ -1,6 +1,7 @@
 import { refreshModelCatalog, watchAccountModelCatalog } from './settings_catalog.js';
 export { accountCatalogRefreshKey } from './settings_catalog.js';
 import { getNotifier } from './notifications.js';
+import { mountDesktopShell } from './desktop_shell.js';
 import { bindEffortSegments, syncEffortSegments, readCustomSecretDraft, collectCustomSecretDraft, paintSettingsFieldErrors, settingsWriteFailure } from './settings_controls.js';
 import { bindLocalModelControls } from './settings_local_model.js';
 import { bindAutostartControl } from './settings_autostart.js';
@@ -472,6 +473,8 @@ export function initSettings({ state, setBeforePageLeave, ws } = {}) {
     // Notification preferences are client-local for the same reason; the module
     // owns delegated handlers, so mounting only paints current state.
     getNotifier().mountSettings(page);
+    // The desktop app's own facts (storage, system notifications): the app is not updated with the core.
+    const disposeShell = mountDesktopShell(page, (shell) => getNotifier().configure({ shell }));
     // The interface language is an install-wide setting with its own endpoint; the block
     // saves on change and never marks the Settings draft dirty.
     const disposeLanguage = bindLanguageSettings(page);
@@ -1225,6 +1228,7 @@ export function initSettings({ state, setBeforePageLeave, ws } = {}) {
         window.removeEventListener('beforeunload', beforeUnload);
         disposeLocalModel();
         disposeLanguage();
+        disposeShell();
         disposeRestartReconnect?.();
         accountModelCatalog.dispose();
         restartReadSequence += 1;

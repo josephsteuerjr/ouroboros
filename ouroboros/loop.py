@@ -76,6 +76,10 @@ from ouroboros.loop_transport import (
 from ouroboros.pricing import estimate_cost_optional  # noqa: F401 -- the loop module keeps its historical import surface for the L-B leaves
 from ouroboros.budget_pause import load_budget_pause, resume_paused_loop
 from ouroboros.owner_wait import load_owner_wait, resume_native_loop, wait_after_tools
+from ouroboros.presence_continuation import (
+    conversation_lost as _presence_conversation_lost,
+    lost_conversation_terminal as _presence_lost_terminal,
+)
 
 log = logging.getLogger(__name__)
 
@@ -526,6 +530,11 @@ def run_llm_loop(
                 incoming_messages=incoming_messages, owner_msg_seen=_owner_msg_seen, tool_schemas=tool_schemas)
             _finalize_limit_ctx(limit_ctx, tools, llm_trace)
             limit_ctx.budget_tail = "tool" if pending_tool_budget else "no_tool"
+            if _presence_conversation_lost(ctx):
+                # A Presence author stopped while it had yielded its conversation (#1536).
+                text, accumulated_usage, forced_trace = _presence_lost_terminal(limit_ctx, _presence_conversation_lost(ctx))
+                _merge_finalization_trace(llm_trace, forced_trace)
+                return text, accumulated_usage, llm_trace
             if MAX_ROUNDS is not None and round_idx > MAX_ROUNDS:
                 # Live hold: a paid [ROUND_LIMIT] dial would be a resend (no wake receipt) — no-call unknown terminal.
                 if _delegate_hold_close(tools, drive_logs=drive_logs, task_id=task_id,

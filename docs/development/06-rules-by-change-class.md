@@ -10,7 +10,7 @@ Rules by change class: tool registration, skill payloads, the live E2E stand, li
 - A tool that WRITES the repo working tree needs the GUARD surfaces too, not only the visibility ones: add it to `_ROOT_ARG_REPO_WRITE_TOOLS` (the single set every repo-write fence keys on — the acting-no-workspace fence, the protected-write gate and the acting root-enum narrowing; ARCHITECTURE §6 "Tool capability and execution") and canonicalize its target paths — `_PATH_NORMALIZED_TOOLS` for a top-level `path`, `canonical_repo_relative_path` + `_payload_write_paths` for payload-borne paths. Visibility checks can all be green while these are missing, so tests must exercise the real guard chain, not only a mocked resolver.
 - New memory/data files: decide in the same change whether they appear in LLM context (`context.py`).
 
-Enforcement: CHECKLISTS items 2(g) and 10 (`tool_registration`) in commit review; `tests/test_tool_api_v2_public_surface.py` pins the public schema/registry contract and `tests/test_local_routing_and_safety.py` the safety-policy fallthrough; CHECKLISTS item 11 backstops the memory/context decision.
+Enforcement: CHECKLISTS items 11(g) and 14 (`tool_registration`) in commit review; `tests/test_tool_api_v2_public_surface.py` pins the public schema/registry contract and `tests/test_local_routing_and_safety.py` the safety-policy fallthrough; CHECKLISTS item 25 (`context_building`) backstops the memory/context decision.
 
 ### Skill repair and payload lanes
 
@@ -189,6 +189,21 @@ output manifest), `tests/test_git_shell_policy.py` and
 `tests/test_shell_redirect_guard.py` (the shell surfaces); the
 successor-parity and artifact-transport rules are review-only.
 
+### Own-body candidates and adoption
+
+Mechanism: ARCHITECTURE §6 "Own-body candidates" and §2. Rules a change keeps:
+
+- One identity. A consumer of the body root reads `ctx.repo_dir` / `system_repo_dir_for` (the candidate when bound); only what must describe the RUNNING body — review governance, the restart marker, rollback — reads `body_candidate.serving_repo_dir_for`. Never rebind `Env`, and never give a candidate workspace-mode authority.
+- Prepare before effects, by seam and not by guess: a new body-writing tool joins `body_candidate.authoring_seam`. Never classify command text, and never infer a candidate from a room, a name, a date or a PID; ownership moves only from a terminal task record whose ledgered processes the ownership set no longer finds alive (`live_lineage_processes`).
+- Attribution is the lineage's own baseline: `bind` appends the candidate as a late surface (`mutation_attribution.capture_mutation_baseline`), and the commit gate resolves attributed paths on `ctx.repo_dir` with no candidate bypass. A process inside the candidate or an admitted own-body child copy gets its isolated environment or a typed refusal, including executor commands and services. Docker paths must map the sibling environment as well as the copy; foreign-project copies keep their existing environment contract.
+- Retention never deletes unique work on age. Extend `unique_work` / `_preserve` together (a staged-only version is unique work; a plain file named like an excluded directory is unique) and keep "an incomplete capture retains the directory": a disclosure is not a capture. Compare commits to the serving checkout’s HEAD; retain nested preflight teardown markers with their environment and source. A GC verdict computed outside the registry lock is applied only while `verdict_holds` under it.
+- The old generation never writes the serving tree for an adoption. Arm only from the existing stop owners' outcomes — the pool's PID census (`last_worker_exit_census`), `stop_owned_work`’s current ownership set, the reaped children; add no wait, drain, PID or childlessness probe, and nothing on the Panic path. Boot settles `adopted` only for a process that attested the switched tree before its imports (`sys._ouroboros_body_generation`) and whose bootstrap succeeded.
+- The hook in `ouroboros/__init__.py` and `body_switch.py` stay stdlib-only and compatible with the helper an OLDER body captured; a body without the hook receives it through an ordinary release, never by adoption. The helper replaces each changed file atomically, then the index, the branch last, and never overwrites bytes that are neither side.
+- No generic reset on the adoption path (`holds_checkout` covers landed, returned and open transitions), and no claim that returning Git files restored installed dependencies. A return to the old tree from a process that began on a half-switched tree hands over to a fresh process; a launcher whose loaded modules the landed checkout changed re-executes itself on exit 42 (`launcher_sources_changed`, the checkout's own history, never a blanket relaunch); a packaged re-exec preserves its immutable bundle provenance independently of UI mode.
+- A candidate commit is never auto-pushed; the serving push sends only reachable annotated tags (`--follow-tags`). The deterministic release gate names the form from the diff: `numbered` (VERSION plus every carrier) or `neutral` (every carrier span byte-identical to HEAD, no tag) — the latter admitted for the prepared index lane and a bound candidate (`neutral_allowed`), while a serving-checkout commit keeps the numbered release; a partial carrier move is a finding in either form, including documentation-only carrier edits/removals. Evolution cleanup may abandon only its own authorization; crash recovery reports deliberate resume/adoption steps and grants no new adoption authority.
+
+Enforcement: `tests/test_body_candidate.py`, `tests/test_body_adoption.py` (real entry processes, every interruption boundary), `tests/test_body_adoption_consumers.py`, `tests/test_body_adoption_repairs.py`, `tests/test_body_consumer_boundaries.py`, `tests/test_body_restart_boundaries.py` (preserving and refusing branches), `tests/test_body_executor_environment.py` (Docker shell transport double, no daemon), `tests/test_release_metadata_diagnostics.py` (the two forms). Windows handover, the packaged launcher's own frozen code, a native Android host and an end-to-end `commit_reviewed` with live reviewers on a candidate are not exercised there.
+
 ### Runtime cleanup and retention
 
 - Age-based GC of disposable runtime artifacts shares ONE owner knob,
@@ -226,8 +241,8 @@ Enforcement: `tests/test_phase3c_observability_gc.py` (the unified knob and the 
 Mechanism — registry, scheduling, bootstrap, zero-run receipts, custody, work
 orders, supervision, recovery, patch integration — lives in ARCHITECTURE §6
 "Delegated subagents (Claudexor transport + the nanny)" and the module
-docstrings it names. Review gate: CHECKLISTS items 18 (`subagent_isolation`)
-and 23 (`delegated_transport`), both critical. The imperatives:
+docstrings it names. Review gate: CHECKLISTS items 17 (`subagent_isolation`)
+and 20 (`delegated_transport`), both critical. The imperatives:
 
 - Schedule only through `schedule_subagent`; its public schema and the
   handler's closed keyword set are BOTH derived from
@@ -305,7 +320,7 @@ and 23 (`delegated_transport`), both critical. The imperatives:
   subagent browser boundary (typed `BROWSER_POLICY_UNAVAILABLE`, loopback
   minus Ouroboros control-service endpoints by identity, private origins only
   via host-established `resource_policy.allowed_origins`, every redirect hop
-  re-checked) are CHECKLISTS item 18 and ARCHITECTURE §6 "Tool capability and
+  re-checked) are CHECKLISTS item 17 and ARCHITECTURE §6 "Tool capability and
   execution" (`tests/test_browser_url_policy.py`,
   `tests/test_browser_isolation.py`, `tests/test_browser_redirect_chain.py`).
 - Acting children return `workspace.patch`; only the parent commits the live body,
@@ -680,7 +695,7 @@ and what enforces each.
   canonical tools and recovery actions; same-invocation bytes and consumed history
   stay fixed (`test_send_clock.py`, `test_processing_transport.py`).
 - New LLM calls go through the shared `LLMClient`/`llm.py` layer — no ad-hoc HTTP
-  clients or provider SDKs outside it (review gate: CHECKLISTS item 2(e)). Exception:
+  clients or provider SDKs outside it (review gate: CHECKLISTS item 11(e)). Exception:
   skill/extension `plugin.py` modules may call providers directly until a host-mediated
   bridge lands; runtime callers inside `ouroboros/` must use `LLMClient`.
 - Canonical messages/tools stay provider-neutral and function-shaped; a dialect is an
@@ -779,7 +794,7 @@ and what enforces each.
   `tests/test_openai_system_prefix_split.py` (projection, placement, per-family
   session), `tests/test_prompt_cache_v664.py` (derived identity, one exact retry),
   `tests/test_transcript_prefix.py` (real Main loop, plain/multipart) and
-  `tests/test_transcript_provider_shapes.py` (local/GigaChat); CHECKLISTS item 22.
+  `tests/test_transcript_provider_shapes.py` (local/GigaChat); CHECKLISTS item 28.
 - Only sealed reasoning artifacts bind fallback to their endpoint
   (`reasoning_artifacts.transcript_has_sealed_reasoning`); readable reasoning
   stays failover-eligible across families (`test_llm_provider_routing.py`).
@@ -975,7 +990,8 @@ and what enforces each.
   wave's real pair labelled `historical_critic`, never an invented verdict. An envelope
   `reviewer_effort` outranks a row's pinned effort for plan review only (an argument of
   `plan_review_slots`, never a contextvar; a compound route slug keeps its encoded
-  effort); every wave records its effective per-seat efforts, the owner baseline captured
+  effort — `review_change`'s composed panel is the one disclosed contextvar seam,
+  ARCHITECTURE §6 "Change review on any root"); every wave records its effective per-seat efforts, the owner baseline captured
   at dispatch and one typed `ordered_weaker`. On a same-spec cycle a seat that does not
   answer keeps its still-open findings listed (`carried_absent_answer`), never counted as
   parseable. The own-room conversation reaches every reviewer as numbered readable lines;
@@ -1034,6 +1050,10 @@ and what enforces each.
   and canonical split-root verification receipts. Zero exit is positive, absence
   unknown; unrelated passes erase no failure. Deliver content and recover the same
   snapshot. `OWNER_DELIVERY_TOOL_NAMES` counts sends, never global skill state.
+  Transport receipts stay out of that snapshot: only a newly written reflection reads
+  them, once after admission (`presence_delivery.task_delivery_receipts`), with a captured
+  window, named gaps, a NONEXHAUSTIVE disclosure and labelled bindings; no fold, wait or
+  store (`test_reflection_delivery_receipts.py`).
   `host_task_facts` is free; paid reflection/Pattern Register use `chat_observed` custody.
   Plan-review facts reach the reflection as ONE bounded slice with a source pointer
   (`plan_review_facts.py`), never a score; a panel that settles after the task ended
@@ -1163,7 +1183,7 @@ Enforcement: the failure-path tests the first bullet mandates, plus
   reasoning flow MUST follow that contract, never rely on
   touched-file inclusions.
 
-Enforcement: review-only — CHECKLISTS item 2(f) scores the no-`[:N]` rule in
+Enforcement: review-only — CHECKLISTS item 11(f) scores the no-`[:N]` rule in
 commit review.
 
 ## Android platform development

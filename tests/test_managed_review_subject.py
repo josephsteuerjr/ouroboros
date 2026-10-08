@@ -190,6 +190,35 @@ def test_gate_subject_carries_index_content_not_worktree(tmp_path, monkeypatch):
     assert advisory.staged_tree not in ctx._last_review_subject_trees
 
 
+def test_frozen_system_index_of_a_managed_resolution_is_the_managed_artifact(tmp_path, monkeypatch):
+    """§6 Subject operation: freezing the system repo's ``index`` goes through
+    the gate's own managed path — the frozen subject carries the SAME artifact
+    and S tree as ``managed_review_subject(surface="gate")``, records the gate
+    binding tree, and the wave's capture seam keeps reading the system index
+    through the live managed call (byte-identical to today)."""
+    from ouroboros.tools.review import _capture_triad_staged_diff
+    from ouroboros.tools.review_subject import ReviewSubjectSpec, freeze_subject
+
+    repo, ctx, _tx = _managed_resolution_repo(tmp_path, monkeypatch)
+    frozen = freeze_subject(ctx, ReviewSubjectSpec(
+        root_kind="system_repo", root=str(repo), kind="index", surface="commit_gate", layer="body"))
+    subject = managed_review_subject(ctx, repo)
+
+    assert frozen.is_system_index and frozen.managed is not None
+    assert frozen.diff_text == subject.render_prompt_diff() == capture_review_diff(ctx, repo)
+    assert "resolver_note.txt" in frozen.diff_text and "official.txt" not in frozen.diff_text
+    assert frozen.tree_sha == subject.staged_tree == _git(repo, "write-tree").stdout.strip()
+    assert frozen.parent_sha == _git(repo, "rev-parse", "HEAD").stdout.strip()
+    assert frozen.name_status == subject.name_status
+    assert frozen.tree_sha in ctx._last_review_subject_trees  # the gate's binding assert input
+    assert frozen.render_prompt_diff(unified=0) == capture_review_diff(ctx, repo, unified=0)
+    # The triad capture seam: the system index is read through the live managed
+    # call (same artifact, same S tree), not replayed from the frozen copy.
+    diff_text, seam_subject, block = _capture_triad_staged_diff(ctx, str(repo), True, frozen=frozen)
+    assert block is None and diff_text == frozen.diff_text
+    assert seam_subject is not None and seam_subject.staged_tree == frozen.tree_sha
+
+
 def test_gate_subject_binding_mismatch_blocks_commit(tmp_path, monkeypatch):
     """M1 defense-in-depth: the commit gate asserts (typed failure) that the
     reviewed subject tree equals the review-binding fingerprint's tree_sha."""

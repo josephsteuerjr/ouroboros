@@ -62,7 +62,8 @@ def _tick_parked_work(queue: Any) -> None:
     with queue._queue_lock:
         consuming = [(task_id, meta.get("attempt"), dict(meta["task"]["_budget_pause_resume"]))
                      for task_id, meta in queue.RUNNING.items()
-                     if meta.get("sleep_parked_at") and (meta.get("task") or {}).get("_budget_pause_resume")]
+                     if meta.get("sleep_parked_at")
+                     and ((meta.get("task") or {}).get("_budget_pause_resume") or {}).get("sleep_exclusion_since")]
     for task_id, attempt, resume in consuming:
         _handle_budget_pause({"phase": "consumed", "task_id": task_id,
             "task_attempt": attempt, "pause_id": resume.get("pause_id"),
@@ -243,8 +244,10 @@ def _claim_worker_launch(queue, candidate, worker):
             root_id = str(candidate.get("root_task_id") or candidate.get("id"))
             latch = queue.BUDGET_ROOT_FENCES.get(root_id) or {}
             resume = candidate.get("_budget_pause_resume")
+            # A monetary latch hands over only an explicit selection against it (an
+            # owner-resumed cold sleeper must start), never sleep readiness.
             selected_child = bool(candidate.get("id") != root_id and isinstance(resume, dict)
-                                  and latch.get("cause") == "owner_pause"
+                                  and (latch.get("cause") == "owner_pause" or budget_fence_selected(candidate, latch))
                                   and resume.get("root_fence_id") == latch.get("fence_id"))
             with launch_admission(SimpleNamespace(
                     task_id=candidate.get("id"), root_task_id=candidate.get("root_task_id"),

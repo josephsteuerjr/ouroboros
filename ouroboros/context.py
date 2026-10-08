@@ -554,6 +554,11 @@ def build_runtime_section(env: Any, task: Dict[str, Any], *, ctx: Any = None, sc
         log.debug("Failed to inject answer_protocol rule", exc_info=True)
     if not declared:
         runtime_data["official_update"] = official_update_projection(git_sha)
+        from ouroboros import body_candidate
+
+        # Absent when none exists, so an ordinary Runtime block stays byte-identical.
+        if candidates := body_candidate.context_fact(str(task.get("root_task_id") or task.get("id") or "")):
+            runtime_data["body_candidates"] = candidates
     out = "## Runtime context\n\n" + json.dumps(runtime_data, ensure_ascii=False, indent=2)
     if declared:
         return out
@@ -1156,6 +1161,12 @@ def _capture_context_core(
             )
     except Exception:
         log.debug("Failed to build Available subagents catalog", exc_info=True)
+    try:
+        from ouroboros.subagent_runtime import review_facts_block
+
+        semi_stable_parts.append(review_facts_block())
+    except Exception:
+        log.warning("Failed to build the Review block", exc_info=True)
     semi_stable_parts.extend(build_memory_sections(context_memory, partition="stable"))
     # Knowledge leads the changing block (its edits never cost the cached story) and
     # rides only where the view holds it: a child or nanny reads it by knowledge_read.
@@ -1186,6 +1197,12 @@ def _capture_context_core(
     dynamic_parts = []
     if health_section:
         dynamic_parts.append(health_section)
+    try:
+        from ouroboros.subagent_runtime import review_records_block
+
+        dynamic_parts.append(review_records_block(drive_root=canonical_root, task_id=str(task.get("id") or "")))
+    except Exception:
+        log.warning("Failed to build the Review records block", exc_info=True)
     dynamic_parts.extend(build_memory_sections(context_memory, partition="volatile", include_scratchpad=not is_child))
 
     registry_digest = _build_registry_digest(context_env)

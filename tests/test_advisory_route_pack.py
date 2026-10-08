@@ -54,7 +54,7 @@ def _write_governance_docs(repo):
     (repo / "docs").mkdir(parents=True, exist_ok=True)
     for rel, text in (
         ("BIBLE.md", "# BIBLE\nBIBLE-BODY-MARKER-7Q\n"),
-        ("docs/CHECKLISTS.md", "## Repo Commit Checklist\nCHECKLIST-BODY-MARKER-7Q\n"),
+        ("docs/CHECKLISTS.md", "## Change Review Checklist\nCHECKLIST-BODY-MARKER-7Q\n"),
         ("docs/DEVELOPMENT.md", "# DEV\nDEVELOPMENT-BODY-MARKER-7Q\n"),
         ("docs/DESIGN.md", "# DESIGN\nDESIGN-BODY-MARKER-7Q\n"),
         ("docs/ARCHITECTURE.md", "# ARCH\nARCHITECTURE-BODY-MARKER-7Q\n"),

@@ -490,21 +490,22 @@ def _comment_on_pr(ctx: ToolContext, number: int, body: str, repo: str = "") -> 
 def _pr_merge(ctx: ToolContext, number: int, expected_head_sha: str, method: str,
               review_task_ids: Optional[List[str]] = None, reviewed_head_sha: str = "",
               reviewed_base_sha: str = "", review_scope: str = "full", review_verdict: str = "",
-              repo: str = "") -> str:
+              review_record_id: str = "", repo: str = "") -> str:
     """Thin transport binding; the receipt contract lives in ``merge_receipts``."""
     from ouroboros.merge_receipts import REVIEW_SCOPES, _VERDICT_RE, _sha, run_pr_merge
     from ouroboros.tool_access import canonical_data_root
 
     if review_scope not in REVIEW_SCOPES or (review_verdict and not _VERDICT_RE.fullmatch(review_verdict)):
         return _refuse(ctx, "⚠️ TOOL_ARG_ERROR: review_scope is full|delta; review_verdict is a short word such as PASS.", no_effect=True)
+    record_id = str(review_record_id or "").strip()
     declared = ({"reviewed_head_sha": _sha(reviewed_head_sha), "reviewed_base_sha": _sha(reviewed_base_sha),
                  "scope": review_scope, "verdict": review_verdict}
-                if (reviewed_head_sha or review_verdict or review_task_ids) else None)
+                if (reviewed_head_sha or review_verdict or (review_task_ids and not record_id)) else None)
     receipt = run_pr_merge(
         ctx, lambda args, **kw: _gh_run(args, ctx, repo=repo, **kw), lambda args, **kw: _gh_run(args, ctx, **kw),
         drive_root=canonical_data_root(ctx), task_id=str(ctx.task_id or ""), number=int(number or 0),
         expected_head_sha=expected_head_sha, method=method,
-        review={"declared": declared, "task_ids": list(review_task_ids or [])})
+        review={"declared": declared, "task_ids": list(review_task_ids or []), "record_id": record_id})
     if receipt.get("refused"):
         code = "TOOL_ARG_ERROR" if receipt["refused"] == "arguments" else "TOOL_ERROR"
         return _refuse(ctx, f"⚠️ PR_MERGE_REFUSED: {receipt['refused']} — {receipt.get('detail', '')}", code, no_effect=True)
@@ -639,9 +640,9 @@ def get_tools() -> List[ToolEntry]:
             "name": "pr_merge",
             "description": (
                 "Merge a GitHub pull request so a receipt exists: states the exact head you expect "
-                "and the method (never auto-merge or admin), records what review you declare beside "
-                "what the host observes, reads GitHub back, and writes the receipt to this task's "
-                "record, its card and the PR body. A missing review is recorded loudly, never a lock. "
+                "and the method (never auto-merge or admin), records the host review record you name or "
+                "the review you declare beside what the host observes, reads GitHub back, and writes the "
+                "receipt to this task's record, its card and the PR body. A missing review is recorded loudly, never a lock. "
                 "An unknown or queued merge stays observation/publication-only on repeat calls; no resend. "
                 "Distinct from stage_pr_merge, which stages a local merge for a reviewed commit."
             ),
@@ -656,6 +657,10 @@ def get_tools() -> List[ToolEntry]:
                 "review_scope": {"type": "string", "enum": ["full", "delta"], "default": "full",
                                  "description": "delta = only the change since an earlier review; never counted as whole-PR coverage"},
                 "review_verdict": {"type": "string", "default": "", "description": "The declared verdict word, e.g. PASS"},
+                "review_record_id": {"type": "string", "default": "",
+                                     "description": "Id of the host review record to bind (e.g. the review_record_id commit_reviewed "
+                                                    "returns); the host then reads the reviewed subject and verdict from it instead "
+                                                    "of your declaration. An id with no record is refused before any merge"},
             }, "required": ["number", "expected_head_sha", "method"]},
         }, _pr_merge),
 

@@ -14,8 +14,8 @@ from ouroboros.config import (
     apply_settings_to_env as _apply_settings_to_env,
     load_settings,
 )
+from ouroboros.launcher_appearance import NativeAppearance
 from ouroboros.server_runtime import apply_runtime_provider_defaults, has_startup_ready_provider
-from ouroboros.win_dark_frame import apply_dark_titlebar
 
 # The launcher's own logger: these lines belong in launcher.log next to the
 # startup sequence they are part of.
@@ -85,8 +85,10 @@ def present_first_run_onboarding(
 
     import webview
 
+    appearance = NativeAppearance()  # this window's own caption tint (the main window keeps its own)
+
     class OnboardingHostApi:
-        """Window lifecycle and external-link bridge for desktop setup.
+        """Window lifecycle, caption tint and external-link bridge for desktop setup.
 
         NOT a settings authority, and no longer even capable of being one. The
         page completes through ``POST /api/onboarding/complete`` exactly as a
@@ -100,6 +102,9 @@ def present_first_run_onboarding(
 
         def open_external_url(self, url: str) -> dict:
             return open_external_url(url)
+
+        def set_native_appearance(self, theme: str = "", page: float | None = None, sequence: int | None = None) -> dict:
+            return appearance.request(theme, page, sequence)
 
         def onboarding_finished(self, result: dict | None = None) -> str:
             payload = result if isinstance(result, dict) else {}
@@ -116,15 +121,14 @@ def present_first_run_onboarding(
                 window.destroy()
             return "ok"
 
-    setup_window = webview.create_window(
+    appearance.attach(webview.create_window(
         "Ouroboros — Setup",
         url=f"http://127.0.0.1:{port}/onboarding",
         js_api=OnboardingHostApi(),
         width=980,
         height=780,
         min_size=(840, 640),
-    )
-    apply_dark_titlebar(setup_window)  # follows the OS apps theme, like the main window (#1417)
+    ))
     # Share persistent local UI storage with the same-origin main window.
     # This includes cookies and website data, not only the appearance choice.
     webview.start(private_mode=False)

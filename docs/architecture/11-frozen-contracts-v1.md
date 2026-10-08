@@ -46,7 +46,7 @@ The full `ToolContext` dataclass (browser state, review history, model overrides
 
 ### 11.3 What to do when extending
 
-Add the field to the active frozen owner — `ouroboros/contracts/` for the package ABI, or `ouroboros/gateway/contracts.py` + `web/modules/api_types.js` for browser envelopes — keeping existing consumers working, and enforce the new surface in the contract/parity tests (CHECKLISTS item 17, `gateway_parity`, owns the review-time criteria). Removing anything from 11.1 is a deliberate ABI break: it requires an explicitly versioned successor and a migration note in the release row — the release ledger, not this map, is the SSOT for retirements.
+Add the field to the active frozen owner — `ouroboros/contracts/` for the package ABI, or `ouroboros/gateway/contracts.py` + `web/modules/api_types.js` for browser envelopes — keeping existing consumers working, and enforce the new surface in the contract/parity tests (CHECKLISTS item 27, `gateway_parity`, owns the review-time criteria). Removing anything from 11.1 is a deliberate ABI break: it requires an explicitly versioned successor and a migration note in the release row — the release ledger, not this map, is the SSOT for retirements.
 
 ### 11.4 Recent ABI Retirements
 

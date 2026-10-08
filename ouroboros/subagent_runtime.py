@@ -8,6 +8,7 @@ that copy rather than mutable owner settings.
 
 from __future__ import annotations
 
+import contextlib
 import contextvars
 import json
 import os
@@ -136,6 +137,103 @@ def current_model_visible_subagent_catalog() -> dict[str, Any]:
     return model_visible_subagent_catalog(
         effective_runtime_subagent_settings(runtime_settings())
     )
+
+
+_REVIEW_RULES = {
+    "cyber_pro": "Cyber Pro: review informs judgment; no finding, failure or unavailable review prohibits action.",
+    "blocking": "Blocking: critical findings, a failed quorum or a review infrastructure failure stop the commit.",
+    "advisory": ("Advisory: material findings and review failures return to the author as the outcome before any Git "
+                 "effect; the author may continue explicitly on that outcome, and nothing is rewritten into PASS."),
+}
+
+
+def review_facts_block(snapshot: Optional[TaskSettingsSnapshot] = None) -> str:
+    """``## Review``: the lanes this task's settings snapshot serves, read by the resolver every review surface
+    uses, never by live settings or the last execution (``reviewer_slots_last``); ``None`` reads the bound task
+    scope. Above four triad/scope seats their rows shrink to ``{seat_id, model}`` and ``omitted`` counts them.
+    Stable for the task (cache-marked prefix); the task's recent ledger records ride separately in the
+    changing part (:func:`review_records_block`), so ids and timestamps never sit in the cached prefix."""
+    from ouroboros import reviewer_slot_config as rs
+    from ouroboros.config import get_review_enforcement, get_runtime_mode, runtime_settings, task_settings_scope
+    from ouroboros.runtime_mode_policy import runtime_mode_at_least
+    from ouroboros.tools.claude_advisory_review import _advisory_native_model
+    from ouroboros.tools.review_helpers import review_enforcement_blocks
+
+    with task_settings_scope(snapshot) if snapshot is not None else contextlib.nullcontext():
+        try:
+            config, error = rs.load_reviewer_slot_config(), ""
+        except ValueError as exc:
+            config, error = None, str(exc)
+        settings = effective_runtime_subagent_settings(runtime_settings())
+        roster = resolve_configured_subagents(settings).config
+
+        def seat(slot: Any, effort: str, retrieves: bool) -> dict[str, Any]:
+            # A reference row is named by its catalog handle; the stored key never becomes model-facing.
+            known = roster is not None and slot.subagent_id
+            row = resolve_roster_selector(roster, slot.subagent_id, settings)[0] if known else None
+            actor = {"subagent_id": roster_handles(roster, settings)[row.subagent_id]} if row else {"route": slot.kind}
+            delivery = "agent_session" if slot.kind == rs.ROUTE_KIND_SESSION else (
+                "native" if retrieves or slot.native_retrieval else "packet")
+            return {"seat_id": slot.slot_id, **actor, "model": slot.target_id or "route default",
+                    "effort": effort or "route default", "delivery": delivery}
+
+        panel: dict[str, Any] = {"triad": [], "scope": [], "advisory": None, "deep_review": None}
+        if config is not None:
+            advisory, deep = config.advisory, rs.deep_review_slot(config)
+            if advisory.kind == rs.ROUTE_KIND_API:
+                advisory = dataclass_replace(advisory, target_id=_advisory_native_model(advisory))
+            panel = {"triad": [seat(slot, rs.row_effort(slot, "review"), False) for slot in config.triad],
+                     "scope": [seat(slot, rs.row_effort(slot, "scope_review"), True) for slot in config.scope],
+                     "advisory": {**seat(advisory, advisory.effort, True), "enabled": advisory.enabled},
+                     "deep_review": seat(deep, rs.row_effort(deep, "deep_self_review"), True)}
+        enforcement, mode = get_review_enforcement(), get_runtime_mode()
+        blocks = review_enforcement_blocks(enforcement)
+    seats = len(panel["triad"]) + len(panel["scope"])
+    if seats > 4:
+        for lane in ("triad", "scope"):
+            panel[lane] = [{"seat_id": row["seat_id"], "model": row["model"]} for row in panel[lane]]
+    return "## Review\n\n" + json.dumps({
+        "source": config.source if config is not None else "error", "error": error,
+        "enforcement": enforcement, "enforcement_blocks": blocks, "mode": mode,
+        "rule": _REVIEW_RULES["cyber_pro" if runtime_mode_at_least(mode, "cyber_pro") else enforcement],
+        "panel": panel,
+        "surfaces": {"commit_gate": ["triad", "scope"], "plan_review": ["triad"], "task_acceptance": {
+            "root": "full configured triad panel",
+            "child": "≤1 triad seat; with several, name one as reviewer_slot_id"},
+            "preflight": ["advisory"], "deep_self_review": ["deep_review"]},
+        "omitted": {"rows": seats if seats > 4 else 0},
+        "full_source": {"panel": "GET /api/reviewer-slots"},
+    }, ensure_ascii=False, separators=(",", ":"))
+
+
+def review_records_block(*, drive_root: Any, task_id: str) -> str:
+    """``## Review records``: this task's newest review-ledger records (:func:`_recent_review_records`),
+    a changing fact that belongs in the dynamic context part, never in the cached prefix."""
+    records, unseen = _recent_review_records(drive_root, task_id)
+    return "## Review records\n\n" + json.dumps({
+        "recent_records": records, "omitted": {"records": unseen}, "full_source": "state/review_ledger/",
+    }, ensure_ascii=False, separators=(",", ":"))
+
+
+def _recent_review_records(drive_root: Any, task_id: str) -> tuple[list[dict[str, Any]], Any]:
+    """This task's five newest review-ledger records from the bounded hot index, in the reader's
+    newest-first order, and whether more exist: ``0`` when the hot index holds nothing else and no
+    archived segment exists, ``"1+"`` when it holds more than the five shown, ``"unknown"`` when an
+    archived segment exists (older records of this task may live there; a context capture never
+    opens the archive) or the ledger is unreadable — never a silent zero. No ledger module means
+    none. An empty id reads nothing: the reader's empty selector is every task's records."""
+    try:
+        from ouroboros.review_ledger import archived_segments_exist, recent_records
+
+        rows = recent_records(drive_root, task_id=task_id, limit=6, hot_only=True) if task_id else []
+        shown = [{"record_id": row.get("record_id"), "surface": row.get("surface"),
+                  "aggregate": (row.get("verdict") or {}).get("aggregate"), "ts": row.get("ts")} for row in rows[:5]]
+        more: Any = "1+" if len(rows) > 5 else ("unknown" if task_id and archived_segments_exist(drive_root) else 0)
+    except ModuleNotFoundError as exc:
+        return [], 0 if exc.name == "ouroboros.review_ledger" else "unknown"
+    except Exception:
+        return [], "unknown"
+    return shown, more
 
 
 def apply_task_start_settings() -> TaskSettingsSnapshot:
@@ -993,6 +1091,7 @@ __all__ = [
     "model_visible_subagent_catalog",
     "prepare_delegate_start_actor",
     "resolve_configured_actor_dispatch",
+    "review_facts_block", "review_records_block",
     "select_subagent_snapshot",
     "validate_subagent_snapshot",
 ]

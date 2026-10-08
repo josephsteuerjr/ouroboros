@@ -175,6 +175,7 @@ def continuation_state(ctx: Any, messages: list, trace: dict, usage: dict,
             "_completion_observation", "_completion_held_sha256", "_presence_completion",
             "_presence_completion_owner_revision", "_acceptance_observation",
             "_presence_forced_declaration", "_presence_forced_pending", "_presence_completion_accepted",
+            "_presence_selection_seq", "_presence_released", "_presence_release",
             "_task_acceptance_sealed_fence_token", "_task_acceptance_sealed_fence_generation",
 
         ) if getattr(ctx, key, None) is not None},
@@ -439,7 +440,8 @@ def direct_owner_wait(ctx: Any, checkpoint: dict) -> str:
 
     control = ctx.model_wait_context
     root = pathlib.Path(ctx.budget_drive_root or ctx.drive_root)
-    while ctx.pending_events:
+    # Without a queue (a Presence turn may have none) the buffer keeps its events for the final flush.
+    while ctx.pending_events and getattr(ctx, "event_queue", None) is not None:
         ctx.event_queue.put(dict(ctx.pending_events[0]))
         del ctx.pending_events[0]
     wait = set_owner_wait(root, ctx.task_id, {**checkpoint, "state": "waiting"})
@@ -598,12 +600,17 @@ def wait_after_tools(ctx: Any, messages: list, trace: dict, usage: dict,
         ctx._owner_wait_deadline_at = ""
         return
     callback = getattr(ctx, "owner_wait_callback", None)
-    if not callable(callback):
+    # A Presence author has only the narrow review-wait owner (``presence_continuation``): it
+    # parks for its panel and never gains owner quizzes, sleeps or budget pauses through it.
+    review_callback = getattr(ctx, "review_wait_callback", None) if review_binding else None
+    if not callable(callback) and not callable(review_callback):
         raise RuntimeError("required owner wait has no worker continuation owner")
     checkpoint = checkpoint_owner_wait(ctx, messages, trace, usage, round_idx, tool_schemas, seen,
                                        review_binding=review_binding)
     sleep = checkpoint.get("sleep")
-    if sleep:
+    if not callable(callback):
+        review_callback(ctx, checkpoint, messages)
+    elif sleep:
         from ouroboros import model_sleep
 
         model_sleep.begin(ctx)

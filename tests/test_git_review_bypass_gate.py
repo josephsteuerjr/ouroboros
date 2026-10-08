@@ -478,3 +478,59 @@ class TestRouteSlotAwareBypassGate:
         assert called["pytest"] == 0, "zero real pytest spawn in the bench env"
         assert called["parallel"] == 1, "the flow must reach parallel review"
         assert outcome.get("block_reason") != "tests_preflight_blocked"
+
+
+class TestCommitReviewedLandsInTheSystemRepository:
+    """commit_reviewed is the landing in Ouroboros's own body: any other root is
+    refused before anything is staged or reviewed, and points at review_change."""
+
+    def _state(self, repo):
+        return (subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(repo), capture_output=True, text=True).stdout,
+                subprocess.run(["git", "status", "--porcelain"], cwd=str(repo), capture_output=True, text=True).stdout)
+
+    def test_another_root_is_refused_toward_review_change(self, tmp_path, monkeypatch):
+        from ouroboros.tools import git as git_mod
+
+        ctx = _make_staged_repo(tmp_path)
+        before = self._state(ctx.repo_dir)
+
+        def _no_review(*a, **kw):
+            raise AssertionError("a refused root must not reach the review")
+
+        monkeypatch.setattr(git_mod, "_run_reviewed_stage_cycle", _no_review)
+        monkeypatch.setattr(git_mod, "_run_parallel_review", _no_review)
+        # The registered handler names this call's review record on every outcome; a
+        # refusal before any staging, review or record is ID-less, even when an
+        # earlier call's id still sits on the context.
+        ctx._current_review_record_id = "rl-stale-from-an-earlier-call"
+        for root in ("active_workspace", str(tmp_path / "project"), "user_files"):
+            result = git_mod._commit_reviewed(ctx, commit_message="land the project", root=root)
+            assert result.startswith("⚠️ TOOL_ARG_ERROR: commit_reviewed lands in the system repository")
+            assert "review_change" in result and "ordinary git" in result
+            assert "review_record_id" not in result and "rl-stale" not in result
+        assert self._state(ctx.repo_dir) == before
+
+    def test_the_dispatcher_delivers_the_refusal_for_both_names(self, tmp_path, monkeypatch):
+        from ouroboros.tools import git as git_mod
+        from ouroboros.tools.registry import ToolRegistry
+
+        ctx = _make_staged_repo(tmp_path)
+        monkeypatch.setattr("ouroboros.safety.check_safety", lambda *_a, **_k: (True, ""))
+        monkeypatch.setattr(git_mod, "_run_reviewed_stage_cycle",
+                            lambda *a, **kw: (_ for _ in ()).throw(AssertionError("must not review")))
+        registry = ToolRegistry(ctx.repo_dir, ctx.drive_root)
+        registry.set_context(ctx)
+        for name in ("commit_reviewed", "vcs_commit_reviewed"):
+            root_schema = registry.get_schema_by_name(name)["function"]["parameters"]["properties"]["root"]
+            assert root_schema["enum"] == ["system_repo"]
+            result = registry.execute(name, {"commit_message": "land the project", "root": "active_workspace"})
+            assert "commit_reviewed lands in the system repository" in result and "review_change" in result
+
+    def test_no_root_and_the_system_repo_keep_todays_path(self, tmp_path):
+        from ouroboros.tools import git as git_mod
+
+        ctx = _make_staged_repo(tmp_path)
+        answers = {repr(kwargs): git_mod._commit_reviewed(ctx, commit_message="", **kwargs)
+                   for kwargs in ({}, {"root": ""}, {"root": "system_repo"})}
+        assert len(set(answers.values())) == 1, answers
+        assert "commit_message must be non-empty" in next(iter(answers.values()))

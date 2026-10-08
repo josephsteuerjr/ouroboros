@@ -203,7 +203,7 @@ def _maybe_inject_self_check(
 
     # Tree spend under a root cap (v6.91): the checkpoint is already a
     # cache-breaking user turn — one of the RARE surfaces allowed a live
-    # ledger number (DEVELOPMENT cache_friendliness item 22). The fence
+    # ledger number (DEVELOPMENT cache_friendliness item 28). The fence
     # counts the whole tree; own cost alone hid two tree deaths.
     tree_line = ""
     tree_accounted: Optional[float] = None

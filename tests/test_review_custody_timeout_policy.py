@@ -926,3 +926,59 @@ def test_a_collection_while_a_released_slot_runs_keeps_the_settled_roster(tmp_pa
     assert len(frames) == 1, [frame["text"] for frame in frames]
     assert "3 of 3 reviewer slot(s) settled (3 ok, 0 failed)" in frames[0]["text"]
     assert not custody._RELEASED_WAVES
+
+
+def test_poll_blind_spot_on_a_started_run_projects_in_flight_never_settled_or_retried():
+    """#1547 link 2, the classifier table: a typed observation blind spot on a
+    STARTED delegated run is ``in_flight`` — not the settled failure a started
+    run's other exceptions become, and never a $0 retry."""
+    from ouroboros.review_custody import _worker_exception_operation_state as state_of
+    from ouroboros.review_execution import ReviewPollUnavailable
+
+    blind = ReviewPollUnavailable("blind on both reads", run_id="run-9")
+    assert state_of(blind, {}) == "in_flight"
+    assert state_of(blind, {"pending_invocation_id": "inv-9"}) == "in_flight"
+    assert state_of(TimeoutError("slot budget exceeded"), {"pending_invocation_id": "inv-9"}) == "settled"
+
+
+def test_an_unobservable_live_session_stays_pending_for_an_attach_only_rejoin(tmp_path):
+    """#1547 link 2 at the custody seam: the worker that could not observe its
+    live run ends ``in_flight`` with its pending invocation re-registered, the
+    row is a typed delivery failure (not a settled terminal, no replay cache),
+    and the next collect rejoins the SAME operation with that token instead of
+    dispatching a second paid run."""
+    from types import SimpleNamespace
+
+    from ouroboros.review_custody import _attempt_key, run_custodied_review_slots
+    from ouroboros.review_execution import ReviewPollUnavailable, ReviewRouteKind
+    from ouroboros.review_substrate import ReviewActorRecord, ReviewRequest, ReviewSlot
+    from ouroboros.usage_accounting import UsageScope
+
+    calls, ctx = [], SimpleNamespace(drive_root=tmp_path, task_id="blind-1547")
+    request = ReviewRequest(surface="plan_review", goal="review", task_id="blind-1547",
+                            retry_key="plan_review:blind-1547")
+    slot = ReviewSlot(slot_id="seat", model="cursor/test", route=ReviewRouteKind.AGENT_SESSION, timeout_sec=10.0)
+
+    def run_slot(slot, operation_id, retry_state, _deadline, _checkpoint):
+        calls.append((operation_id, dict(retry_state)))
+        if len(calls) == 1:
+            retry_state["pending_invocation_id"], retry_state["delegated_run_id"] = "inv-b", "run-b"
+            raise ReviewPollUnavailable("blind on both reads", run_id="run-b")
+        return ReviewActorRecord(slot_id=slot.slot_id, model=slot.model, status="ok", raw_text="[]")
+
+    def error_actor(slot, error, operation_id="", operation_state="settled"):
+        return ReviewActorRecord(slot_id=slot.slot_id, model=slot.model, status="error", error=error,
+                                 operation_id=operation_id, operation_state=operation_state,
+                                 late_result_pending=operation_state == "in_flight")
+
+    args = dict(request=request, slots=[slot], usage_ctx=ctx, task_id=request.task_id, usage_meta={},
+                review_usage_scope=UsageScope(drive_root=tmp_path, task_id=request.task_id),
+                run_slot=run_slot, error_actor=error_actor)
+    [first] = run_custodied_review_slots(**args)
+    assert first.operation_state == "in_flight" and first.late_result_pending is True
+    assert first.failure_code == "review_poll_unavailable" and first.usage["pending_invocation_id"] == "inv-b"
+    assert ctx._review_pending_invocations[_attempt_key(request, slot)]["pending_invocation_id"] == "inv-b"
+    assert not getattr(ctx, "_review_settled_attempts", {})
+    [second] = run_custodied_review_slots(**args)
+    assert second.status == "ok" and second.operation_id == first.operation_id
+    assert calls[1] == (first.operation_id, {"pending_invocation_id": "inv-b"})

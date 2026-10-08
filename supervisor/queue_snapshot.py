@@ -7,6 +7,7 @@ file is young enough to describe the world the supervisor is waking into.
 
 from __future__ import annotations
 
+import copy
 import datetime
 import json
 import logging
@@ -331,7 +332,9 @@ def _retain_snapshot_pending(snapshot_pending: list, running_rows: list, *, stal
     dispatch permission, beside (never instead of) Restart holds, and refuse a
     possible handoff's replay themselves; a fresh host-unscoped possible handoff
     is held, never replayed. Every other row needs a fresh snapshot.
-    Returns ``(retained_rows, parked_rows, consumed_task_ids)``.
+    Returns retained rows, unseen pause ids, consumed task ids, and the roots'
+    pre-park rows. Unseen pauses use those transient rows to apply the ordinary
+    latch generation rule before parking erased their prior selection.
     """
     from ouroboros.budget_pause import budget_pause_restore_refusal, budget_pause_row
     from ouroboros.owner_wait import restore_owner_wait_allowed, saved_sleep_checkpoint
@@ -340,15 +343,23 @@ def _retain_snapshot_pending(snapshot_pending: list, running_rows: list, *, stal
     from supervisor.budget_resume import revoke_exact_budget_resume
     from supervisor.events_budget import (HOLD_OWNER_RESTART, HOLD_PANIC, HOLD_RESTORE_REFUSED_PREFIX,
                                           hold_budget_row, hold_restored_budget_pause)
-    from supervisor.restart_retention import (hold_after_stop, hold_for_owner_restart, never_started,
-                                              retained_pending, saved_sleep_hold_reason)
+    from supervisor.restart_retention import (hold_after_stop, hold_for_owner_restart, never_started, pause_ids,
+                                              retained_pending, saved_sleep_hold_reason, unseen_pause)
     from supervisor.schedule_occurrence import restore_allowed
 
     sleep_hold_reason = saved_sleep_hold_reason(_queue().DRIVE_ROOT)
     owner_restart, panic = sleep_hold_reason == HOLD_OWNER_RESTART, sleep_hold_reason == HOLD_PANIC
+    prior_roots = {str(task["id"]): copy.deepcopy(task) for task in
+                   snapshot_pending + [row.get("task") for row in running_rows if isinstance(row, dict)]
+                   if isinstance(task, dict) and task.get("id")
+                   and str(task.get("root_task_id") or task["id"]) == str(task["id"])}
+    unseen: set = set()
     for task in snapshot_pending:
         if isinstance(task.get("_budget_pause_resume"), dict):
+            before = pause_ids(task)
             revoke_exact_budget_resume(task, "restart_before_dispatch")
+            if unseen_pause(task, before):
+                unseen.add(str(task.get("id") or ""))
     direct_rows: list = []
     for task_id in direct_caught:
         task_id = str(task_id or "")
@@ -377,8 +388,12 @@ def _retain_snapshot_pending(snapshot_pending: list, running_rows: list, *, stal
             if stored.get(key) not in (None, ""):
                 record[key] = stored[key]
         direct_rows.append({"task": record, "attempt": attempt})
+    before_park = {str(row["task"].get("id") or ""): pause_ids(row["task"]) for row in running_rows
+                   if isinstance(row, dict) and isinstance(row.get("task"), dict)}
     parked = _park_pausing_running_rows(list(running_rows) + direct_rows, snapshot_pending,
         sleep_hold_reason=sleep_hold_reason)
+    unseen.update(str(task.get("id") or "") for task in parked
+                  if unseen_pause(task, before_park.get(str(task.get("id") or ""), ("", ""))))
     retained = []
     consumed: list = []
     for task in list(snapshot_pending) + parked:
@@ -432,37 +447,60 @@ def _retain_snapshot_pending(snapshot_pending: list, running_rows: list, *, stal
             {"ts": utc_now_iso(), "type": "queue_restore_stale_consumed_grant_rows",
              "task_ids": consumed, "action": "fenced_as_running_work"},
         )
-    return retained, parked, consumed
+    return retained, unseen, consumed, prior_roots
 
 
-def _raise_parked_root_fences(parked_pausing: list) -> None:
-    """Raise the root admission latch of every root parked at restore — AFTER the
-    snapshot's fence map is restored, or the restore would erase it."""
-    if not parked_pausing:
+def _raise_parked_root_fences(retained: list, unseen: "set[str]" = frozenset(),
+                              prior_roots: Optional[dict] = None) -> None:
+    """Raise the root admission latches restore owes — AFTER the snapshot's fence
+    map is restored, or the restore would erase it. That map stays the authority:
+    an old marker cannot replace its latch. A pause it never recorded (``unseen``)
+    follows the live generation rule using the root's pre-park selection. An
+    owner marker raises its queue root's durable owner fence, never the identity it
+    saved: released raises nothing (only the root's own Resume lifts it), closed
+    raises the current fence; unreadable or absent authority keeps the map's latch,
+    else the marker's."""
+    if not retained:
         return
     from supervisor.events_budget import _set_root_budget_pause_locked
-    from ouroboros.owner_pause import read_fence, fence_closed
+    from ouroboros.owner_pause import REASON_OWNER, fence_closed, read_fence
 
     with _queue()._queue_lock:
-        for parked in parked_pausing:
+        for parked in retained:
             marker = parked.get("_budget_pause") if isinstance(parked.get("_budget_pause"), dict) else {}
-            if str(marker.get("scope") or "") == "root" and marker.get("root_task_id"):
-                fence = _set_root_budget_pause_locked(str(marker["root_task_id"]), marker)
-                marker["fence_id"] = fence["fence_id"]
             task_id = str(parked.get("id") or "")
-            if task_id and str(parked.get("root_task_id") or task_id) == task_id:
+            root_id = str(parked.get("root_task_id") or task_id)
+            try:
+                owner = read_fence(pathlib.Path(parked.get("budget_drive_root") or _queue().DRIVE_ROOT), root_id)
+                latch = {"cause": "owner_pause", "fence_id": owner["fence_id"],
+                         "paused_at": owner.get("requested_at")} if fence_closed(owner) else None
+            except Exception:
+                owner = latch = None
+            root_scoped = str(marker.get("scope") or "") == "root"
+            latch_root = root_id if marker.get("reason") == REASON_OWNER else str(marker.get("root_task_id") or "")
+            if root_scoped and marker.get("reason") == REASON_OWNER and owner:
+                if latch:
+                    marker["fence_id"] = _set_root_budget_pause_locked(root_id, latch)["fence_id"]
+            elif root_scoped and latch_root:
+                current = _queue().BUDGET_ROOT_FENCES.get(latch_root)
+                if task_id in unseen and marker.get("reason") != REASON_OWNER:
+                    pause = {**marker, "fence_id": None} if current else marker
+                    marker["fence_id"] = _set_root_budget_pause_locked(
+                        latch_root, pause, prior_root=(prior_roots or {}).get(latch_root, {}))["fence_id"]
+                elif current:
+                    marker["fence_id"] = current["fence_id"]
+                elif marker.get("reason") == REASON_OWNER or task_id in unseen:
+                    if marker.get("reason") == REASON_OWNER:
+                        log.warning("Owner fence of %s unknown at restore; %s keeps its saved latch", root_id, task_id)
+                    marker["fence_id"] = _set_root_budget_pause_locked(latch_root, marker)["fence_id"]
+            if task_id and root_id == task_id:
                 # A crash after the eligible snapshot but before the final
                 # durable Resume commit leaves this fence closed. Rebuild its
                 # projection so explicit Resume can finish the same action.
-                root = pathlib.Path(parked.get("budget_drive_root") or _queue().DRIVE_ROOT)
-                try:
-                    owner = read_fence(root, task_id)
-                except Exception:
+                if owner is None:
                     log.warning("Owner fence unreadable at restore; launch stays refused for %s", task_id)
-                    continue
-                if fence_closed(owner) and task_id not in _queue().BUDGET_ROOT_FENCES:
-                    _set_root_budget_pause_locked(task_id, {"cause": "owner_pause",
-                        "fence_id": owner["fence_id"], "paused_at": owner.get("requested_at")})
+                elif latch and task_id not in _queue().BUDGET_ROOT_FENCES:
+                    _set_root_budget_pause_locked(task_id, latch)
 
 
 def _refuse_restore_invalid_fences(snapshot_pending: list, *, budget: bool = False) -> int:
@@ -763,7 +801,7 @@ def restore_pending_from_snapshot(
         pending_ids = {str(task.get("id") or "") for task in snapshot_pending}
         direct_caught = [task_id for task_id in direct_roots.get("task_ids") or []
                          if task_id not in live_direct and task_id not in pending_ids]
-        snapshot_pending, parked_pausing, consumed_rows = _retain_snapshot_pending(
+        snapshot_pending, unseen_pauses, consumed_rows, prior_roots = _retain_snapshot_pending(
             snapshot_pending, running_rows, stale=stale, direct_caught=direct_caught)
         fenced_running = _fence_snapshot_running_rows(
             running_rows
@@ -785,7 +823,7 @@ def restore_pending_from_snapshot(
         )
         fenced_roots, malformed_fences, malformed_budget_fences = restore_queue_fences(raw_fences, raw_budget_fences)
         if not malformed_budget_fences:
-            _raise_parked_root_fences(snapshot_pending)
+            _raise_parked_root_fences(snapshot_pending, unseen_pauses, prior_roots)
         if malformed_budget_fences or malformed_fences:
             restored += _refuse_restore_invalid_fences(snapshot_pending, budget=malformed_budget_fences)
             _record_queue_restore(restored=restored, terminalized_running=fenced_running,

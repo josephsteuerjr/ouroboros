@@ -245,7 +245,7 @@ def review_repo(tmp_path):
     (repo / "BIBLE.md").write_text(_BIBLE, encoding="utf-8")
     (repo / "docs" / "ARCHITECTURE.md").write_text("# Arch\n\n## Review stack\n\ntext\n\n#### Deep self-review\n\nmore\n", encoding="utf-8")
     (repo / "docs" / "DEVELOPMENT.md").write_text("# Dev\n\n## Rules\n\nx\n", encoding="utf-8")
-    (repo / "docs" / "CHECKLISTS.md").write_text("# Checks\n\n## Repo Commit Checklist\n\ny\n", encoding="utf-8")
+    (repo / "docs" / "CHECKLISTS.md").write_text("# Checks\n\n## Change Review Checklist\n\ny\n", encoding="utf-8")
     (repo / "ouroboros").mkdir()
     (repo / "ouroboros" / "loop.py").write_text("def run():\n    return 1\n", encoding="utf-8")
     return repo

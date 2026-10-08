@@ -38,7 +38,8 @@ from ouroboros.reviewer_window import reviewer_context_window, window_scaled_res
 from ouroboros.tools.review_synthesis import quorum_input_token_limit as _quorum_input_token_limit  # noqa: F401
 from ouroboros.tools.review_helpers import (
     REPO_ROOT as _REPO_ROOT,
-    load_checklist_section as _load_checklist_section_precise,
+    load_checklist_section as _load_checklist_section_precise,  # noqa: F401 -- retained test/facade patch seam
+    load_checklist_layers,
     load_governance_doc,  # noqa: F401 -- retained test/facade patch seam
     build_touched_file_pack,
     triad_pack_exclusions,
@@ -47,8 +48,8 @@ from ouroboros.tools.review_helpers import (
     review_drive_root,  # noqa: F401 -- facade import surface; leaves read it through the call-time handle
     build_rebuttal_section,
     CRITICAL_FINDING_CALIBRATION,
-    REPO_ANTI_PATTERN_LOCK_GUARD,
-    REVIEW_PREAMBLE,
+    anti_pattern_lock_guard,
+    review_preamble,
     build_self_verification_template,
     build_review_history_section as _build_review_history_section,
     calibrated_input_token_limit,  # noqa: F401 — patchable seam (see note above)
@@ -469,22 +470,28 @@ def _owner_deadline_at(ctx: Any) -> str:
 
 # Unified pre-commit review gate.
 
-def _load_checklist_section() -> str:
-    """Load Repo Commit Checklist, fail-closed if missing/malformed.
+def _load_checklist_section(layer: str = "body") -> str:
+    """Load the change-review checklist for ``layer`` (`review_helpers.
+    load_checklist_layers`), fail-closed if missing/malformed.
 
-    The standing-disclosure archive rides along: packet-only (api) reviewers
-    have no repository tools, so a bare pointer to docs/CHECKLISTS_ARCHIVE.md
-    would be unresolvable for them and settled owner-accepted narrowings could
-    be re-raised (#447 stage-3 wave). The archive is small and binding — the
-    extraction slimmed the live checklist FILE, not the reviewer's contract."""
+    For the body layer the standing-disclosure archive rides along: packet-only
+    (api) reviewers have no repository tools, so a bare pointer to
+    docs/CHECKLISTS_ARCHIVE.md would be unresolvable for them and settled
+    owner-accepted narrowings could be re-raised (#447 stage-3 wave). The
+    archive is small and binding — the extraction slimmed the live checklist
+    FILE, not the reviewer's contract. The core layer (a subject that is not
+    the Ouroboros body) carries neither the body items nor the archive: its
+    disclosures are about Ouroboros's own surfaces."""
     try:
-        section = _load_checklist_section_precise("Repo Commit Checklist")
+        section = load_checklist_layers(layer)
     except (FileNotFoundError, ValueError):
         raise
     except Exception as e:
         raise FileNotFoundError(
             f"docs/CHECKLISTS.md not found or malformed: {e}"
         ) from e
+    if layer != "body":
+        return section
     archive_path = _REPO_ROOT / "docs" / "CHECKLISTS_ARCHIVE.md"
     try:
         archive = archive_path.read_text(encoding="utf-8").strip()
@@ -502,8 +509,8 @@ def _load_checklist_section() -> str:
 
 
 # The triad prompt is assembled STABLE-FIRST for provider prompt caching:
-# fixed instructions plus the tier-1 governance rules (the Repo Commit Checklist,
-# the standing disclosures, and BIBLE.md through the constitutional head) form a
+# fixed instructions plus the tier-1 governance rules (the layered Change Review
+# Checklist, the standing disclosures, and BIBLE.md through the constitutional head) form a
 # byte-stable prefix reused across review rounds AND across commits (marked with
 # a cache breakpoint at dispatch). The change-class governance selection
 # (`tools/governance_context.py` tiers 2 and 3) and the navigation maps open the
@@ -586,8 +593,8 @@ def _preflight_check(commit_message: str, staged_files: str,
     substring test matched "conversion") and the ".py under ouroboros/ or
     supervisor/ requires tests/ staged" predicate (it refused comment-only
     diffs and accepted tests/README.md as coverage). Both duties now live in
-    the semantic checklist: docs/CHECKLISTS.md item 6 (tests_affected) and
-    item 8 (version_bump).
+    the semantic checklist: docs/CHECKLISTS.md Change Review Checklist item 4
+    (tests_affected) and Ouroboros Body Layer item 12 (version_bump).
     """
     import string as _string
 
@@ -620,7 +627,7 @@ def _preflight_check(commit_message: str, staged_files: str,
     from ouroboros.commit_admission import release_metadata_diagnostics, format_release_metadata_preflight
     release_error = format_release_metadata_preflight(release_metadata_diagnostics(
         repo_dir, sorted(active_staged), source="index",
-        read_text=lambda path: _git_show_staged(repo_dir, path),
+        read_text=lambda path: _git_show_staged(repo_dir, path), deleted=sorted(staged_set - active_staged),
     ))
     if release_error:
         return release_error
@@ -628,7 +635,7 @@ def _preflight_check(commit_message: str, staged_files: str,
     # The version-reference and tests-required lexical heuristics were removed
     # here (false blocks: a "conversion" commit told to bump VERSION; a
     # comment-only .py diff refused for missing tests). See docstring —
-    # CHECKLISTS.md items 6/8 own these duties semantically.
+    # CHECKLISTS.md items 4/12 own these duties semantically.
 
     # New logic modules require active ARCHITECTURE.md update.
     new_logic_files = [
@@ -922,14 +929,15 @@ def _build_preflight_staged(target_repo: str, fallback: str = "") -> str:
 from ouroboros.tools.review_admission import fit_triad_prompt as _fit_triad_prompt
 
 
-def _triad_session_task(ctx: ToolContext, **sections) -> str:
+def _triad_session_task(ctx: ToolContext, governance_root=None, **sections) -> str:
     """Compat shim over ``review_subject.build_triad_session_task`` (5.2/5.3):
     same session task text; a managed subject inlines its authoritative delta."""
     from ouroboros.tools.review_subject import build_triad_session_task
 
-    # Governance always comes from the system repository, and the nav maps must
-    # address the physical chapter a section lives in.
-    governance_root = getattr(ctx, "repo_dir", None)
+    # Governance always comes from the system repository (a frozen subject names
+    # it explicitly), and the nav maps must address the physical chapter a
+    # section lives in.
+    governance_root = governance_root or getattr(ctx, "repo_dir", None)
     return build_triad_session_task(
         governance_repo_dir=pathlib.Path(governance_root) if governance_root else None,
         **sections,
@@ -956,32 +964,44 @@ def _triad_governance_usable_window(api_models: list, api_slots: list) -> int:
 
 def _triad_governance_context(ctx: ToolContext, touched_paths: list,
                               checklist_section: str, api_models: list, api_slots: list,
-                              *, delivery: str = "packet"):
+                              *, delivery: str = "packet", governance_root=None,
+                              layer: str = "body", subject_root: Optional[pathlib.Path] = None):
     """The triad's shared governance tiers for either delivery class.
 
-    ``BIBLE.md`` is inlined by every api row's constitutional head and the
-    standing disclosures ride the checklist section, so both are declared as
-    already delivered: the manifest records them as tier-1 inline without a
-    second copy in the prompt. Retrieving rows have no constitutional head, so
-    their task receives BIBLE.md inline from this shared builder."""
+    ``governance_root`` is the installed body (a frozen subject names it; the
+    rules are always the installed body's). Body layer: ``BIBLE.md`` is inlined
+    by every api row's constitutional head and the standing disclosures ride
+    the checklist section, so both are declared as already delivered: the
+    manifest records them as tier-1 inline without a second copy in the
+    prompt. Retrieving rows have no constitutional head, so their task
+    receives BIBLE.md inline from this shared builder. Core layer (the subject
+    is not the Ouroboros body): neither document is owed, so nothing is
+    declared already inline; ``subject_root`` is the reviewed repository whose
+    own documents the navigation names."""
     from ouroboros.tools.governance_context import GovernanceContext, governance_context
 
     if not api_models:
         return GovernanceContext()
+    if layer == "body":
+        already_inline = (("BIBLE.md", "docs/CHECKLISTS_ARCHIVE.md") if delivery == "packet"
+                          else ("docs/CHECKLISTS_ARCHIVE.md",))
+    else:
+        already_inline = ()
     return governance_context(
-        pathlib.Path(ctx.repo_dir),
+        pathlib.Path(governance_root or ctx.repo_dir),
         surface="triad",
         touched_paths=touched_paths,
         usable_window_tokens=_triad_governance_usable_window(api_models, api_slots),
         delivery=delivery,
         checklist_section_text=checklist_section,
-        already_inline=(("BIBLE.md", "docs/CHECKLISTS_ARCHIVE.md") if delivery == "packet"
-                        else ("docs/CHECKLISTS_ARCHIVE.md",)),
+        already_inline=already_inline,
+        layer=layer,
+        subject_root=subject_root,
     )
 
 
 def _capture_triad_staged_diff(
-    ctx: ToolContext, target_repo, blocking_review: bool
+    ctx: ToolContext, target_repo, blocking_review: bool, frozen: Any = None,
 ) -> tuple[Optional[str], Optional[Any], Optional[str]]:
     """Capture the triad's review-diff evidence, or route a capture failure.
 
@@ -991,12 +1011,16 @@ def _capture_triad_staged_diff(
     ``(None, None, block_result)`` on failure: the fail-closed message in
     blocking mode, ``None`` (advisory skip) otherwise. A genuine failure fails
     closed rather than reviewing a placeholder that would yield authoritative
-    findings about a diff nobody has.
+    findings about a diff nobody has. A ``frozen`` subject that is not the
+    system repo's own index IS the evidence (its diff text and managed artifact);
+    the system index keeps the gate's live capture, byte-identical to today.
     """
     from ouroboros.tools.review_binary_context import (
         StagedDiffUnavailable, capture_staged_diff)
     from ouroboros.tools.review_subject import managed_review_subject
 
+    if frozen is not None and not frozen.is_system_index:
+        return frozen.diff_text, frozen.managed, None
     try:
         subject = managed_review_subject(ctx, target_repo)
         if subject is not None:
@@ -1014,19 +1038,59 @@ def _capture_triad_staged_diff(
         )
 
 
+def _subject_changed_paths(frozen: Any, target_repo) -> tuple[str, str]:
+    """``(changed, preflight_staged)`` of the reviewed subject: the gate asks the
+    staged index of the reading root; a frozen worktree/base..head subject has
+    no staged index to ask and carries its own frozen path set."""
+    if frozen is not None and not frozen.is_system_index:
+        changed = "\n".join(path for _status, path in frozen.name_status)
+        return changed, format_name_status_for_preflight(
+            "\n".join(f"{status}\t{path}" for status, path in frozen.name_status), fallback=changed)
+    try:
+        changed = run_cmd(["git", "diff", "--cached", "--name-only"], cwd=target_repo)
+    except Exception:
+        changed = ""
+    return changed, _build_preflight_staged(target_repo, fallback=changed)
+
+
+def _review_history_with_open_obligations(ctx: ToolContext, frozen: Any) -> str:
+    """The prior-rounds section with the subject root's durable open obligations
+    (anti-thrashing across restarts; best-effort, never fatal)."""
+    open_obligations = []
+    try:
+        from ouroboros.review_state import load_state, make_repo_key
+        state = load_state(pathlib.Path(ctx.drive_root))
+        repo_key = make_repo_key(pathlib.Path(frozen.spec.root if frozen is not None else ctx.repo_dir))
+        open_obligations = state.get_open_obligations(repo_key=repo_key)
+    except Exception:
+        pass
+    return _build_review_history_section(ctx._review_history, open_obligations=open_obligations)
+
+
 def _prepare_unified_review(ctx: ToolContext, commit_message: str,
                             review_rebuttal: str = "",
                             repo_dir=None,
                             goal: str = "",
-                            scope: str = "") -> tuple:
+                            scope: str = "",
+                            subject: Any = None) -> tuple:
     """Assemble the triad packet WITHOUT dispatching any reviewer (Q25=A).
 
     Returns ``(prepared, early_result, exited)``: ``exited=True`` means the
     triad terminated during assembly and ``early_result`` (a block message, or
     ``None`` for an advisory skip / empty diff) is its final answer — nothing
     may be dispatched for it; otherwise ``prepared`` carries everything
-    ``_dispatch_unified_review`` needs."""
-    target_repo = repo_dir or ctx.repo_dir
+    ``_dispatch_unified_review`` needs. A frozen ``subject`` (``FrozenSubject``)
+    is read from ITS root (or isolated checkout) under the installed body's
+    governance, the body's release preflight only on the body's layer; ``None``
+    is the gate's path unchanged."""
+    frozen = subject
+    layer = str(frozen.spec.layer or "body") if frozen is not None else "body"
+    target_repo = frozen.review_root if frozen is not None else (repo_dir or ctx.repo_dir)
+    governance_root = pathlib.Path(frozen.spec.governance_root) if frozen is not None else pathlib.Path(ctx.repo_dir)
+    # The core layer indexes the SUBJECT's own documents where the reviewers read
+    # them (the isolated checkout of a base..head subject); the body layer's
+    # navigation is the body's own and names no subject root.
+    subject_root = pathlib.Path(target_repo) if layer != "body" else None
     ctx._review_iteration_count += 1
     ctx._last_review_block_reason = ""  # reset per attempt
     ctx._last_triad_models = []  # reset forensic field so stale values never persist on early exit
@@ -1037,24 +1101,20 @@ def _prepare_unified_review(ctx: ToolContext, commit_message: str,
     review_enforcement = _cfg.get_review_enforcement()
     blocking_review = review_enforcement_blocks(review_enforcement)
 
-    diff_text, subject, capture_block = _capture_triad_staged_diff(ctx, target_repo, blocking_review)
+    diff_text, subject, capture_block = _capture_triad_staged_diff(ctx, target_repo, blocking_review, frozen=frozen)
     if diff_text is None:  # capture failed: block (blocking) or advisory-skip (None)
         return None, capture_block, True
     if not diff_text.strip():
         return None, None, True
 
-    try:
-        changed = run_cmd(["git", "diff", "--cached", "--name-only"], cwd=target_repo)
-    except Exception:
-        changed = ""
+    changed, preflight_staged = _subject_changed_paths(frozen, target_repo)
     # Reviewers of a managed resolution read the RESOLUTION path set (delta ∪
-    # conflict anchors); the preflight staged list below stays on the FULL
-    # candidate (I2 — full-tree invariants are never narrowed).
+    # conflict anchors); the preflight staged list stays on the FULL candidate
+    # (I2 — full-tree invariants are never narrowed). The release preflight
+    # (version carriers, Architecture rows) is the installed body's own contract:
+    # a foreign root under the body's rules (layer ``core``) does not carry it.
     review_changed = "\n".join(subject.touched_paths()) if subject is not None else changed
-
-    preflight_staged = _build_preflight_staged(target_repo, fallback=changed)
-
-    preflight_err = _preflight_check(commit_message, preflight_staged, target_repo)
+    preflight_err = _preflight_check(commit_message, preflight_staged, target_repo) if layer == "body" else ""
     if preflight_err:
         from ouroboros.commit_admission import preflight_evidence_unavailable
         ctx._last_review_block_reason = (
@@ -1070,7 +1130,7 @@ def _prepare_unified_review(ctx: ToolContext, commit_message: str,
     rebuttal_section = build_rebuttal_section(review_rebuttal)
 
     try:
-        checklist_section = _load_checklist_section()
+        checklist_section = _load_checklist_section(layer)
     except (FileNotFoundError, ValueError) as e:
         log.error("Checklist loading failed (fail-closed): %s", e)
         ctx._last_review_block_reason = "infra_failure"
@@ -1084,18 +1144,7 @@ def _prepare_unified_review(ctx: ToolContext, commit_message: str,
             "Review enforcement=Advisory: review checklist failed to load; commit proceeding anyway. ",
         ), True
 
-    # Durable open obligations reduce review thrashing across restarts.
-    _open_obs_for_review = []
-    try:
-        from ouroboros.review_state import load_state, make_repo_key
-        _rs = load_state(pathlib.Path(ctx.drive_root))
-        _repo_key = make_repo_key(pathlib.Path(ctx.repo_dir))
-        _open_obs_for_review = _rs.get_open_obligations(repo_key=_repo_key)
-    except Exception:
-        pass  # Non-fatal: anti-thrashing hint is best-effort
-    review_history_section = _build_review_history_section(
-        ctx._review_history, open_obligations=_open_obs_for_review,
-    )
+    review_history_section = _review_history_with_open_obligations(ctx, frozen)
 
     touched_paths = [f.strip() for f in review_changed.strip().splitlines() if f.strip()]
 
@@ -1136,7 +1185,8 @@ def _prepare_unified_review(ctx: ToolContext, commit_message: str,
     # delivered rather than sent twice. An all-retrieving panel assembles no
     # packet, so it asks for none.
     governance = _triad_governance_context(
-        ctx, touched_paths, checklist_section, api_models, api_slots)
+        ctx, touched_paths, checklist_section, api_models, api_slots,
+        governance_root=governance_root, layer=layer, subject_root=subject_root)
 
     # Build touched-file pack for full current context (managed: the reviewed
     # resolution set; binary rows carry the M0 baseline identity). A plain
@@ -1189,10 +1239,10 @@ def _prepare_unified_review(ctx: ToolContext, commit_message: str,
         """Return (prompt, stable_prefix_len): the stable governance prefix is
         byte-identical across rounds and becomes the cache-marked block."""
         stable = _REVIEW_PROMPT_TEMPLATE_STABLE.format(
-            preamble=REVIEW_PREAMBLE,
+            preamble=review_preamble(layer),
             critical_calibration=CRITICAL_FINDING_CALIBRATION,
             json_contract=REVIEW_JSON_ARRAY_CONTRACT,
-            anti_pattern_lock_guard=REPO_ANTI_PATTERN_LOCK_GUARD,
+            anti_pattern_lock_guard=anti_pattern_lock_guard(layer),
             checklist_section=checklist_section,
         ) + (f"\n{governance.stable_inline}\n" if governance.stable_inline.strip() else "")
         dynamic = (f"{governance_tail}\n\n" if governance_tail else "") + _REVIEW_PROMPT_TEMPLATE_DYNAMIC.format(
@@ -1222,7 +1272,8 @@ def _prepare_unified_review(ctx: ToolContext, commit_message: str,
         prompt, stable_prefix_len, fit_error = _fit_triad_prompt(
             api_models, _assemble_prompt, current_files_section, diff_text,
             review_changed, target_repo, ctx=ctx, subject=subject,
-            slots=api_slots,
+            slots=api_slots,  # a frozen non-index subject re-renders ITS pinned trees at -U0
+            compact_diff=(lambda: frozen.render_prompt_diff(0)) if frozen is not None and not frozen.is_system_index else None,
         )
         for i, slot in zip(api_indices, api_slots):
             models[i], row_plan["session_profiles"][i], row_plan["use_local"][i] = slot.model, slot.session_profile, slot.use_local
@@ -1279,9 +1330,11 @@ def _prepare_unified_review(ctx: ToolContext, commit_message: str,
             for i in retrieving_indices]
         session_governance = _triad_governance_context(
             ctx, touched_paths, checklist_section,
-            [models[i] for i in retrieving_indices], retrieving_slots, delivery="retrieving")
+            [models[i] for i in retrieving_indices], retrieving_slots, delivery="retrieving",
+            governance_root=governance_root, layer=layer, subject_root=subject_root)
         session_task = _triad_session_task(
             ctx,
+            governance_root=governance_root,
             goal_section=goal_section,
             scope_section=scope_section,
             checklist_section=checklist_section,
@@ -1289,6 +1342,8 @@ def _prepare_unified_review(ctx: ToolContext, commit_message: str,
             review_history_section=review_history_section,
             governance=session_governance,
             subject=subject,
+            layer=layer,
+            subject_root=subject_root,
         )
 
     # The governance manifest is the packet's disclosure record: which rules were
@@ -1301,6 +1356,7 @@ def _prepare_unified_review(ctx: ToolContext, commit_message: str,
         "models": models, "routes": row_routes, "row_plan": row_plan,
         "session_task": session_task, "target_repo": target_repo,
         "blocking_review": blocking_review, "task_evidence": task_evidence,
+        "layer": layer,
         "governance_manifest": list(governance.manifest),
         "governance_packet_slots": [slot.slot_id for slot in api_slots],
         "governance_retrieving_manifest": list(session_governance.manifest) if session_governance else [],
@@ -1327,6 +1383,7 @@ def _dispatch_unified_review(ctx: ToolContext, commit_message: str, prepared: di
             row_plan=prepared["row_plan"],
             retry_key=str(prepared.get("retry_key") or ""),
             task_evidence=prepared.get("task_evidence"),
+            layer=str(prepared.get("layer") or "body"),
         )
         result = json.loads(result_json)
     except Exception as e:

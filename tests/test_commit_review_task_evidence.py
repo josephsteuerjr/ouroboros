@@ -564,7 +564,7 @@ def test_real_packet_assembly_omits_optional_excerpt_before_required_material(ev
     cap = [10**9]
     monkeypatch.setattr(review_admission, "density_probe_before_size_refusal", lambda *a, **kw: pytest.fail("optional excerpt should fit before paid density probe"))
     monkeypatch.setattr(review, "_preflight_check", lambda *a: None)
-    monkeypatch.setattr(review, "_load_checklist_section", lambda: "CHECKLIST_MARKER")
+    monkeypatch.setattr(review, "_load_checklist_section", lambda *_a, **_k: "CHECKLIST_MARKER")
     monkeypatch.setattr("ouroboros.reviewer_slot_config.commit_triad_delivery", lambda: {
         "models": ["fixture"], "routes": [ReviewRouteKind.API_CHAT], "slot_ids": ["triad-one"],
         "session_profiles": [""], "subagent_ids": [""], "use_local": [False]})

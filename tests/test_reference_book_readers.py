@@ -292,8 +292,8 @@ def test_a_mandatory_full_read_pointer_enumerates_the_chapter_closure(tmp_path):
 
     # A non-book document and a sectioned pointer keep their existing form.
     assert "membership page" not in _mandatory_read_pointer(REPO, "BIBLE.md")
-    sectioned = _mandatory_read_pointer(REPO, "docs/CHECKLISTS.md", section="Repo Commit Checklist")
-    assert "'## Repo Commit Checklist' section" in sectioned
+    sectioned = _mandatory_read_pointer(REPO, "docs/CHECKLISTS.md", section="Change Review Checklist")
+    assert "'## Change Review Checklist' section" in sectioned
 
     # An unassemblable book says its coverage is unknown; it never reports a
     # membership page as the whole book.

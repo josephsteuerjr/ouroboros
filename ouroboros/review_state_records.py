@@ -139,10 +139,10 @@ _DEBT_STR_DEFAULTS = {"debt_id": "", "category": "", "summary": "", "severity": 
 _RUN_STR_DEFAULTS = {"snapshot_hash": "", "commit_message": "", "status": "stale", "snapshot_summary": "", "raw_result": "", "reason_kind": "", "bypass_reason": "", "bypassed_by_task": "", "repo_key": _LEGACY_CURRENT_REPO_KEY, "tool_name": _DEFAULT_ADVISORY_TOOL_NAME, "phase": "advisory", "model_used": "", "session_id": "", "review_rebuttal": ""}
 
 
-_ATTEMPT_STR_DEFAULTS = {"commit_message": "", "snapshot_hash": "", "block_reason": "", "block_details": "", "task_id": "", "repo_key": _LEGACY_CURRENT_REPO_KEY, "tool_name": _DEFAULT_TOOL_NAME, "pre_review_fingerprint": "", "post_review_fingerprint": "", "fingerprint_status": "", "scope_model": "", "block_class": "", "rebuttal_sha256": "", "review_contract_fingerprint": "", "review_retry_key": "", "root_task_id": "", "review_owner_session_id": ""}
+_ATTEMPT_STR_DEFAULTS = {"commit_message": "", "snapshot_hash": "", "block_reason": "", "block_details": "", "task_id": "", "repo_key": _LEGACY_CURRENT_REPO_KEY, "tool_name": _DEFAULT_TOOL_NAME, "pre_review_fingerprint": "", "post_review_fingerprint": "", "fingerprint_status": "", "scope_model": "", "block_class": "", "rebuttal_sha256": "", "review_contract_fingerprint": "", "review_retry_key": "", "root_task_id": "", "review_owner_session_id": "", "review_record_id": ""}
 
 
-_ATTEMPT_MERGE_INCOMING_FIRST = ("ts", "commit_message", "status", "snapshot_hash", "block_reason", "block_details", "duration_sec", "task_id", "repo_key", "tool_name", "phase", "pre_review_fingerprint", "post_review_fingerprint", "fingerprint_status", "scope_model", "block_class", "rebuttal_sha256", "review_contract_fingerprint", "review_retry_key", "root_task_id", "review_owner_session_id")
+_ATTEMPT_MERGE_INCOMING_FIRST = ("ts", "commit_message", "status", "snapshot_hash", "block_reason", "block_details", "duration_sec", "task_id", "repo_key", "tool_name", "phase", "pre_review_fingerprint", "post_review_fingerprint", "fingerprint_status", "scope_model", "block_class", "rebuttal_sha256", "review_contract_fingerprint", "review_retry_key", "root_task_id", "review_owner_session_id", "review_record_id")
 
 
 _ATTEMPT_MERGE_INCOMING_LISTS = ("critical_findings", "advisory_findings", "obligation_ids", "readiness_warnings")
@@ -345,6 +345,9 @@ class CommitAttemptRecord:
     # Optional canonical author-finish stance for an advisory commit. Raw
     # reviewer evidence remains in the same attempt row beside this record.
     author_disposition: Dict[str, Any] = field(default_factory=dict)
+    # Review ledger record this attempt's authoritative wave was written to
+    # (``state/review_ledger/<record_id>.json``); "" on rows older than the ledger.
+    review_record_id: str = ""
 
 
 def _attempt_identity_tuple(attempt: CommitAttemptRecord) -> tuple[str, str, str, str]:

@@ -51,7 +51,8 @@ def synthetic_repo(tmp_path):
     (repo / "docs").mkdir(parents=True)
     (repo / "BIBLE.md").write_text(SYNTHETIC_BIBLE, encoding="utf-8")
     (repo / "docs" / "CHECKLISTS.md").write_text(
-        "# Checklists\n\n## Repo Commit Checklist\n\n- synthetic item 7f3a\n\n"
+        "# Checklists\n\n## Change Review Checklist\n\n- synthetic item 7f3a\n\n"
+        "## Ouroboros Body Layer\n\n- synthetic body item 7f3b\n\n"
         "## Intent / Scope Review Checklist\n\n- synthetic scope item 9c1e\n\n## Other\n\nnot inlined\n",
         encoding="utf-8")
     (repo / "docs" / "CHECKLISTS_ARCHIVE.md").write_text("archive row 7f3a\n", encoding="utf-8")
@@ -316,9 +317,12 @@ def test_repo_selects_every_governance_corpus(synthetic_repo, isolated_roots, mo
     assert SYNTHETIC_BIBLE in head
     assert (mrp.REPO_ROOT / "BIBLE.md").read_text(encoding="utf-8") not in head
     prefix = mrp._governance_prefix(synthetic_repo, ["app.py"], ["openai/packet"])
-    # Section cut at the next "\n## " (its own trailing newline kept) + "\n\n" +
-    # the stripped archive — the runtime's `_load_checklist_section` join.
-    assert prefix["checklist_section"] == "## Repo Commit Checklist\n\n- synthetic item 7f3a\n\n\narchive row 7f3a"
+    # Core section cut at the next "\n## " (its own trailing newline kept) + "\n"
+    # + the body layer cut the same way + "\n\n" + the stripped archive — the
+    # runtime's `_load_checklist_section` (body layer) join.
+    assert prefix["checklist_section"] == ("## Change Review Checklist\n\n- synthetic item 7f3a\n\n"
+                                           "## Ouroboros Body Layer\n\n- synthetic body item 7f3b\n\n"
+                                           "\narchive row 7f3a")
     assert "not inlined" not in prefix["stable_prefix"]
     assert prefix["checklist_section"] in prefix["stable_prefix"]
     # The three documents the packet used to compose in full are NOT inlined…

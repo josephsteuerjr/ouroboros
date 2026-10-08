@@ -55,7 +55,7 @@ def _make_env_and_memory(tmpdir: pathlib.Path):
     )
     (repo_dir / "docs" / "DEVELOPMENT.md").write_text("# DEVELOPMENT.md — Dev Guide", encoding="utf-8")
     (repo_dir / "README.md").write_text('[![Version 5.5.0](https://img.shields.io/badge/version-5.5.0-green.svg)](VERSION)', encoding="utf-8")
-    (repo_dir / "docs" / "CHECKLISTS.md").write_text("## Repo Commit Checklist\n| # | item |", encoding="utf-8")
+    (repo_dir / "docs" / "CHECKLISTS.md").write_text("## Change Review Checklist\n| # | item |", encoding="utf-8")
     (drive_root / "state" / "state.json").write_text('{"spent_usd": 0}', encoding="utf-8")
     (drive_root / "memory" / "scratchpad.md").write_text("test scratchpad", encoding="utf-8")
     (drive_root / "memory" / "identity.md").write_text("I am Ouroboros.", encoding="utf-8")
@@ -448,7 +448,7 @@ def test_promoted_self_body_requirement_reaches_the_contract_and_context_without
     books_env, _memory = _make_env_and_memory(tmp_path / "books")
     env = Env(repo_dir=books_env.repo_dir, drive_root=host.root, budget_drive_root=host.root)
     development_body = "# DEVELOPMENT.md — Dev Guide\n\n## Review\n\nRead every source before committing.\n"
-    (env.repo_dir / "docs" / "DEVELOPMENT.md").write_text(development_body, encoding="utf-8")
+    (env.repo_dir / "docs" / "DEVELOPMENT.md").write_text(development_body, encoding="utf-8", newline="\n")
     memory = Memory(host.root, repo_dir=env.repo_dir)
     workspace = tmp_path / "working-copy"
     workspace.mkdir()

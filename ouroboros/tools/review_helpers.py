@@ -18,6 +18,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
 from ouroboros.tools.release_sync import check_worktree_version_sync  # noqa: F401 - moved to its version-sync home; compatibility re-export
+from ouroboros.tools.review_checklist import (  # noqa: F401 -- intentional public re-exports (the checklist leaf)
+    BODY_CHECKLIST_SECTION,
+    CHECKLIST_LAYERS,
+    CHECKLIST_RELATIVE_PATH,
+    CORE_CHECKLIST_SECTION,
+    checklist_fingerprint,
+    load_checklist_layers,
+    load_checklist_section,
+)
 from ouroboros.utils import sanitize_tool_result_for_log, truncate_review_artifact as _truncate_review_artifact, utc_now_iso  # noqa: F401 -- facade import surface; leaves read it through the call-time handle
 
 if TYPE_CHECKING:
@@ -235,9 +244,9 @@ def review_wave_budget_gate(
     ``max_completion_tokens`` take one value per slot, and ``categories`` /
     ``slot_ids`` name the usage scope each seat will SEND under, so its bound
     reads the seat's own observed cache split rather than the caller's), against
-    every fence ``reserve_attempt`` enforces — the global TOTAL_BUDGET remainder
-    (the scope's ``global_limit_usd``) and the task's root fence — the event naming
-    the binding axis with both remainders. A wave that fits at admission time is
+    every fence ``reserve_attempt`` enforces — global TOTAL_BUDGET, the task's
+    current root and its original billing group — with the binding axis and
+    remainders named in the event. A wave that fits at admission time is
     dispatched whole; one that does not is refused before any seat spends.
     Fail-open on any error/unknown."""
     try:
@@ -299,12 +308,14 @@ def review_wave_budget_gate(
 
 
 def review_wave_binding_fence(admission: dict) -> tuple[str, str]:
-    """(fence, remedy) of a refused wave: the binding axis (global TOTAL_BUDGET or
-    per-task root fence) and ITS knob — never a fence the wave would have fit."""
+    """Name the binding global/root/group fence and its actual remedy."""
     usd = lambda key: "unknown" if admission.get(key) is None else f"${float(admission[key]):.6f}"  # noqa: E731
     if admission.get("binding_axis") == "global":
         return (f"global budget TOTAL_BUDGET {usd('global_limit_usd')}, accounted {usd('global_accounted_usd')} "
                 "across every task", "raise TOTAL_BUDGET")
+    if admission.get("binding_axis") == "group":
+        return (f"whole-work billing-group budget fence {usd('limit_usd')}, accounted {usd('accounted_usd')}",
+                "amend the original billing-group owner's cap explicitly; changing the per-task setting does not amend it")
     return f"per-task budget fence {usd('limit_usd')}, accounted {usd('accounted_usd')}", (
         "raise the per-task budget (OUROBOROS_PER_TASK_COST_USD)")
 
@@ -490,25 +501,6 @@ def build_scope_actor_record(scope_result: object, *, fallback_model_id: str = "
         "critical_findings": critical_findings,
         "advisory_findings": advisory_findings,
     }
-
-
-def load_checklist_section(section_name: str, checklist_path: Optional[Path] = None) -> str:
-    """Extract one ``## Header`` section from docs/CHECKLISTS.md (the host
-    repo's by default; ``checklist_path`` reads another tree's copy)."""
-    checklist_path = Path(checklist_path) if checklist_path else REPO_ROOT / "docs" / "CHECKLISTS.md"
-    text = checklist_path.read_text(encoding="utf-8")
-
-    header = f"## {section_name}"
-    start = text.find(header)
-    if start == -1:
-        raise ValueError(
-            f"Section {header!r} not found in {checklist_path}"
-        )
-
-    next_header = text.find("\n## ", start + len(header))
-    if next_header == -1:
-        return text[start:]
-    return text[start:next_header]
 
 
 def build_blocking_findings_json_section(
@@ -832,7 +824,9 @@ def format_advisory_error(prefix: str, result_error: str, stderr_tail: str,
 from ouroboros.tools.review_prompt_text import (  # noqa: E402, F401 -- intentional public re-exports
     CRITICAL_FINDING_CALIBRATION,
     REPO_ANTI_PATTERN_LOCK_GUARD,
+    REPO_ANTI_PATTERN_LOCK_GUARD_CORE,
     REVIEW_PREAMBLE,
+    REVIEW_PREAMBLE_CORE,
     REVIEW_REPAIR_JUDGMENT,
     REVIEW_SEVERITY_THRESHOLDS,
     REVIEW_THOROUGHNESS_BLOCK,
@@ -844,6 +838,7 @@ from ouroboros.tools.review_prompt_text import (  # noqa: E402, F401 -- intentio
     _OBLIGATION_SUFFIX_RE,
     _SECRET_LINE_RE,
     _make_fence,
+    anti_pattern_lock_guard,
     build_anti_thrashing_rules_section,
     build_obligations_block,
     build_rebuttal_section,
@@ -856,6 +851,7 @@ from ouroboros.tools.review_prompt_text import (  # noqa: E402, F401 -- intentio
     normalize_reviewer_items,
     normalize_reviewer_obligation_id,
     redact_prompt_secrets,
+    review_preamble,
     single_line,
     strip_obligation_suffix,
 )

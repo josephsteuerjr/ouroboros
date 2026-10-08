@@ -281,7 +281,9 @@ def _grant_exact_resume(task: Dict[str, Any], pause: Dict[str, Any], *, selected
     refusal = _global_money_refusal(q, budget_remaining)
     if refusal:
         return refusal
-    root_task_id = str(pause.get("root_task_id") or task.get("root_task_id") or task_id)
+    # The grant binds to the queue row's own lineage (``root_task_id`` above), the
+    # one ``budget_resume_dispatch_allowed`` revalidates: a saved pause's root field
+    # never overrides it (an older writer saved the member's own id there).
     root_grant = live_root_resume_grant(q, root_task_id, result_root) if root_task_id != task_id else {}
     if selected_by and root_task_id != task_id and not sleep_wake:
         # Q9: lineage alone grants nothing; model selection needs this root's live grant.
