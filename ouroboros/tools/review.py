@@ -424,7 +424,7 @@ def _handle_task_acceptance_review(
     except ValueError as exc:
         return json.dumps({
             "status": "not_dispatched",
-            "error": f"invalid reviewer-slot configuration blocks task acceptance: {exc}",
+            "error": f"invalid review pool configuration blocks task acceptance: {exc}",
         }, ensure_ascii=False)
     if not is_root_task:
         from ouroboros.reviewer_slot_config import child_acceptance_slots
@@ -1137,8 +1137,8 @@ def _prepare_unified_review(ctx: ToolContext, commit_message: str,
         ctx._last_review_block_reason = "infra_failure"
         return None, _handle_review_block_or_warning(
             ctx, blocking_review,
-            f"⚠️ REVIEW_BLOCKED: invalid reviewer-slot configuration — {exc}",
-            "Review enforcement=Advisory: invalid reviewer-slot configuration did not block commit. ",
+            f"⚠️ REVIEW_BLOCKED: invalid review pool configuration — {exc}",
+            "Review enforcement=Advisory: invalid review pool configuration did not block commit. ",
         ), True
     models, row_routes = row_plan["models"], row_plan["routes"]
     if not models:
@@ -1497,12 +1497,14 @@ def _dispatch_unified_review(ctx: ToolContext, commit_message: str, prepared: di
         reason = str(verdict["reason"] or "review_not_performed")
         ctx._last_review_block_reason = reason
         asked = [str(s.get("seat_id") or "") for s in rows if "coupling" in (s.get("parts") or [])]
+        from ouroboros.review_ledger import NOT_PERFORMED_PHRASES
+
         what = {
-            "coupling_not_performed": ("the coupling question (Part 2) was answered by no seat"
-                                       f" — asked of: {', '.join(asked) or 'no seat'}"),
-            "change_unanswered": "no seat answered the change (Part 1) with a PASS/FAIL verdict",
-            "review_late_result_pending": ("physical review operation(s) remain unresolved"
-                                           f" ({', '.join(pending_models) or 'custody open'}); no verdict is counted yet"),
+            "coupling_not_performed": (NOT_PERFORMED_PHRASES["coupling_not_performed"]
+                                       + f" — asked of: {', '.join(asked) or 'no seat'}"),
+            "change_unanswered": NOT_PERFORMED_PHRASES["change_unanswered"],
+            "review_late_result_pending": (NOT_PERFORMED_PHRASES["review_late_result_pending"]
+                                           + f" ({', '.join(pending_models) or 'custody open'}); no verdict is counted yet"),
         }.get(reason, f"the wave reduced to no countable answer ({reason})")
         part = {"coupling_not_performed": "coupling", "change_unanswered": "change"}.get(reason, "")
         seat_lines = _uncounted_part_seat_lines(rows, part) if part else []

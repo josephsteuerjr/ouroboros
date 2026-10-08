@@ -15,8 +15,8 @@ STALE = re.compile(
     r"triad \+ scope|reviewer-slot (?:configuration|skill review)|configured triad row|scope review runs",
     re.IGNORECASE,
 )
-# Protected (changes need the owner's approval) and the gate's own messages (the next package).
-RESIDUAL = {"ouroboros/runtime_mode_policy.py", "ouroboros/tools/review.py"}
+# Protected: its three phrases change only with the owner's approval.
+RESIDUAL = {"ouroboros/runtime_mode_policy.py"}
 SURFACES = ("ouroboros/**/*.py", "supervisor/**/*.py", "web/modules/**/*.js", "prompts/*.md",
             "docs/CREATING_SKILLS.md")
 
@@ -44,3 +44,36 @@ def test_the_skill_review_tool_names_the_review_panel_and_the_pool():
 
     assert "Run skill review by the review panel" in _REVIEW_SCHEMA["description"]
     assert "using the review pool configuration" in _REVIEW_SCHEMA["description"]
+
+
+def test_the_gates_malformed_pool_refusals_name_the_review_pool():
+    from pathlib import Path
+
+    source = Path(REPO, "ouroboros/tools/review.py").read_text(encoding="utf-8")
+    assert source.count("invalid review pool configuration") == 3
+    assert "reviewer-slot configuration" not in source
+
+
+def test_review_status_explains_the_pool_gate_codes_in_the_gates_words():
+    """``review_status`` knows every code the pool gate can leave on a blocked attempt
+    (``pool_empty`` and the three NOT_PERFORMED reasons of ``reduce_verdict``), and
+    its line uses the gate's own phrase for each, not the bare token."""
+    from types import SimpleNamespace
+
+    from ouroboros.review_ledger import NOT_PERFORMED_PHRASES
+    from ouroboros.review_status_projection import _review_status_message
+    from ouroboros.tools.review_helpers import REVIEW_POOL_EMPTY_SENTENCE
+
+    def line(code):
+        return _review_status_message({
+            "selected_attempt": SimpleNamespace(status="blocked", block_reason=code),
+            "effective_status": "stale", "open_debts": [],
+        })
+
+    assert REVIEW_POOL_EMPTY_SENTENCE in line("pool_empty")
+    for code, phrase in NOT_PERFORMED_PHRASES.items():
+        rendered = line(code)
+        assert f"({code})" in rendered and phrase in rendered and "NOT_PERFORMED" in rendered
+        # The bare token is never the whole explanation.
+        assert rendered.count(code) == 1
+    assert set(NOT_PERFORMED_PHRASES) == {"coupling_not_performed", "change_unanswered", "review_late_result_pending"}

@@ -245,7 +245,7 @@ def test_child_and_off_acceptance_follow_the_configured_rows(structured_env, tmp
     # Malformed catalog: the same typed refusal, never a default panel.
     structured_env.setenv("OUROBOROS_SUBAGENTS", "{broken")
     payload = json.loads(_handle_task_acceptance_review(root, claim="root done"))
-    assert payload["status"] == "not_dispatched" and "invalid reviewer-slot configuration" in payload["error"]
+    assert payload["status"] == "not_dispatched" and "invalid review pool configuration" in payload["error"]
     assert len(calls) == 3
 
 

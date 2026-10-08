@@ -660,6 +660,16 @@ def reduce_verdict(rows: List[Dict[str, Any]], *, gate_blocked: bool = False, ga
     return {"aggregate": aggregate, "quorum": quorum, "per_row": per_row, "per_question": per_question, "reason": reason}
 
 
+# The gate's own words for a wave that reduced to NOT_PERFORMED, keyed by the
+# ``reason`` above; the commit gate's block message and ``review_status``'s
+# reason line say the same thing about the same code.
+NOT_PERFORMED_PHRASES: Dict[str, str] = {
+    "coupling_not_performed": "the coupling question (Part 2) was answered by no seat",
+    "change_unanswered": "no seat answered the change (Part 1) with a PASS/FAIL verdict",
+    "review_late_result_pending": "physical review operation(s) remain unresolved",
+}
+
+
 def _seat_from_plan(seat_id: str, parts: Iterable[str], plan: Dict[str, Any]) -> Dict[str, Any]:
     requested = {"route": str(plan.get("route") or ""), "model": str(plan.get("model") or ""),
                  "effort": str(plan.get("effort") or ""), "profile": str(plan.get("session_profile") or ""),
