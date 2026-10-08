@@ -516,18 +516,22 @@ def _retrieving_task(repo_dir: pathlib.Path, drive_root: pathlib.Path, *,
         "governance_manifest": governance.manifest}
 
 
-def _review_usage_scope(current: Any) -> Any:
-    """The review's own usage scope: ``source`` names the surface; the CATEGORY stays the
-    tree's when that tree is one consciousness started (``consciousness``/``consciousness_task``),
-    because the rolling allowance discovers its roots by that category — a review root whose
-    only priced rows said ``deep_self_review`` was invisible to it (review round 3)."""
+def _review_usage_scope(current: Any, request: Any) -> Any:
+    """The review's own usage scope: ``source`` names the surface and the wave this review's
+    round (#1544); the CATEGORY stays the tree's when that tree is one consciousness started
+    (``consciousness``/``consciousness_task``), because the rolling allowance discovers its roots
+    by that category — a review root whose only priced rows said ``deep_self_review`` was
+    invisible to it (review round 3)."""
     from dataclasses import replace
 
     from ouroboros.consciousness_allowance import CONSCIOUSNESS_CATEGORIES
+    from ouroboros.review_records import resolve_review_wave
 
     category = str(getattr(current, "category", "") or "")
     keep = category in CONSCIOUSNESS_CATEGORIES
-    return replace(current, category=category if keep else "deep_self_review", source="deep_self_review")
+    wave = resolve_review_wave(request, request.usage_attribution, str(getattr(current, "review_wave_id", "") or ""))
+    return replace(current, category=category if keep else "deep_self_review", source="deep_self_review",
+                   review_wave_id=wave)
 
 
 def _run_retrieving_review(
@@ -638,7 +642,7 @@ def _run_retrieving_review(
         )
     except Exception:
         log.debug("deep self-review prompt custody write failed", exc_info=True)
-    scope = _review_usage_scope(current_usage_scope() or UsageScope())
+    scope = _review_usage_scope(current_usage_scope() or UsageScope(), request)
     memory = task_facts["memory"]
     try:
         with usage_scope(scope):

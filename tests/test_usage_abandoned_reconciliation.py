@@ -505,3 +505,20 @@ def test_prefetched_projection_preserves_a_different_canonical_budget_root(env, 
     if task_id == "root":
         assert stored["accounted_upper_bound_usd_with_children"] == 0.7
     assert [ledger_rows(root) for root in (env.root, canonical)] == before
+
+
+def test_a_wave_alone_keeps_a_direct_review_with_the_generic_closure(env):
+    """Advisory and deep self-review send under a review wave but no reviewer slot (#1544):
+    their abandoned attempts still close here, while a review-substrate slot stays with its
+    own custody."""
+    _terminal(env, "direct")
+    _terminal(env, "substrate")
+    with usage.usage_scope(usage.UsageScope(review_wave_id="wave-advisory")):
+        direct = _attempt(env, "direct")
+    with usage.usage_scope(usage.UsageScope(review_wave_id="commit:c1", review_slot_id="triad-slot")):
+        substrate = _attempt(env, "substrate")
+
+    maintenance._reconcile_abandoned_usage(env.root)
+
+    assert is_abandoned_settlement(_final(env, direct))
+    assert _final(env, substrate)["state"] == "dispatched"

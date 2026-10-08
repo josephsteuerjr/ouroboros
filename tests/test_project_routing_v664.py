@@ -836,7 +836,7 @@ def test_project_room_direct_chat_root_is_admitted_as_a_predecessor(tmp_path):
 
 
 def test_promoting_from_an_owner_root_still_succeeds_after_the_child_filter(tmp_path):
-    """CHECKLISTS item 21 positive path: the narrowing removes CHILDREN from the
+    """CHECKLISTS item 7 positive path: the narrowing removes CHILDREN from the
     predecessor window, and the owner's own root result stays fully promotable
     through the same manifest -> authority route."""
     import server

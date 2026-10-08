@@ -109,7 +109,7 @@ class TestScopeOnlyRetryPath:
 
         monkeypatch.setattr(
             "ouroboros.tools.review_helpers.load_checklist_section",
-            lambda name: "(scope checklist)",
+            lambda name, checklist_path=None: "(scope checklist)",
         )
         monkeypatch.setattr(session, "load_checklist_section", lambda name: "(scope checklist)")
         monkeypatch.setattr(

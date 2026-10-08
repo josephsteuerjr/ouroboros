@@ -413,6 +413,7 @@ def _run_advisory_delegated(prompt: str, repo_dir: pathlib.Path, ctx: ToolContex
     settles through delegate_custody (the subscription-session ledger row);
     ``cost_usd`` stays 0.0 here so nothing double-counts, and the disclosed
     spend rides ``usage`` for forensics."""
+    from dataclasses import replace as _dc_replace
     from types import SimpleNamespace
 
     from ouroboros.delegate_custody import custody_root
@@ -422,8 +423,9 @@ def _run_advisory_delegated(prompt: str, repo_dir: pathlib.Path, ctx: ToolContex
         ReviewAssignment,
         ReviewRouteKind,
     )
-    from ouroboros.review_substrate import ReviewRequest, ReviewSlot
+    from ouroboros.review_substrate import ReviewRequest, ReviewSlot, resolve_review_wave
     from ouroboros.reviewer_slot_config import advisory_slot_config
+    from ouroboros.usage_accounting import UsageScope, current_usage_scope, usage_scope
 
     _slot = advisory_slot_config()
     _task_metadata = getattr(ctx, "task_metadata", {}) or {}
@@ -481,7 +483,10 @@ def _run_advisory_delegated(prompt: str, repo_dir: pathlib.Path, ctx: ToolContex
             # canonical request, never rebuilt from mutable review history.
             # The shared transport still corroborates owner/root/operation.
             executor._session_prompt = request_body["prompt"]
-        attempt = executor.execute()
+        base = current_usage_scope() or UsageScope()  # the advisory names its round's wave (#1544)
+        wave = resolve_review_wave(request, request.usage_attribution, base.review_wave_id)
+        with usage_scope(_dc_replace(base, review_wave_id=wave)):
+            attempt = executor.execute()
     except Exception as exc:
         return _advisory_failure(exc, executor, retry_state), ""
     usage = dict(attempt.usage or {})

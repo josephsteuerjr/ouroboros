@@ -19,7 +19,8 @@ from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Optional
 
-from ouroboros.deadline_utils import review_operation_timeout_sec
+from ouroboros.deadline_utils import parse_deadline_ts, review_operation_timeout_sec, utc_now
+from ouroboros.delegate_custody import custody_root, invocation_record, run_timing
 from ouroboros.observability import new_call_id
 from ouroboros.model_wait import (
     calendar_scope, copy_wait_context, current_model_wait, execution_deadline_scope, monotonic_now,
@@ -215,7 +216,7 @@ def _review_exception_projection(
         "api_chat_unavailable", "route_unavailable", "harness_unavailable",
         "provider_unavailable", "native_inspection_unavailable",
         "native_bound_below_first_send", "native_round_without_progress",
-        "native_transcript_cap_exceeded",
+        "native_transcript_cap_exceeded", "review_poll_unavailable",
     }:
         phase = "authority"
     else:
@@ -224,60 +225,40 @@ def _review_exception_projection(
     return failure_custody, capture_state, http_status, operation_state, failure_code
 
 
-def _worker_exception_operation_state(
-    exc: BaseException, retry_state: Dict[str, Any],
-) -> str:
-    """Project a worker exception onto custody without guessing from prose.
+# Typed refusals emitted BEFORE a route's paid write-ahead boundary (window
+# refusals from route health or a spent owner window, admission, native refusals
+# raised before the first send): retryable $0 rows. Later custody/checkpoint
+# failures stay settled — absent provider-capture metadata cannot erase the stamp.
+_WINDOW_REFUSALS = frozenset({"deadline_exhausted", "subscription_window_exhausted", "credential_pool_exhausted"})
+_PRE_DISPATCH_REFUSALS = _WINDOW_REFUSALS | {
+    "api_chat_unavailable", "route_unavailable", "harness_unavailable", "provider_unavailable",
+    "session_task_missing", "session_target_unparsable", "session_route_unconfigured",
+    "custody_root_missing", "session_root_missing", "unknown_review_route",
+    "review_route_not_implemented", "native_inspection_unavailable",
+    "native_bound_below_first_send", "degraded_source_unreachable",
+}
 
-    Route construction and admission can fail before a physical attempt exists.
-    Those typed refusals are retryable $0 rows. A pending invocation, a started
-    delegated run, or a positive physical capture is already custody-bearing,
-    so it must not be turned into a fresh retry.
-    """
+
+def _worker_exception_operation_state(exc: BaseException, retry_state: Dict[str, Any]) -> str:
+    """Project a worker exception onto custody: one ordered table, the first fact
+    that holds names the state. A live delegated session whose OBSERVATION failed
+    stays in flight (#1547); a pending invocation or lost custody never retries."""
+    from ouroboros.review_execution import ReviewPollUnavailable, ReviewRouteUnavailable
+
     code = str(getattr(exc, "code", "") or "")
-    capture = getattr(exc, "physical_attempt_capture", None)
-    capture_state = str(getattr(capture, "state", "") or "").strip().lower()
-    if capture_state and capture_state not in PHYSICAL_ATTEMPT_STATES:
-        return "custody_lost"
-    if capture_state in _POSITIVE_CAPTURE_STATES:
-        return "settled"
-    if bool(getattr(exc, "delegated_run_started", False)) or str(
-        getattr(exc, "delegated_run_id", "") or ""
-    ).strip():
-        return "settled"
-    try:
-        from ouroboros.review_execution import ReviewRouteUnavailable
-    except Exception:
-        ReviewRouteUnavailable = ()  # type: ignore[assignment]
-    if isinstance(exc, ReviewRouteUnavailable):
-        if code == "review_custody_lost" or str(
-            retry_state.get("pending_invocation_id") or ""
-        ).strip():
-            return "custody_lost"
-        # Only refusals emitted before the route's paid write-ahead boundary
-        # are retryable $0. Later custody/checkpoint failures remain settled:
-        # their absence of provider-capture metadata cannot erase the stamp.
-        if code in {
-            "api_chat_unavailable", "route_unavailable", "harness_unavailable",
-            "provider_unavailable", "deadline_exhausted",
-            "subscription_window_exhausted",
-            "credential_pool_exhausted", "session_task_missing",
-            "session_target_unparsable", "session_route_unconfigured",
-            "custody_root_missing", "session_root_missing",
-            "unknown_review_route", "review_route_not_implemented",
-            # Native tool-round refusals raised BEFORE the first provider send.
-            "native_inspection_unavailable", "native_bound_below_first_send",
-            "degraded_source_unreachable",
-        }:
-            return "not_dispatched"
-        return "settled"
-    if code == "deadline_exhausted":
-        return "not_dispatched"
-    # A subscription/credential window refusal from route health is also before
-    # POST. Once a delegated run exists, the started-run branch above wins.
-    if code in {"subscription_window_exhausted", "credential_pool_exhausted"}:
-        return "not_dispatched"
-    return "settled"
+    capture = str(getattr(getattr(exc, "physical_attempt_capture", None), "state", "") or "").strip().lower()
+    started = getattr(exc, "delegated_run_started", False) or str(getattr(exc, "delegated_run_id", "") or "").strip()
+    pending = str(retry_state.get("pending_invocation_id") or "").strip()
+    route_refusal = isinstance(exc, ReviewRouteUnavailable)
+    table = (
+        (capture and capture not in PHYSICAL_ATTEMPT_STATES, "custody_lost"),
+        (capture in _POSITIVE_CAPTURE_STATES, "settled"),
+        (isinstance(exc, ReviewPollUnavailable), "in_flight"),
+        (started, "settled"),
+        (route_refusal and (code == "review_custody_lost" or pending), "custody_lost"),
+        ((route_refusal and code in _PRE_DISPATCH_REFUSALS) or code in _WINDOW_REFUSALS, "not_dispatched"),
+    )
+    return next((state for fact, state in table if fact), "settled")
 
 
 def _attach_worker_exception_facts(
@@ -764,6 +745,29 @@ def _logical_timeout(slot: Any, request: Any, usage_meta: Dict[str, Any]) -> flo
         transport_timeout_sec=getattr(slot, "transport_timeout_sec", None),
         reserve_sec=get_finalization_grace_sec(),
     )
+
+
+def _rejoin_window(root: Any, token: str, frozen_row: Any, logical_window: float) -> float:
+    """Remaining ORIGINAL window of the paid operation a rejoin attaches to (#1547):
+    saved facts only (durable STARTED/START_REQUESTED start + ``max_seconds``, else the
+    frozen row's ``awaiting_since`` + this slot's logical window), floored at the
+    settlement margin — so a repeated collect never extends it and an expired run
+    gets exactly the margin, never a fresh full window."""
+    from ouroboros.config import NESTED_SETTLEMENT_MARGIN_SEC
+
+    started, max_seconds = "", 0.0
+    if root is not None and token:
+        try:
+            record = invocation_record(root, token) or {}
+            started, cap = run_timing(root, str(record.get("run_id") or ""))
+            max_seconds = float(cap or record.get("max_seconds") or 0)
+        except Exception:
+            log.debug("rejoin window: durable custody unreadable", exc_info=True)
+    if not (started and max_seconds > 0) and isinstance(frozen_row, dict):
+        started, max_seconds = str(frozen_row.get("awaiting_since") or ""), float(logical_window)
+    sent = parse_deadline_ts(started) if max_seconds > 0 else None
+    remaining = (sent - utc_now()).total_seconds() + max_seconds if sent is not None else 0.0
+    return max(remaining, float(NESTED_SETTLEMENT_MARGIN_SEC))
 
 
 def _emit_operation(
@@ -1262,10 +1266,9 @@ def _run_custodied_review_slots(
             if isinstance(frozen_surfaces, dict) else {}
         )
         frozen_row = frozen_surface.get(slot_id) if isinstance(frozen_surface, dict) else None
+        root = custody_root(usage_ctx) if getattr(usage_ctx, "drive_root", None) else None
         recovered = None
         if bool(getattr(request, "reconcile_only", False)) and isinstance(frozen_row, dict):
-            from ouroboros.delegate_custody import custody_root
-            root = custody_root(usage_ctx) if getattr(usage_ctx, "drive_root", None) else None
             recovered = recover_review_producer(root, request, slot, frozen_row)
         with _ACTIVE_LOCK:
             pending_attempts = getattr(usage_ctx, "_review_pending_invocations", None)
@@ -1333,11 +1336,8 @@ def _run_custodied_review_slots(
                 custody_lost = True
             elif entry is None and not custody_lost:
                 if exact_recovery:
-                    # Rejoin the same paid operation within the existing settlement
-                    # margin, including after the owner window expires.
-                    from ouroboros.config import NESTED_SETTLEMENT_MARGIN_SEC
-
-                    window = float(NESTED_SETTLEMENT_MARGIN_SEC)
+                    # Rejoin the same paid operation for what remains of ITS window (#1547).
+                    window = _rejoin_window(root, retry_token, frozen_row, window)
                     slot_windows[slot_id] = window
                     slot_deadlines[slot_id] = monotonic_now(slot_id) + window
                 if window > 0:

@@ -9,7 +9,7 @@ import json
 import logging
 import time
 
-from ouroboros.utils import run_cmd
+from ouroboros.utils import run_cmd, utc_now_iso
 from ouroboros.review_substrate import scope_reviewer_slots
 from ouroboros.tools.review_helpers import build_scope_actor_record, format_review_history_entry, review_enforcement_blocks
 from ouroboros.tools.scope_review import (
@@ -263,14 +263,15 @@ def _await_scope_reservation(ctx, scope_future, seats, started_monotonic: float,
 
 
 def _prepare_scope_rows(ctx, commit_message, *, goal, scope, review_rebuttal,
-                        history_snapshot, scope_history):
+                        history_snapshot, scope_history, subject=None):
     """Phase 1 of the Q25-A admission: assemble EVERY configured scope row's
     brief without dispatching any reviewer. Returns aligned row dicts
     ``{slot, prepared, final}`` (exactly one of prepared/final per row).
 
     Every scope row retrieves, so no row receives an assembled packet and no
     packet limit can refuse a seat here; what each row is OWED in full travels
-    with its brief as the required-source manifest.
+    with its brief as the required-source manifest. ``subject`` is the frozen
+    review subject the wave runs on (``None``: the context's live index).
 
     Identity of every scope row comes from the one SSOT that owns it, so the
     actor record and the substrate call agree on which row spoke. No
@@ -295,9 +296,22 @@ def _prepare_scope_rows(ctx, commit_message, *, goal, scope, review_rebuttal,
             session_target=slot.session_target,
             session_profile=getattr(slot, "session_profile", ""),
             subagent_id=getattr(slot, "subagent_id", ""),
+            subject=subject,
         )
         rows.append({"slot": slot, "prepared": prepared, "final": final})
     return rows
+
+
+def _scope_error_result(ctx, message):
+    """The one blocked scope result every admission failure of the wave reports
+    (the gate's typed error row, model names of the configured scope slots)."""
+    result = ScopeReviewResult(
+        blocked=True, block_message=message,
+        model_id=getattr(ctx, "_last_scope_model", "") or _get_scope_model(), status="error",
+    )
+    ctx._last_scope_raw_results = [build_scope_actor_record(
+        result, fallback_model_id=getattr(ctx, "_last_scope_model", ""), slot_id="scope_slot_error")]
+    return result
 
 
 def _run_scope(ctx, commit_message, scope_rows, dispatch, *, goal, scope,
@@ -496,20 +510,8 @@ def _run_scope(ctx, commit_message, scope_rows, dispatch, *, goal, scope,
         )
     except Exception as e:
         log.warning("Scope review raised unexpected exception: %s", e)
-        result = ScopeReviewResult(
-            blocked=True,
-            block_message=f"⚠️ SCOPE_REVIEW_BLOCKED: Scope review failed — {e}\nFix the issue and retry.",
-            model_id=getattr(ctx, "_last_scope_model", "") or _get_scope_model(),
-            status="error",
-        )
-        ctx._last_scope_raw_results = [
-            build_scope_actor_record(
-                result,
-                fallback_model_id=getattr(ctx, "_last_scope_model", ""),
-                slot_id="scope_slot_error",
-            )
-        ]
-        return result
+        return _scope_error_result(
+            ctx, f"⚠️ SCOPE_REVIEW_BLOCKED: Scope review failed — {e}\nFix the issue and retry.")
 
 
 def _commit_review_retry_key(
@@ -535,9 +537,66 @@ def _commit_review_retry_key(
     }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
+def _structured_review_result(triad_prepared, scope_rows, scope_result, *, started_ts, retry_key,
+                              wave_refusal, triad_exited, triad_early, subject=None):
+    """What this wave ASSIGNED and what each seat was GIVEN, as one typed mapping
+    for the review ledger record (``review_ledger.build_wave_record``). With a
+    frozen ``subject`` the mapping also names it (``subject``/``layer``), so the
+    record's subject block is the frozen one, not the binding's.
+    The gate decision reads nothing here; a failure to describe the wave is logged
+    and leaves an empty mapping, never a changed verdict."""
+    try:
+        described = _describe_review_wave(triad_prepared, scope_rows, scope_result, started_ts=started_ts, retry_key=retry_key,
+                                          wave_refusal=wave_refusal, triad_exited=triad_exited, triad_early=triad_early)
+        if subject is not None:
+            described.update(subject=subject.record_subject(), layer=subject.spec.layer)
+        return described
+    except Exception:
+        log.warning("structured review result unavailable for the review ledger", exc_info=True)
+        return {}
+
+
+def _describe_review_wave(triad_prepared, scope_rows, scope_result, *, started_ts, retry_key,
+                          wave_refusal, triad_exited, triad_early):
+    from ouroboros.review_model_routes import adaptive_quorum
+    from ouroboros.reviewer_slot_config import row_plan_retrieves
+
+    prepared = triad_prepared or {}
+    plan = dict(prepared.get("row_plan") or {})
+
+    def _at(key, i):
+        values = list(plan.get(key) or [])
+        value = values[i] if i < len(values) else ""
+        return str(getattr(value, "value", value) or "")
+
+    triad_rows = [
+        {"slot_id": _at("slot_ids", i), "model": _at("models", i), "route": _at("routes", i), "effort": _at("efforts", i),
+         "session_target": _at("session_targets", i), "session_profile": _at("session_profiles", i),
+         "subagent_id": _at("subagent_ids", i), "retrieves": row_plan_retrieves(plan, i)}
+        for i in range(len(plan.get("slot_ids") or []))
+    ]
+    seats, briefs = [], {}
+    for row in scope_rows or []:
+        slot = row["slot"]
+        seats.append({"slot_id": slot.slot_id, "model": slot.model, "route": str(getattr(slot.route, "value", slot.route) or ""),
+                      "effort": slot.effort, "session_target": slot.session_target, "session_profile": slot.session_profile,
+                      "subagent_id": slot.subagent_id, "retrieves": True})
+        briefs[slot.slot_id] = str((row.get("prepared") or {}).get("session_task") or "")
+    return {
+        "started_ts": started_ts, "retry_key": retry_key, "wave_refusal": str(wave_refusal or ""),
+        "triad_prompt": str(prepared.get("prompt") or ""), "triad_session_task": str(prepared.get("session_task") or ""),
+        "triad_rows": triad_rows, "triad_quorum": adaptive_quorum(len(triad_rows)) if triad_rows else 0,
+        "triad_assembly_refusal": str(triad_early or "") if triad_exited and triad_early else "",
+        "scope_rows": seats, "scope_briefs": briefs, "scope_brief": next((b for b in briefs.values() if b), ""),
+        "scope_quorum": adaptive_quorum(len(seats)) if seats else 0,
+        "scope_status": str(getattr(scope_result, "status", "") or ""),
+        "scope_blocked": bool(getattr(scope_result, "blocked", False)),
+    }
+
+
 def run_parallel_review(
     ctx, commit_message, *, goal="", scope="", review_rebuttal="",
-    review_binding_fingerprint="",
+    review_binding_fingerprint="", subject=None,
 ):
     """Run the commit gate's triad and scope reviews against the staged diff.
 
@@ -545,7 +604,12 @@ def run_parallel_review(
     scope row's brief is built BEFORE any reviewer is dispatched, so a
     deterministic assembly failure on either side spends $0 on the other. The
     paid dispatches still run concurrently, and every verdict is computed by
-    the same code as before — only the ordering moved."""
+    the same code as before — only the ordering moved.
+
+    ``subject`` is a frozen review subject (``review_subject.FrozenSubject``):
+    the wave then reads ITS diff and trees, its governance root (always the
+    installed body) and its retry identity, and the ledger record names it.
+    ``None`` is the gate's path unchanged — the context's live staged index."""
     from ouroboros.tools.review import _dispatch_unified_review, _prepare_unified_review
     if bool(getattr(ctx, "_review_reconcile_only", False)):
         from ouroboros.review_custody import prepare_frozen_review_reconciliation
@@ -558,7 +622,8 @@ def run_parallel_review(
     ctx._last_scope_model = ""
     ctx._last_triad_raw_results = []
     ctx._last_scope_raw_result = {}
-    ctx._last_scope_raw_results = []
+    ctx._last_scope_raw_results, ctx._last_review_structured = [], {}
+    _started_ts, wave_refusal = utc_now_iso(), None
     # Managed subject↔binding assertion input: every gate subject built during
     # THIS attempt records its S tree here; the commit gate then asserts the
     # set equals the binding fingerprint's tree_sha (typed failure otherwise).
@@ -566,21 +631,31 @@ def run_parallel_review(
     # The per-attempt managed-subject memo resets with the same boundary (C5).
     ctx._managed_review_subject_memo = {}
 
-    try:
-        diff_bytes = run_cmd(
-            ["git", "diff", "--cached", "--binary", "--no-ext-diff"], cwd=ctx.repo_dir,
-        ).encode()
-    except Exception:
-        diff_bytes = b""
-    snapshot_digest = hashlib.sha256(diff_bytes).hexdigest()
-    snapshot_key = snapshot_digest[:16]
-    retry_key = str(getattr(ctx, "_current_review_retry_key", "") or "") or (
-        _commit_review_retry_key(
-            ctx, commit_message, goal=goal, scope=scope,
-            review_rebuttal=review_rebuttal,
-            binding_fingerprint=review_binding_fingerprint,
+    if subject is not None:
+        from ouroboros.tools.review_subject import review_retry_key
+
+        snapshot_digest = subject.diff_sha
+        # Identity (c): the subject's retry key is set BEFORE any dispatch, so a
+        # custody rejoin after a crash finds the same physical review and never
+        # pays for it twice. A caller's own key (the gate's) is kept.
+        retry_key = str(getattr(ctx, "_current_review_retry_key", "") or "") or review_retry_key(subject)
+        ctx._current_review_retry_key = retry_key
+    else:
+        try:
+            diff_bytes = run_cmd(
+                ["git", "diff", "--cached", "--binary", "--no-ext-diff"], cwd=ctx.repo_dir,
+            ).encode()
+        except Exception:
+            diff_bytes = b""
+        snapshot_digest = hashlib.sha256(diff_bytes).hexdigest()
+        retry_key = str(getattr(ctx, "_current_review_retry_key", "") or "") or (
+            _commit_review_retry_key(
+                ctx, commit_message, goal=goal, scope=scope,
+                review_rebuttal=review_rebuttal,
+                binding_fingerprint=review_binding_fingerprint,
+            )
         )
-    )
+    snapshot_key = snapshot_digest[:16]
     _stored = getattr(ctx, '_scope_review_history', None) or {}
     _scope_history = _stored.get(snapshot_key, []) if isinstance(_stored, dict) else []
     _history_snapshot = list(getattr(ctx, '_review_history', []))
@@ -592,7 +667,7 @@ def run_parallel_review(
     triad_prepared, triad_early, triad_exited = None, None, True
     try:
         triad_prepared, triad_early, triad_exited = _prepare_unified_review(
-            ctx, commit_message, review_rebuttal=review_rebuttal, goal=goal, scope=scope)
+            ctx, commit_message, review_rebuttal=review_rebuttal, goal=goal, scope=scope, subject=subject)
         if triad_prepared is not None:
             triad_prepared["retry_key"] = retry_key
     except Exception as e:
@@ -607,22 +682,11 @@ def run_parallel_review(
         scope_rows = _prepare_scope_rows(
             ctx, commit_message, goal=goal, scope=scope,
             review_rebuttal=review_rebuttal,
-            history_snapshot=_history_snapshot, scope_history=_scope_history)
+            history_snapshot=_history_snapshot, scope_history=_scope_history, subject=subject)
     except Exception as e:
         log.warning("Scope review raised unexpected exception: %s", e)
-        scope_result = ScopeReviewResult(
-            blocked=True,
-            block_message=f"⚠️ SCOPE_REVIEW_BLOCKED: Scope review failed — {e}\nFix the issue and retry.",
-            model_id=getattr(ctx, "_last_scope_model", "") or _get_scope_model(),
-            status="error",
-        )
-        ctx._last_scope_raw_results = [
-            build_scope_actor_record(
-                scope_result,
-                fallback_model_id=getattr(ctx, "_last_scope_model", ""),
-                slot_id="scope_slot_error",
-            )
-        ]
+        scope_result = _scope_error_result(
+            ctx, f"⚠️ SCOPE_REVIEW_BLOCKED: Scope review failed — {e}\nFix the issue and retry.")
 
     # ---- Admission: a deterministic assembly block anywhere → ZERO dispatch. ----
     deterministic_block = (
@@ -663,7 +727,6 @@ def run_parallel_review(
         from ouroboros.tools.review_admission import admit_commit_gate_wave, commit_gate_paid_seats
 
         seats = []
-        wave_refusal = None
         if not bool(getattr(ctx, "_review_reconcile_only", False)):
             try:
                 seats = commit_gate_paid_seats(triad_prepared, triad_exited, scope_rows)
@@ -789,51 +852,46 @@ def run_parallel_review(
                             scope_result = scope_fut.result()
                         except Exception as e:
                             log.warning("Scope future raised unexpected exception: %s", e)
-                            scope_result = ScopeReviewResult(
-                                blocked=True,
-                                block_message=f"⚠️ SCOPE_REVIEW_BLOCKED: Scope review future crashed — {e}\nFix the issue and retry.",
-                                model_id=getattr(ctx, "_last_scope_model", "") or _get_scope_model(),
-                                status="error",
-                            )
-                            ctx._last_scope_raw_results = [
-                                build_scope_actor_record(
-                                    scope_result,
-                                    fallback_model_id=getattr(ctx, "_last_scope_model", ""),
-                                    slot_id="scope_slot_error",
-                                )
-                            ]
+                            scope_result = _scope_error_result(
+                                ctx, f"⚠️ SCOPE_REVIEW_BLOCKED: Scope review future crashed — {e}\nFix the issue and retry.")
     triad_block_reason = getattr(ctx, '_last_review_block_reason', 'critical_findings')
     triad_advisory_post = list(getattr(ctx, '_review_advisory', []))
     triad_advisory = [a for a in triad_advisory_post if a not in _advisory_snapshot_before]
 
-    if scope_result is not None:
-        updated = _scope_history + [_scope_history_entry(scope_result)]
-        existing = getattr(ctx, '_scope_review_history', None) or {}
-        if not isinstance(existing, dict):
-            existing = {}
-        existing[snapshot_key] = updated
-        ctx._scope_review_history = existing
-        # Canonical scope actor record for durable CommitAttemptRecord persistence.
-        raw_results = list(getattr(ctx, "_last_scope_raw_results", []) or [])
-        if raw_results:
-            ctx._last_scope_raw_result = {
-                "status": getattr(scope_result, "status", ""),
-                "model_id": getattr(scope_result, "model_id", "") or getattr(ctx, "_last_scope_model", ""),
-                "context_manifest": getattr(scope_result, "context_manifest", {}) or {},
-                "raw_results": raw_results,
-                "raw_text": getattr(scope_result, "raw_text", ""),
-                "critical_findings": getattr(scope_result, "critical_findings", []) or [],
-                "advisory_findings": getattr(scope_result, "advisory_findings", []) or [],
-            }
-        else:
-            ctx._last_scope_raw_result = build_scope_actor_record(
-                scope_result,
-                fallback_model_id=getattr(ctx, "_last_scope_model", ""),
-            )
-    else:
-        ctx._last_scope_raw_result = {}
-
+    _record_scope_outcome(ctx, scope_result, snapshot_key, _scope_history)
+    ctx._last_review_structured = _structured_review_result(
+        triad_prepared, scope_rows, scope_result, started_ts=_started_ts, retry_key=retry_key,
+        wave_refusal=wave_refusal, triad_exited=triad_exited, triad_early=triad_early, subject=subject)
     return review_err, scope_result, triad_block_reason, triad_advisory
+
+
+def _record_scope_outcome(ctx, scope_result, snapshot_key, scope_history) -> None:
+    """Scope history for this snapshot plus the canonical scope actor record for
+    durable CommitAttemptRecord persistence (moved out of ``run_parallel_review``)."""
+    if scope_result is None:
+        ctx._last_scope_raw_result = {}
+        return
+    existing = getattr(ctx, '_scope_review_history', None) or {}
+    if not isinstance(existing, dict):
+        existing = {}
+    existing[snapshot_key] = scope_history + [_scope_history_entry(scope_result)]
+    ctx._scope_review_history = existing
+    raw_results = list(getattr(ctx, "_last_scope_raw_results", []) or [])
+    if raw_results:
+        ctx._last_scope_raw_result = {
+            "status": getattr(scope_result, "status", ""),
+            "model_id": getattr(scope_result, "model_id", "") or getattr(ctx, "_last_scope_model", ""),
+            "context_manifest": getattr(scope_result, "context_manifest", {}) or {},
+            "raw_results": raw_results,
+            "raw_text": getattr(scope_result, "raw_text", ""),
+            "critical_findings": getattr(scope_result, "critical_findings", []) or [],
+            "advisory_findings": getattr(scope_result, "advisory_findings", []) or [],
+        }
+    else:
+        ctx._last_scope_raw_result = build_scope_actor_record(
+            scope_result,
+            fallback_model_id=getattr(ctx, "_last_scope_model", ""),
+        )
 
 
 def aggregate_review_verdict(review_err, scope_result, triad_block_reason, triad_advisory,

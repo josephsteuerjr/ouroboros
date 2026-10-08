@@ -427,6 +427,11 @@ CHRONICLE_JOURNAL_WARN_BYTES = 64_000_000
 # explicit full-history read becomes seconds-scale; this is observability, not
 # a retention gate and never shortens the memory horizon.
 CHAT_ARCHIVE_SCAN_WARN_BYTES = 100_000_000
+# Review ledger index chain (state/review_ledger/index*.jsonl): the hot index rotates
+# itself at review_ledger.INDEX_MAX_BYTES and task context reads only that hot index;
+# readers that walk the rotated segments (recent_records without hot_only) replay the
+# whole chain, so its total size is enrolled here like the chat archive chain.
+REVIEW_LEDGER_INDEX_WARN_BYTES = 64_000_000
 # The FIRST custody read of each process folds the WHOLE events chain — live
 # file plus archive/events_*.jsonl — into the process-local row memo
 # (delegate_custody_memo); later reads fold only appended bytes. Explicit

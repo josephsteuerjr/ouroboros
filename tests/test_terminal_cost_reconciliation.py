@@ -255,3 +255,17 @@ def test_logical_root_debt_refreshes_its_reciprocal_terminal_retry(env, monkeypa
     warm(env)
     for tid in ('root', 'retry'):
         assert task_results.load_task_result(env.root, tid)['accounted_upper_bound_usd_with_children'] == 1.0
+
+
+@pytest.mark.parametrize("attribution, candidate", [
+    ({"review_wave_id": "wave-deep"}, True),
+    ({"review_wave_id": "commit:c1", "review_slot_id": "triad-slot"}, False),
+    ({"review_skill": "weather", "review_wave_id": "skill-w1", "review_slot_id": "s1"}, False),
+])
+def test_a_wave_alone_keeps_the_owner_in_the_cost_refresh(env, attribution, candidate):
+    """Deep self-review rows carry a wave but no reviewer slot (#1544), and that review is the
+    whole task: its owner still needs the terminal cost refresh. Rows of a reviewer slot or a
+    skill review stay with the review's own custody and never make the owner a candidate."""
+    with usage.usage_scope(usage.UsageScope(drive_root=env.root, task_id="t", root_task_id="t", **attribution)):
+        attempt(env, "t")
+    assert ("t" in dirty(env)) is candidate

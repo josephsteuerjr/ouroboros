@@ -44,8 +44,7 @@
  * @property {ActiveChatActivity[]=} active_chat_activities  // combined snapshot: direct/ephemeral turns + root managed queue tasks
  */
 /**
- * Background Consciousness alarm-clock snapshot (server._describe_bg_consciousness_state over
- * consciousness.status_snapshot). A wake-up is an ordinary Main turn; its liveness is the direct-activity census, never a flag here.
+ * Background Consciousness alarm clock (server._describe_bg_consciousness_state over consciousness.status_snapshot). A wake-up is an ordinary Main turn; the direct-activity census owns its liveness.
  * @typedef {Object} BgConsciousnessState
  * @property {boolean} enabled
  * @property {string} status  // disabled | stopped | thinking | sleeping | waiting_for_first_conversation | allowance_exhausted | allowance_unknown | wake_rejected | wake_failed | wake_paused | wake_outcome_unknown
@@ -180,9 +179,8 @@
  */
 
 /**
- * POST /api/onboarding/subagents/preview accepts the same open provider/local
- * draft and subscription declarations as onboarding completion. It returns a
- * canonical editable actor list without persisting anything.
+ * POST /api/onboarding/subagents/preview accepts the same open provider/local draft and subscription
+ * declarations as onboarding completion. It returns a canonical editable actor list without persisting anything.
  * @typedef {OnboardingCompleteRequest} OnboardingSubagentsPreviewRequest
  */
 
@@ -283,22 +281,22 @@
  * @property {string} content
  * @property {string} ts
  * @property {boolean=} ingress_accepted Canonical inbound row saved; not proof of task start or model delivery.
+ * @property {boolean=} ingress_dispatched This live host process accepted the row and entered its dispatch; absent after a host restart (unknown).
+ * @property {boolean=} ingress_pending This live host process accepted the row and has entered or refused neither yet: a later echo or history read says which.
+ * @property {boolean=} ingress_undispatched History only: this live host process proved the row's write raised before dispatch; one Send again hands it over.
+ * @property {Array<NonNullable<UploadResponse['view']>>=} attachments The owner message's ChatAttachmentView list: the same views history replays.
+ * @property {boolean=} text_placeholder The owner row's text is the host's placeholder (no words were sent): no caption is shown.
  * @property {boolean=} markdown
  * @property {boolean=} is_progress
  * @property {string=} task_id
- * @property {Object=} origin_message_ref
- *   Host-captured inbound identity for a correlated operation's terminal reply.
+ * @property {Object=} origin_message_ref Host-captured inbound identity for a correlated operation's terminal reply.
  * @property {boolean=} ephemeral_decision
  * @property {number=} tool_calls
  * @property {number=} rounds
  * @property {string=} suggested_name
  * @property {Object=} model_execution
- * @property {string=} task_phase
- *   "finalizing" on a root's early final answer: post-task synthesis still
- *   runs, so the frame is not the task's terminal conclusion.
- * @property {string=} task_terminal_status
- *   Typed terminal fact on a frame that IS the turn's conclusion (stamped on
- *   direct/ephemeral finals and the direct error branch).
+ * @property {string=} task_phase "finalizing" on a root's early final answer: post-task synthesis still runs, so the frame is not the task's terminal conclusion.
+ * @property {string=} task_terminal_status Typed terminal fact on a frame that IS the turn's conclusion (stamped on direct/ephemeral finals and the direct error branch).
  * @property {string=} task_incident
  * @property {string=} cancel_physical_task_id
  *   A cancellation fault names the physical task it could not settle when that
@@ -382,16 +380,14 @@
  *   the fact (an older worker, a supervisor note, a stored row), which keeps
  *   the legacy reading that promoted every progress frame.
  * @property {string=} initiator
- *   The turn's origin label: "consciousness" on every frame and row of a
- *   self-initiated wake-up (and the roots it starts); absent on an owner's turn.
+ *   The turn's origin label: "consciousness" on every frame and row of a self-initiated wake-up (and the roots it starts); absent on an owner's turn.
  * @property {boolean=} cancelable
  *   v6.82 (P5): host-attested — this frame's task is a supervisor-queue task that
  *   POST /api/tasks/{id}/cancel can force-cancel: a lineage-resolved pooled root or
  *   the live in-process direct-chat turn (stopped cooperatively through the same
  *   ownership seam); never a subagent frame or an ephemeral decision turn.
  * @property {?number=} accounted_upper_bound_usd
- *   C2: an accounted upper bound, not a settled receipt; null when unknown.
- *   (ABI-3: the deprecated `cost_usd` alias is removed from the contract.)
+ *   C2: an accounted upper bound, not a settled receipt; null when unknown (ABI-3 removed the `cost_usd` alias).
  * @property {?number=} accounted_upper_bound_usd_with_children
  *   C2: subtree upper bound (formerly aliased `cost_usd_with_children`); null when unknown.
  * @property {"available"|"unavailable"=} cost_accounting_status
@@ -640,6 +636,7 @@
  * @property {string=} reason
  * @property {string=} detail
  * @property {string=} cause  // the owner-facing sentence for a refused routing act (409 dispatch_rejected)
+ * @property {string=} reasoning_effort  // a New task picked from the card: the start its admitted row requests; never on a steer
  */
 
 /**
@@ -682,8 +679,7 @@
  */
 
 /**
- * Bubble-free presentation update for an existing owner message.
- * @typedef {Object} MessageAnnotationOutbound
+ * @typedef {Object} MessageAnnotationOutbound Bubble-free update for an existing owner message.
  * @property {"message_annotation"} type
  * @property {"routing_ack"} annotation_type
  * @property {number=} chat_id
@@ -698,6 +694,7 @@
  * @property {AttachmentManifestEntry[]=} attachment_manifest
  * @property {string=} routing_token
  * @property {string=} cause  // host-authored owner sentence for a REFUSED act; absent on scheduled/delivered/pending and on the picker frame
+ * @property {string=} reasoning_effort  // the explicit start a New task picked from this picker card requests
  * @property {boolean} suppress_bubble
  * @property {string=} ts
  */
@@ -826,7 +823,8 @@
  * @property {string} path
  * @property {number} size
  * @property {string=} sha256
- * @property {string} mime
+ * @property {string} mime  // the extension's type, as the model-input rail reads it
+ * @property {{name: string, kind: ('image'|'video'|'audio'|'file'), mime: string, size: (?number|undefined), available: boolean, url: (string|undefined)}=} view  // ChatAttachmentView (chat_uploads.attachment_view): the sender's own bubble renders exactly this; `kind` proven from bytes, `url` only while available
  */
 
 /**
@@ -1053,6 +1051,7 @@
  * @property {string=} expected_output
  * @property {string=} constraints
  * @property {boolean=} context_requires_self_body_docs
+ * @property {string=} reasoning_effort Optional explicit starting effort of this root (a server-validated effort tier); omitted = the Task default; metadata.reasoning_effort is refused.
  * @property {string=} actor_id Top-level task actor/provenance id; metadata.actor_id is reserved.
  * @property {string=} source Top-level task source/provenance label.
  * @property {Object=} metadata Arbitrary task metadata; executor_ref/workspace_executor keys are reserved.

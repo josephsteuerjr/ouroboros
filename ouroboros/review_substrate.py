@@ -95,10 +95,16 @@ def review_repo_dirs_for(ctx: Any) -> tuple[pathlib.Path, pathlib.Path]:
     workspace = pathlib.Path(workspace_raw) if isinstance(workspace_raw, (str, pathlib.Path)) else None
     if workspace is not None and not str(getattr(ctx, "workspace_mode", "") or "").strip():
         raise ValueError("workspace_root is set without workspace_mode")
-    system_raw = getattr(ctx, "system_repo_dir", None)
+    # A bound body candidate is the SUBJECT; the adopted (serving) body stays the governance.
+    system_raw = getattr(ctx, "serving_repo_dir", None) or getattr(ctx, "system_repo_dir", None)
     system = pathlib.Path(system_raw) if isinstance(system_raw, (str, pathlib.Path)) else None
     governance = (system or pathlib.Path(getattr(ctx, "repo_dir"))).resolve(strict=False)
-    subject = pathlib.Path(active_repo_dir_for(ctx)).resolve(strict=False)
+    from ouroboros import body_candidate
+
+    # The bound candidate is what the context authors and commits: it stays the subject
+    # even when the task also carries a workspace/project folder as its active root.
+    subject_raw = body_candidate.descriptor(ctx).get("path") if body_candidate.is_bound(ctx) else None
+    subject = pathlib.Path(subject_raw or active_repo_dir_for(ctx)).resolve(strict=False)
     if not governance.is_dir() or not subject.is_dir():
         raise ValueError(f"unavailable governance/subject root: {governance} / {subject}")
     return governance, subject
@@ -311,7 +317,8 @@ class ReviewCoordinator:
                                         or (getattr(self.usage_ctx, "task_id", "")
                                             and getattr(self.usage_ctx, "task_lifecycle_bound", None) is not False)),
             review_skill=str(review_meta.get("review_skill") or base_scope.review_skill or ""),
-            review_wave_id=str(review_meta.get("review_wave_id") or base_scope.review_wave_id or ""),
+            review_wave_id=resolve_review_wave(request, review_meta, base_scope.review_wave_id),
+            cache_wave=str(review_meta.get("review_wave_id") or base_scope.cache_wave or ""),
             global_limit_usd=global_limit,
             global_limit_source=(base_scope.global_limit_source if base_scope.global_limit_usd is not None
                                  else "settings_budget_resolver"),
@@ -413,7 +420,8 @@ class ReviewCoordinator:
             # the row REALLY ran as last time. Disclosure only; best-effort.
             from ouroboros.reviewer_slot_config import record_reviewer_slot_executions
 
-            record_reviewer_slot_executions(request.surface, actors, slots_by_id)
+            # The wave keeps its OWN rows on its ctx for its ledger record (``keep_on``).
+            record_reviewer_slot_executions(request.surface, actors, slots_by_id, keep_on=self.usage_ctx)
         except Exception:
             log.debug("reviewer-slot last-execution write failed", exc_info=True)
 
@@ -853,6 +861,7 @@ from ouroboros.review_records import (  # noqa: E402, F401 -- intentional public
     ReviewRunResult,
     ReviewSlot,
     TYPED_FAILURE_FACT_KEYS,
+    resolve_review_wave,
 )
 
 from ouroboros.review_verdict import (  # noqa: E402, F401 -- intentional public re-exports

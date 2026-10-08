@@ -12,7 +12,8 @@ review_substrate.py re-exports every name.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import Any, Dict, List, Optional
+import uuid
+from typing import Any, Dict, List, Mapping, Optional
 
 from ouroboros.review_execution import ReviewRouteKind, delivery_retrieves
 
@@ -292,6 +293,27 @@ class ReviewRequest:
     reconciliation_identity: Dict[str, Any] = field(default_factory=dict)
     task_attempt: Any = None
     default_temperature: float | None = None
+    # The round its sends are billed to (#1544), set by resolve_review_wave or by a fan-out
+    # naming one round for its rows. Attribution only: no identity, no prompt-cache split.
+    resolved_wave_id: str = ""
+
+
+def new_review_wave_id() -> str:
+    """A fresh review round id, for a review that names no wave and has no paid-cycle key."""
+    return f"wave-{uuid.uuid4().hex[:16]}"
+
+
+def resolve_review_wave(request: ReviewRequest, review_meta: Mapping[str, Any], inherited: str = "") -> str:
+    """The round every reviewer send of ``request`` is billed to: the caller's wave
+    (skill and plan review), the inherited scope's, the round already recorded on the
+    request, the review's paid-cycle identity (``retry_key``: one per commit, scope or
+    acceptance cycle, shared by all its slots and by a resumed run of it), or a fresh
+    id. Recorded as ``request.resolved_wave_id``, so the returned run and a replay of
+    the stored request keep it; the caller's ``usage_attribution`` stays as given."""
+    wave = str(review_meta.get("review_wave_id") or inherited or getattr(request, "resolved_wave_id", "")
+               or getattr(request, "retry_key", "") or "") or new_review_wave_id()
+    request.resolved_wave_id = wave
+    return wave
 
 
 @dataclass

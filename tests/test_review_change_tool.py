@@ -1,0 +1,667 @@
+"""``review_change``: one review-only wave over a change in any registered root.
+
+The neighbour seams (the frozen review subject and the rules layer of the body
+fact) are substituted on the module under test with fakes of the SAME contract
+(``review_subject.FrozenSubject`` / ``review_body_fact.BodyFact``); the identities
+(reuse and retry keys) and the ledger are real. The paid wave is a stub that reads
+the panel in force, stamps the paid fact at dispatch and answers the way
+``parallel_review`` leaves its forensic facts on the context. Every assertion is
+about what ``review_change`` decides, dispatches, records and returns; the
+end-to-end proof over the real subject operation is
+``test_review_change_end_to_end.py``.
+"""
+from __future__ import annotations
+
+import contextlib
+import hashlib
+import json
+import pathlib
+import subprocess
+from dataclasses import dataclass, field
+from types import SimpleNamespace
+from typing import Any, Dict, List
+
+import pytest
+
+from ouroboros import review_ledger as rl
+from ouroboros import reviewer_slot_config as slots
+from ouroboros.tools import commit_gate
+from ouroboros.tools import review_change as rc
+from ouroboros.tools.review_subject import ReviewSubjectSpec, review_retry_key, review_round_sha
+
+
+def _git(repo: pathlib.Path, *args: str) -> str:
+    return subprocess.check_output(["git", *args], cwd=repo, text=True, stderr=subprocess.STDOUT).strip()
+
+
+def _sha(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _repo(path: pathlib.Path, marker: str, *, origin: str = "") -> pathlib.Path:
+    path.mkdir(parents=True)
+    _git(path, "init", "-q")
+    _git(path, "config", "user.email", "test@example.com")
+    _git(path, "config", "user.name", "Test")
+    (path / f"{marker}.txt").write_text("base\n", encoding="utf-8")
+    _git(path, "add", ".")
+    _git(path, "commit", "-qm", "base")
+    if origin:
+        _git(path, "remote", "add", "origin", origin)
+    return path
+
+
+def _stage(repo: pathlib.Path, name: str, text: str) -> None:
+    (repo / name).write_text(text, encoding="utf-8")
+    _git(repo, "add", name)
+
+
+def _commit(repo: pathlib.Path, name: str, text: str) -> str:
+    _stage(repo, name, text)
+    _git(repo, "commit", "-qm", f"add {name}")
+    return _git(repo, "rev-parse", "HEAD")
+
+
+def _configured() -> tuple:
+    config = slots.load_reviewer_slot_config()
+    return [row.slot_id for row in config.triad], [row.slot_id for row in config.scope]
+
+
+@dataclass(frozen=True)
+class Frozen:
+    """The ``FrozenSubject`` contract: the exact bytes one wave reviews."""
+
+    spec: ReviewSubjectSpec
+    diff_text: str
+    diff_sha: str
+    tree_sha: str
+    parent_sha: str
+    checkout: str = ""
+    name_status: tuple = ()
+
+    def record_subject(self) -> Dict[str, Any]:
+        return {"root_kind": self.spec.root_kind, "root": self.spec.root, "kind": self.spec.kind,
+                "base": self.parent_sha, "head": self.spec.head, "tree_sha": self.tree_sha,
+                "diff_sha": self.diff_sha, "checkout": self.checkout}
+
+
+class Wave:
+    """The paid wave stub."""
+
+    def __init__(self) -> None:
+        self.calls: List[SimpleNamespace] = []
+        self.failing: set = set()
+        self.status = "responded"
+        self.last = SimpleNamespace()
+
+    def _answer(self, row: Any, part: str) -> Dict[str, Any]:
+        failing = row.slot_id in self.failing
+        answer = {"slot_id": row.slot_id, "model_id": row.target_id, "status": self.status,
+                  "raw_text": f"{row.slot_id} {part} answer", "cost_usd": 0.01}
+        if part == rl.PART_COUPLING:
+            answer.update(critical_findings=[{"item": "coupling", "reason": f"{row.slot_id}: a caller breaks"}] if failing else [],
+                          advisory_findings=[])
+        else:
+            answer["parsed_items"] = [{"item": "code_quality", "verdict": "FAIL" if failing else "PASS",
+                                       "severity": "critical", "reason": f"{row.slot_id}: defect" if failing else "clean"}]
+        return answer
+
+    def __call__(self, ctx: Any, commit_message: str, *, goal: str = "", scope: str = "", review_rebuttal: str = "",
+                 review_binding_fingerprint: str = "", subject: Any = None):
+        from ouroboros.review_dispatch import invoke_review_paid_stamp
+
+        config = slots.load_reviewer_slot_config()
+        triad, coupling = list(config.triad), list(config.scope)
+        prompt = f"TRIAD BRIEF\n{commit_message}\n{goal}\n{subject.diff_text}"
+        brief = f"SCOPE BRIEF\n{goal}\n{subject.diff_text}" if coupling else ""
+        self.calls.append(SimpleNamespace(
+            subject=subject, label=commit_message, goal=goal, scope=scope, rebuttal=review_rebuttal,
+            fingerprint=review_binding_fingerprint, tool=ctx._current_review_tool_name,
+            retry_key=ctx._current_review_retry_key, record_id=ctx._current_review_record_id,
+            triad=[row.slot_id for row in triad], coupling=[row.slot_id for row in coupling],
+            efforts={row.slot_id: row.effort for row in (*triad, *coupling)}, prompt=prompt, brief=brief))
+        invoke_review_paid_stamp(ctx._review_paid_stamp)
+        ctx._last_triad_raw_results = [self._answer(row, rl.PART_CHANGE) for row in triad]
+        rows = [self._answer(row, rl.PART_COUPLING) for row in coupling]
+        ctx._last_scope_raw_result = {"status": "responded", "raw_results": rows} if rows else {}
+        plan = [{"slot_id": row.slot_id, "model": row.target_id, "route": "api_chat", "effort": row.effort or "high"}
+                for row in (*triad, *coupling)]
+        ctx._last_review_structured = {"triad_prompt": prompt, "scope_brief": brief,
+                                       "started_ts": "2026-10-07T00:00:00+00:00",
+                                       "triad_rows": plan[:len(triad)], "scope_rows": plan[len(triad):]}
+        critical = any(row.slot_id in self.failing for row in triad)
+        ctx._last_review_block_reason = "critical_findings" if critical else ""
+        self.last = SimpleNamespace(structured=dict(ctx._last_review_structured),
+                                    triad_raw=list(ctx._last_triad_raw_results), scope_raw=dict(ctx._last_scope_raw_result))
+        scope_result = SimpleNamespace(blocked=any(row.slot_id in self.failing for row in coupling))
+        return ("⚠️ REVIEW_BLOCKED: critical findings" if critical else None), scope_result, ctx._last_review_block_reason, []
+
+
+def gate_record(facts: Dict[str, Any], *, record_id: str = "", drive_root: Any = None) -> Any:
+    """The commit gate's record builder over the same wave facts and frozen binding."""
+    frozen = facts["subject"]
+    binding = {"tree_sha": frozen.tree_sha, "parents": [frozen.parent_sha], "diff_sha256": frozen.diff_sha}
+    return rl.build_commit_gate_record({**facts, "binding": binding}, record_id=record_id, drive_root=drive_root)
+
+
+@dataclass
+class Harness:
+    ctx: Any
+    system: pathlib.Path
+    project: pathlib.Path
+    drive: pathlib.Path
+    wave: Wave
+    calls: List[tuple] = field(default_factory=list)
+    written: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    built: List[Dict[str, Any]] = field(default_factory=list)
+
+    def run(self, **args: Any) -> Dict[str, Any]:
+        return rc.run_review_change(self.ctx, **args)
+
+    def tool(self, **args: Any) -> str:
+        return rc._handle_review_change(self.ctx, **args)
+
+    def attempts(self, root: pathlib.Path, tool_name: str = "review_change") -> list:
+        from ouroboros.review_state import load_state, make_repo_key
+
+        return load_state(self.drive).filter_attempts(repo_key=make_repo_key(root.resolve()), tool_name=tool_name)
+
+
+def _install_seams(monkeypatch: pytest.MonkeyPatch, h: Harness) -> None:
+    def frozen_of(spec: ReviewSubjectSpec, checkout: str = "") -> Frozen:
+        root, base = pathlib.Path(spec.root), spec.base or "HEAD"
+        if spec.kind == "base..head":
+            diff = _git(root, "diff", "--binary", spec.base, spec.head)
+            tree = _git(root, "rev-parse", f"{spec.head}^{{tree}}")
+        else:
+            diff = _git(root, "diff", "--binary", *(["--cached"] if spec.kind == "index" else []), base)
+            tree = _git(root, "write-tree") if spec.kind == "index" else _sha(diff)
+        return Frozen(spec, diff, _sha(diff), tree, _git(root, "rev-parse", base), checkout=checkout)
+
+    def freeze(ctx: Any, spec: ReviewSubjectSpec) -> Frozen:
+        h.calls.append(("freeze", spec))
+        return frozen_of(spec)
+
+    @contextlib.contextmanager
+    def checkout(ctx: Any, spec: ReviewSubjectSpec, *, retain=None, token=None):
+        """``review_subject.isolated_checkout``'s contract for every subject kind: the
+        frozen subject reads in a checkout under the data root, named by ``token`` from
+        the frozen identity (one path per round) when the caller gives one."""
+        h.calls.append(("checkout", spec))
+        identity = frozen_of(spec)
+        name = token(identity) if token is not None else spec.kind.replace("..", "-")
+        yield frozen_of(spec, checkout=str(h.drive / "checkouts" / name))
+        # The runtime's exit question (review_subject.checkout_retention): kept or removed.
+        from ouroboros.tools.review_subject import checkout_retention
+
+        h.calls.append(("checkout_retained" if checkout_retention(retain) else "checkout_closed", spec))
+
+    def write(drive_root: Any, record: Any) -> Dict[str, Any]:
+        payload = rl.write_record(drive_root, record)
+        h.written[payload["record_id"]] = payload
+        return payload
+
+    def fact(root: Any, *, system_repo: Any, manifest: Any = None, data_dir: Any = None, treat_as_body: bool = False):
+        """``review_body_fact.body_fact``'s contract: the system repository is the body
+        (``dir``); a root with a remote that reaches neither the managed remote nor the
+        install's origin is a recognized foreign root (``false``); a root git cannot
+        place (no remote) is ``unknown``, and ONLY that one is raised by ``treat_as_body``
+        — ``how`` keeps the fact's value and ``detail`` records the raise."""
+        from ouroboros.review_body_fact import BodyFact
+
+        h.calls.append(("body_fact", pathlib.Path(root), treat_as_body))
+        root = pathlib.Path(root).resolve()
+        if root == pathlib.Path(system_repo).resolve():
+            return BodyFact("true", "dir", f"{root} is the system repository")
+        if _git(root, "remote"):
+            return BodyFact("false", "remote_chain", "a remote reaches neither the managed remote nor the install's origin")
+        if treat_as_body:
+            return BodyFact("true", "unknown", f"{root} has no remote; raised to body by treat_as_body")
+        return BodyFact("unknown", "unknown", f"{root} has no remote")
+
+    def build(facts: Dict[str, Any], *, surface: str, record_id: str = "", drive_root: Any = None) -> Any:
+        h.built.append(facts)
+        record = gate_record(facts, record_id=record_id, drive_root=drive_root)
+        record.surface = surface
+        return record
+
+    monkeypatch.setattr(rc, "freeze_subject", freeze)
+    monkeypatch.setattr(rc, "isolated_checkout", checkout)
+    monkeypatch.setattr(rc, "write_record", write)
+    monkeypatch.setattr(rc, "body_fact", fact)
+    monkeypatch.setattr(rc, "layer_for", lambda fact: "body" if fact.body == "true" else "core")
+    monkeypatch.setattr(rc, "checklist_fingerprint", lambda layer: {
+        "checklist_hash": f"{layer}-checklist", "rules_source": {"path": "docs/CHECKLISTS.md", "sha": f"{layer}-rules"}})
+    monkeypatch.setattr(rc, "build_wave_record", build)
+
+
+@pytest.fixture
+def h(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> Harness:
+    from ouroboros.tools.registry import ToolContext
+
+    # The production geometry: the body and its data share one Ouroboros home; project
+    # repositories live elsewhere under the user's files.
+    monkeypatch.setenv("OUROBOROS_USER_FILES_ROOT", str(tmp_path))
+    system = _repo(tmp_path / "ouroboros" / "repo", "system")
+    project = _repo(tmp_path / "work" / "project", "project", origin="https://example.com/third-party/project.git")
+    drive = tmp_path / "ouroboros" / "data"
+    for sub in ("logs", "locks", "state"):
+        (drive / sub).mkdir(parents=True)
+    ctx = ToolContext(repo_dir=system, system_repo_dir=system, drive_root=drive, workspace_root=project,
+                      workspace_mode="external", task_id="task-rc")
+    harness = Harness(ctx=ctx, system=system, project=project, drive=drive, wave=Wave())
+    _install_seams(monkeypatch, harness)
+    monkeypatch.setattr(rc, "run_parallel_review", harness.wave)
+    monkeypatch.setattr(rc, "get_runtime_mode", lambda: "advanced")
+    monkeypatch.setattr(rc, "get_review_enforcement", lambda: "advisory")
+    # The shipped cycle cap is the ceiling test's subject; every other test pays freely.
+    monkeypatch.setattr(commit_gate, "review_max_cycles", lambda: None)
+    triad, scope = _configured()
+    assert len(triad) >= 2 and scope, "the default panel seats several change reviewers and a coupling reviewer"
+    return harness
+
+
+def _prompt_shas(record: Dict[str, Any]) -> set:
+    return {(ref["part"], ref["ref"]["sha256"]) for seat in record["rows"] for ref in seat["source_refs"]
+            if ref.get("role") == "prompt"}
+
+
+# --- Schema -----------------------------------------------------------------------
+
+def test_the_schema_is_the_planned_call() -> None:
+    from ouroboros.settings_scales import EFFORT_SCALE
+
+    [entry] = rc.get_tools()
+    params = entry.schema["parameters"]
+    assert entry.name == "review_change" and params["required"] == ["subject"]
+    assert list(params["properties"]) == [
+        "root", "workspace_root", "subject", "base", "head", "surface", "goal", "scope", "author_questions",
+        "reviewers", "reason", "coupling_only", "reviewer_effort", "review_rebuttal", "treat_as_body"]
+    props = params["properties"]
+    assert props["root"]["enum"] == ["active_workspace", "system_repo"] and props["root"]["default"] == "active_workspace"
+    assert props["subject"]["enum"] == ["index", "worktree", "base..head"]
+    assert props["surface"]["enum"] == ["change"]
+    assert props["reviewer_effort"]["enum"] == list(EFFORT_SCALE)
+    assert (props["treat_as_body"]["type"], props["treat_as_body"]["default"]) == ("boolean", False)
+    # The schema states the predicate's rule (review_body_fact.body_fact): the flag raises
+    # only an UNKNOWN body fact; a recognized body or foreign root is unchanged.
+    description = props["treat_as_body"]["description"]
+    assert "unknown" in description and "unchanged" in description and "even if it is not the body" not in description
+    assert entry.timeout_sec and entry.timeout_sec > 0
+
+
+# --- Root, subject and rules layer --------------------------------------------------
+
+def test_the_system_index_is_the_gate_path_on_one_frozen_subject(h: Harness, tmp_path: pathlib.Path) -> None:
+    _stage(h.system, "body.py", "print('change')\n")
+    result = h.run(root="system_repo", subject="index", goal="Fix the body")
+
+    [call] = h.wave.calls
+    frozen = call.subject
+    assert isinstance(frozen, Frozen) and [kind for kind, *_ in h.calls if kind == "checkout"] == []
+    assert (frozen.spec.root_kind, frozen.spec.kind, frozen.spec.layer, frozen.spec.body_fact) == (
+        "system_repo", "index", "body", "true")
+    assert pathlib.Path(frozen.spec.root) == h.system.resolve()
+    assert frozen.diff_text == _git(h.system, "diff", "--binary", "--cached", "HEAD")
+    assert call.fingerprint == frozen.diff_sha
+
+    gate = gate_record({"task_id": "task-rc", "repo_dir": str(h.system), "subject": frozen, "goal": "Fix the body",
+                        **vars(h.wave.last)}, drive_root=tmp_path / "gate-data").to_dict()
+    record = rl.load_record(h.drive, result["record_id"])
+    assert _prompt_shas(record) == _prompt_shas(gate) == {("change", _sha(call.prompt)), ("coupling", _sha(call.brief))}
+    triad, scope = _configured()
+    assert [seat["seat_id"] for seat in record["rows"]] == [seat["seat_id"] for seat in gate["rows"]] == [*triad, *scope]
+    assert (record["verdict"]["aggregate"], record["verdict"]["per_question"]) == (
+        gate["verdict"]["aggregate"], gate["verdict"]["per_question"])
+    assert result["aggregate"] == rl.VERDICT_PASS and result["record_id"] == call.record_id
+    assert result["checklist"] == {"layer": "body", "body_fact": "true", "how": "dir", "treat_as_body": False}
+    assert record["surface"] == "change" and record["brief"]["checklist"]["rules_source"]["sha"] == "body-rules"
+    assert result["panel"]["composition"] == "configured" and result["panel"]["chosen_by"] == "owner"
+
+
+def test_a_foreign_base_head_is_core_untested_and_locks_nothing(h: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
+    triad, _scope = _configured()
+    base = _git(h.project, "rev-parse", "HEAD")
+    head = _commit(h.project, "feature.py", "print('feature')\n")
+    h.wave.failing = {triad[0]}
+    monkeypatch.setattr(rc, "get_review_enforcement", lambda: "blocking")
+    result = h.run(subject="base..head", base=base, head=head, goal="Add the feature")
+
+    [call] = h.wave.calls
+    assert (call.subject.spec.root_kind, call.subject.spec.layer, call.subject.spec.body_fact) == (
+        "active_workspace", "core", "false")
+    assert call.subject.checkout and [kind for kind, *_ in h.calls if kind.startswith("checkout")] == [
+        "checkout", "checkout_closed"]
+    assert result["checklist"] == {"layer": "core", "body_fact": "false", "how": "remote_chain", "treat_as_body": False}
+    assert result["tests"] == {"policy": "NOT_RUN", "result": "unknown"}
+    assert result["aggregate"] == rl.VERDICT_FAIL and [f["seat_id"] for f in result["findings"]["critical_findings"]] == [triad[0]]
+    assert (result["enforcement"], result["enforcement_blocks"]) == ("blocking", False)
+    assert (result["subject"]["base"], result["subject"]["head"], result["subject"]["root"]) == (
+        base, head, str(h.project.resolve()))
+    assert _git(h.project, "rev-parse", "HEAD") == head and _git(h.project, "status", "--porcelain") == ""
+    assert [attempt.status for attempt in h.attempts(h.project)] == ["reviewed"]
+
+    # The same verdict on the body is enforced by the record.
+    _stage(h.system, "body.py", "x = 1\n")
+    body = h.run(root="system_repo", subject="index")
+    assert (body["aggregate"], body["enforcement"], body["enforcement_blocks"]) == (rl.VERDICT_FAIL, "blocking", True)
+    assert _git(h.system, "diff", "--cached", "--name-only") == "body.py"
+
+
+def test_treat_as_body_raises_only_an_unknown_root_to_the_body_layer(
+        h: Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
+    triad, scope = _configured()
+    monkeypatch.setattr(rc, "get_review_enforcement", lambda: "blocking")
+    # A recognized foreign root (its remote reaches neither the managed remote nor the
+    # install's origin) stays on the core layer whatever the flag says; the flag is recorded.
+    _stage(h.project, "a.py", "a = 1\n")
+    foreign = h.run(subject="index", treat_as_body=True, reviewers=[triad[0]], reason="one seat")
+    assert ("body_fact", h.project.resolve(), True) in h.calls
+    [call] = h.wave.calls
+    assert call.subject.spec.layer == "core" and (call.triad, call.coupling) == ([triad[0]], [])
+    assert foreign["checklist"] == {"layer": "core", "body_fact": "false", "how": "remote_chain", "treat_as_body": True}
+    assert foreign["enforcement_blocks"] is False
+
+    # A root git cannot place (no remote, no copy binding) is raised: the body layer, the
+    # owner's panel outside Cyber Pro, enforcement binding; ``how`` keeps the fact's value.
+    local = _repo(tmp_path / "work" / "local", "local")
+    _stage(local, "b.py", "b = 2\n")
+    raised = h.run(subject="index", workspace_root=str(local), treat_as_body=True, reviewers=[triad[0]])
+    call = h.wave.calls[-1]
+    assert call.subject.spec.layer == "body" and (call.triad, call.coupling) == (triad, scope)
+    assert raised["checklist"] == {"layer": "body", "body_fact": "true", "how": "unknown", "treat_as_body": True}
+    assert raised["panel"]["reviewers_subset_ignored"] is True and raised["enforcement_blocks"] is True
+
+    _stage(local, "c.py", "c = 3\n")
+    plain = h.run(subject="index", workspace_root=str(local), reviewers=[triad[0]], reason="one seat")
+    assert plain["checklist"] == {"layer": "core", "body_fact": "unknown", "how": "unknown", "treat_as_body": False}
+    assert h.wave.calls[-1].triad == [triad[0]] and plain["enforcement_blocks"] is False
+
+
+def test_workspace_root_names_any_registered_repository(h: Harness, tmp_path: pathlib.Path) -> None:
+    other = _repo(tmp_path / "work" / "other", "other")
+    (other / "other.txt").write_text("live edit\n", encoding="utf-8")
+    absolute = h.run(subject="worktree", workspace_root=str(other))
+    assert (absolute["subject"]["root"], absolute["subject"]["kind"]) == (str(other.resolve()), "worktree")
+    assert "live edit" in h.wave.calls[-1].subject.diff_text
+
+    vendored = _repo(h.project / "vendor", "vendor")
+    _stage(vendored, "v.py", "v = 1\n")
+    relative = h.run(subject="index", workspace_root="vendor")
+    assert relative["subject"]["root"] == str(vendored.resolve())
+    assert [call.subject.spec.root_kind for call in h.wave.calls] == ["active_workspace", "active_workspace"]
+
+
+# --- Panel ----------------------------------------------------------------------------
+
+def test_one_named_seat_is_the_whole_panel_of_a_foreign_root(h: Harness) -> None:
+    triad, _scope = _configured()
+    _stage(h.project, "a.py", "a = 1\n")
+    result = h.run(subject="index", reviewers=[triad[1]], reason="one cheap check")
+
+    [call] = h.wave.calls
+    assert (call.triad, call.coupling) == ([triad[1]], [])
+    assert [row["seat_id"] for row in result["rows"]] == [triad[1]]
+    assert (result["panel"]["composition"], result["panel"]["chosen_by"]) == ("composed", "author")
+    assert (result["panel"]["reason"], result["panel"]["reason_missing"]) == ("one cheap check", False)
+    assert result["per_question"]["coupling"] == rl.QUESTION_NOT_PERFORMED
+
+
+def test_a_narrowed_panel_without_a_reason_is_recorded_not_refused(h: Harness) -> None:
+    triad, scope = _configured()
+    _stage(h.project, "a.py", "a = 1\n")
+    narrowed = h.run(subject="index", reviewers=[triad[0]])
+    assert narrowed["panel"]["reason_missing"] is True and len(h.wave.calls) == 1
+
+    _stage(h.project, "b.py", "b = 2\n")
+    everyone = h.run(subject="index", reviewers=[*triad, *scope])
+    assert everyone["panel"]["composition"] == "composed" and everyone["panel"]["reason_missing"] is False
+
+
+def test_no_list_seats_every_configured_seat(h: Harness) -> None:
+    triad, scope = _configured()
+    _stage(h.project, "a.py", "a = 1\n")
+    result = h.run(subject="index")
+    [call] = h.wave.calls
+    assert (call.triad, call.coupling) == (triad, scope)
+    assert result["panel"]["composition"] == "full_pool" and result["panel"]["reason_missing"] is False
+
+
+def test_a_body_subset_outside_cyber_pro_is_ignored_and_recorded(h: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
+    triad, scope = _configured()
+    _stage(h.system, "body.py", "x = 1\n")
+    ignored = h.run(root="system_repo", subject="index", reviewers=[triad[0]])
+    assert (h.wave.calls[-1].triad, h.wave.calls[-1].coupling) == (triad, scope)
+    assert (ignored["panel"]["composition"], ignored["panel"]["reviewers_subset_ignored"]) == ("configured", True)
+
+    _stage(h.system, "more.py", "y = 2\n")
+    named_all = h.run(root="system_repo", subject="index", reviewers=[*triad, *scope])
+    assert named_all["panel"]["reviewers_subset_ignored"] is False
+
+    monkeypatch.setattr(rc, "get_runtime_mode", lambda: "cyber_pro")
+    composed = h.run(root="system_repo", subject="index", reviewers=[triad[0]], reason="cyber pro chooses")
+    assert h.wave.calls[-1].triad == [triad[0]] and h.wave.calls[-1].coupling == []
+    assert (composed["panel"]["composition"], composed["panel"]["reviewers_subset_ignored"]) == ("composed", False)
+
+
+def test_reviewer_effort_is_this_waves_order(h: Harness) -> None:
+    triad, scope = _configured()
+    _stage(h.project, "a.py", "a = 1\n")
+    ordered = h.run(subject="index", reviewer_effort="low")
+    assert set(h.wave.calls[-1].efforts.values()) == {"low"}
+    effort = ordered["panel"]["reviewer_effort"]
+    assert effort["order"] == "low" and sorted(effort["applied"]) == sorted([*triad, *scope])
+
+    configured = slots.load_reviewer_slot_config()
+    _stage(h.project, "b.py", "b = 2\n")
+    h.run(subject="index")
+    assert h.wave.calls[-1].efforts == {row.slot_id: row.effort for row in (*configured.triad, *configured.scope)}
+
+
+def test_coupling_only_critics_answer_outside_the_quorum(h: Harness) -> None:
+    triad, scope = _configured()
+    critic = triad[1]
+    h.wave.failing = {critic}
+    _stage(h.project, "a.py", "a = 1\n")
+    result = h.run(subject="index", reviewers=[triad[0], scope[0]], coupling_only=[critic], reason="extra eyes")
+
+    [call] = h.wave.calls
+    assert (call.triad, call.coupling) == ([triad[0]], [scope[0], critic])
+    assert result["aggregate"] == rl.VERDICT_PASS and result["per_question"]["coupling"] == rl.VERDICT_PASS
+    assert [f["seat_id"] for f in result["findings"]["additional_findings"]] == [critic]
+    assert result["findings"]["critical_findings"] == [] and result["panel"]["additional"] == [critic]
+    assert {row["seat_id"]: row["additional"] for row in result["rows"]} == {triad[0]: False, scope[0]: False, critic: True}
+
+    _stage(h.project, "b.py", "b = 2\n")
+    assigned = h.run(subject="index", reviewers=[triad[0], critic, scope[0]], reason="the critic decides")
+    assert assigned["aggregate"] == rl.VERDICT_FAIL
+
+
+# --- Identities: reuse, retry and the shared ceiling ------------------------------------
+
+def test_the_same_identity_returns_the_settled_record_free(h: Harness) -> None:
+    triad, _scope = _configured()
+    _stage(h.project, "a.py", "a = 1\n")
+    first = h.run(subject="index", goal="Bound the cache")
+    again = h.run(subject="index", goal="Bound the cache")
+    assert len(h.wave.calls) == 1 and again["reused"] is True and first["reused"] is False
+    assert again["record_id"] == first["record_id"] and again["aggregate"] == first["aggregate"]
+    assert again["cost"] == {"usd": 0.0, "unknown": False} and first["cost"]["usd"] > 0
+
+    h.run(subject="index", reviewers=[triad[0]], reason="another panel")
+    assert len(h.wave.calls) == 2
+    rebutted = h.run(subject="index", review_rebuttal="The finding is stale: line 3 already bounds it.")
+    assert len(h.wave.calls) == 3 and rebutted["reused"] is False
+    assert h.wave.calls[2].rebuttal.startswith("The finding is stale")
+    # A new round is a new PHYSICAL operation too (identity c carries the round): the
+    # custody layer must not hand the first round's answers back to the rebuttal.
+    assert h.wave.calls[2].retry_key != h.wave.calls[0].retry_key
+    same_round = h.run(subject="index", review_rebuttal="The finding is stale: line 3 already bounds it.")
+    assert len(h.wave.calls) == 3 and same_round["reused"] is True and same_round["record_id"] == rebutted["record_id"]
+    h.run(subject="index", author_questions=["Is the cache bounded?"])
+    assert len(h.wave.calls) == 4 and h.wave.calls[3].retry_key not in {c.retry_key for c in h.wave.calls[:3]}
+    # The semantic brief is part of the round: another goal or scope is another wave;
+    # the unchanged request (same goal) is the settled record, free.
+    h.run(subject="index", goal="Unbound the cache")
+    h.run(subject="index", goal="Bound the cache", scope="only the cache module")
+    assert len(h.wave.calls) == 6 and len({c.retry_key for c in h.wave.calls}) == 6
+    assert h.run(subject="index", goal="Bound the cache")["reused"] is True and len(h.wave.calls) == 6
+    assert [attempt.attempt for attempt in h.attempts(h.project)] == [1, 2, 3, 4, 5, 6]
+
+
+def test_an_undecided_record_is_not_reused(h: Harness) -> None:
+    _stage(h.project, "a.py", "a = 1\n")
+    h.wave.status = "error"
+    undecided = h.run(subject="index")
+    assert undecided["aggregate"] not in {rl.VERDICT_PASS, rl.VERDICT_FAIL}
+    h.wave.status = "responded"
+    decided = h.run(subject="index")
+    assert len(h.wave.calls) == 2 and decided["reused"] is False and decided["aggregate"] == rl.VERDICT_PASS
+
+
+def test_the_wave_runs_under_its_own_identities_and_restores_the_task(h: Harness) -> None:
+    _stage(h.project, "a.py", "a = 1\n")
+    h.ctx._current_review_tool_name = "commit_reviewed"
+    h.ctx._current_review_retry_key = "the-gate-key"
+    h.ctx._review_history = ["a gate round"]
+    result = h.run(subject="index")
+
+    [call] = h.wave.calls
+    frozen = call.subject
+    assert call.tool == "review_change" and call.record_id == result["record_id"]
+    round_sha = review_round_sha(frozen)  # no rebuttal, no questions, empty brief: the bare round
+    assert call.retry_key == review_retry_key(frozen, round_sha=round_sha) != review_retry_key(frozen)
+    assert call.retry_key.startswith("review:") and f":index:{frozen.diff_sha}:change:" in call.retry_key
+    record = rl.load_record(h.drive, result["record_id"])
+    assert record["fingerprints"]["retry_key"] == call.retry_key and record["fingerprints"]["reuse_key"]
+    assert (h.ctx._current_review_tool_name, h.ctx._current_review_retry_key, h.ctx._review_history) == (
+        "commit_reviewed", "the-gate-key", ["a gate round"])
+    assert getattr(h.ctx, "_review_paid_stamp", None) is None
+
+
+def test_the_settled_record_is_bound_to_the_seats_own_execution_rows(
+        h: Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
+    """The seats record their executions during the wave (keyed by seat, stamped with
+    the wave's timestamps); settling names the record on exactly those rows — the
+    gate's ``bind_reviewer_slot_record_id(executions, record_id)`` contract."""
+    monkeypatch.setattr(slots, "_last_execution_path", lambda: tmp_path / "reviewer_last_execution.json")
+    wave, triad, _scope = h.wave, *_configured()
+
+    def recording(ctx: Any, commit_message: str, **kwargs: Any):
+        answer = wave(ctx, commit_message, **kwargs)
+        config = slots.load_reviewer_slot_config()
+        actors = [SimpleNamespace(slot_id=row["slot_id"], status="responded", usage={}, operation_state="settled")
+                  for row in ctx._last_triad_raw_results]
+        slots.record_reviewer_slot_executions("change", actors, {row.slot_id: row for row in config.triad}, keep_on=ctx)
+        return answer
+
+    monkeypatch.setattr(rc, "run_parallel_review", recording)
+    _stage(h.project, "a.py", "a = 1\n")
+    result = h.run(subject="index")
+    assert result["state"] == "settled" and result["record_id"]
+    last = slots.reviewer_slot_last_executions()
+    assert {seat: last[seat].get("review_record_id") for seat in triad} == {seat: result["record_id"] for seat in triad}
+
+
+def test_the_ceiling_is_shared_by_every_subject_of_one_root(h: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
+    from ouroboros.review_state import CommitAttemptRecord, make_repo_key, update_state
+
+    monkeypatch.setattr(commit_gate, "review_max_cycles", lambda: 1)
+    base = _git(h.project, "rev-parse", "HEAD")
+    head = _commit(h.project, "feature.py", "x = 1\n")
+    h.run(subject="base..head", base=base, head=head)
+    _stage(h.project, "other.py", "y = 2\n")
+    refused = h.run(subject="index")
+
+    assert len(h.wave.calls) == 1
+    assert refused["dispatch_refusal"]["kind"] == "review_cycles_exhausted" and refused["message"]
+    assert refused["aggregate"] == rl.VERDICT_NOT_DISPATCHED and refused["rows"] == []
+    assert rl.load_record(h.drive, refused["record_id"])["dispatch_refusal"]["kind"] == "review_cycles_exhausted"
+    text = h.tool(subject="index")
+    assert text.startswith(refused["message"]) and '"kind": "review_cycles_exhausted"' in text
+    assert h.run(subject="base..head", base=base, head=head)["reused"] is True
+    assert len(h.wave.calls) == 1
+
+    # Another root keeps its own ceiling, and the gate's spend on that root is not this tool's.
+    update_state(h.drive, lambda state: state.record_attempt(CommitAttemptRecord(
+        ts="2026-10-07T00:00:00+00:00", commit_message="gate", task_id="task-rc", root_task_id="task-rc",
+        repo_key=make_repo_key(h.system.resolve()), tool_name="commit_reviewed", status="reviewed", paid=True, attempt=1)))
+    _stage(h.system, "body.py", "z = 3\n")
+    assert h.run(root="system_repo", subject="index")["reused"] is False
+    assert len(h.wave.calls) == 2
+
+
+# --- The call surface ---------------------------------------------------------------------
+
+def test_author_questions_reach_the_wave_and_the_record_verbatim(h: Harness) -> None:
+    questions = ["Does the retry loop terminate?", "  Is the cache\nbounded?  "]
+    _stage(h.project, "a.py", "a = 1\n")
+    result = h.run(subject="index", goal="Bound the cache", author_questions=questions)
+    [call] = h.wave.calls
+    assert call.goal.startswith("Bound the cache") and all(question in call.goal for question in questions)
+    record = rl.load_record(h.drive, result["record_id"])
+    assert record["brief"]["author_questions"] == questions and record["brief"]["goal"] == "Bound the cache"
+
+
+@pytest.mark.parametrize("args, needle", [
+    ({"subject": "base..head", "base": "HEAD"}, "needs both base and head"),
+    ({"subject": "base..head", "head": "HEAD"}, "needs both base and head"),
+    ({"subject": "everything"}, "subject must be one of"),
+    ({"subject": "index", "head": "HEAD"}, "head belongs to subject=base..head"),
+    ({"subject": "index", "base": "--output=/tmp/x"}, "must name a revision"),
+    ({"subject": "index", "root": "/somewhere/else"}, "root must be one of"),
+    ({"subject": "index", "root": "system_repo", "workspace_root": "project"}, "leave workspace_root empty"),
+    ({"subject": "index", "surface": "preflight"}, "surface must be 'change'"),
+    ({"subject": "index", "reviewer_effort": "turbo"}, "reviewer_effort must be one of"),
+    ({"subject": "index", "reviewers": "slot_1"}, "reviewers must be a list of strings"),
+    ({"subject": "index", "reviewers": ["nobody-at-all"]}, "neither a configured review seat nor an enabled subagent"),
+    ({"subject": "base..head", "base": "0" * 40, "head": "HEAD"}, "is not a commit"),
+    ({"subject": "index", "treat_as_body": "yes"}, "treat_as_body must be a boolean"),
+])
+def test_call_errors_are_typed_and_dispatch_nothing(h: Harness, args: Dict[str, Any], needle: str) -> None:
+    _stage(h.project, "a.py", "a = 1\n")
+    text = h.tool(**args)
+    assert text.startswith("⚠️ TOOL_ARG_ERROR (review_change): ") and needle in text
+    assert text.endswith("No reviewer was dispatched.")
+    assert h.wave.calls == [] and h.written == {}
+
+
+def test_a_folder_outside_the_registered_roots_or_without_a_change_is_refused(
+        h: Harness, tmp_path: pathlib.Path, tmp_path_factory: pytest.TempPathFactory) -> None:
+    from ouroboros.tools.registry import ToolContext
+
+    elsewhere = _repo(tmp_path_factory.mktemp("elsewhere") / "repo", "elsewhere")
+    _stage(elsewhere, "e.py", "e = 1\n")
+    plain = ToolContext(repo_dir=h.system, system_repo_dir=h.system, drive_root=h.drive, task_id="task-rc")
+    outside_home = rc._handle_review_change(plain, subject="index", workspace_root=str(elsewhere))
+    missing = h.tool(subject="index", workspace_root=str(tmp_path / "work" / "missing"))
+    for refused in (outside_home, missing):
+        assert refused.startswith("⚠️ TOOL_ARG_ERROR (review_change): ")
+        assert "is not a registered folder this task can read" in refused
+    assert "is outside the user_files home" in outside_home
+
+    readable = h.tool(subject="index", workspace_root=str(h.drive))
+    assert readable.startswith("⚠️ TOOL_ARG_ERROR (review_change): ") and "is not inside a git repository" in readable
+    clean = h.tool(subject="index")
+    assert clean.startswith("⚠️ TOOL_ARG_ERROR (review_change): ") and "has no change to review" in clean
+    assert h.wave.calls == [] and h.written == {}
+
+
+def test_the_dispatcher_binds_the_root_and_answers_with_the_record(h: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
+    from ouroboros.tools.registry import ToolRegistry
+
+    monkeypatch.setattr("ouroboros.safety.check_safety", lambda *_a, **_k: (True, ""))
+    registry = ToolRegistry(h.system, h.drive)
+    registry.set_context(h.ctx)
+    schema = registry.get_schema_by_name("review_change")
+    assert schema["function"]["parameters"]["properties"]["root"]["enum"] == ["active_workspace", "system_repo"]
+
+    _stage(h.project, "a.py", "a = 1\n")
+    _stage(h.system, "body.py", "x = 1\n")
+    project = json.loads(registry.execute("review_change", {"subject": "index"}))
+    system = json.loads(registry.execute("review_change", {"subject": "index", "root": "system_repo"}))
+    assert project["subject"]["root"] == str(h.project.resolve()) and project["checklist"]["layer"] == "core"
+    assert system["subject"]["root"] == str(h.system.resolve()) and system["checklist"]["layer"] == "body"
+    assert {project["record_id"], system["record_id"]} == set(h.written)
+    refused = registry.execute("review_change", {"subject": "base..head", "base": "HEAD"})
+    assert "TOOL_ARG_ERROR" in refused and len(h.wave.calls) == 2

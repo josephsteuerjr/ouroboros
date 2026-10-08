@@ -22,7 +22,8 @@ def _surface() -> str:
     the review attribution. Plan, acceptance and skill reviewer sends settle
     under the task id too (ordinary reviews carry their surface only in
     ``category``), and their prefixes must never pose as the transcript's own
-    split or as each other's."""
+    split or as each other's. Only a caller-named wave (``cache_wave``) splits
+    it further; a derived review round is attribution only (#1544, owner A)."""
     from ouroboros.usage_accounting import current_usage_scope
 
     scope = current_usage_scope()
@@ -31,7 +32,7 @@ def _surface() -> str:
     category = "" if str(scope.category or "task") == "task" else str(scope.category)
     return "|".join(
         part for part in (
-            category, scope.review_skill, scope.review_wave_id, scope.review_slot_id,
+            category, scope.review_skill, scope.cache_wave, scope.review_slot_id,
         ) if part
     )
 

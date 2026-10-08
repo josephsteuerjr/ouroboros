@@ -463,7 +463,8 @@ def test_main_normal_exit_does_not_run_emergency_cleanup(monkeypatch, tmp_path):
     assert cleanup_calls == []
 
 
-def test_main_graceful_restart_cleanup_avoids_port_sweep(monkeypatch, tmp_path):
+@pytest.mark.parametrize("launcher_managed", [True, False])
+def test_main_graceful_restart_cleanup_avoids_port_sweep(monkeypatch, tmp_path, launcher_managed):
     import server
 
     cleanup_calls = []
@@ -492,8 +493,15 @@ def test_main_graceful_restart_cleanup_avoids_port_sweep(monkeypatch, tmp_path):
     monkeypatch.setattr(server, "write_port_file", lambda *_a, **_k: None)
     monkeypatch.setattr(server.uvicorn, "Config", lambda *a, **k: object())
     monkeypatch.setattr(server, "_SignalStopServer", FakeServer)  # the main() server seam (#1142)
-    monkeypatch.setattr(server, "_LAUNCHER_MANAGED", True)
+    monkeypatch.setattr(server, "_LAUNCHER_MANAGED", launcher_managed)
     monkeypatch.setattr(server, "_emergency_process_cleanup", lambda **kw: cleanup_calls.append(kw))
+    transfers = []
+
+    def transfer(host, port):
+        assert cleanup_calls == [{"port_sweep": False}]
+        transfers.append((host, port))
+
+    monkeypatch.setattr(server, "_restart_current_process", transfer)
     exits = []
     monkeypatch.setattr(server.os, "_exit", exits.append)
     monkeypatch.setattr(server, "_event_loop", None)  # the watcher's close_all_ws hop needs no loop here
@@ -505,6 +513,7 @@ def test_main_graceful_restart_cleanup_avoids_port_sweep(monkeypatch, tmp_path):
         _stop_restart_watcher(server)
 
     assert cleanup_calls == [{"port_sweep": False}]
+    assert transfers == ([] if launcher_managed else [("127.0.0.1", server._ACTUAL_BOUND_PORT)])
     assert exits == [server.RESTART_EXIT_CODE]
 
 

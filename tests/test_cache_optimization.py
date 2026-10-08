@@ -19,7 +19,7 @@ def _make_env_and_memory(tmpdir: pathlib.Path):
     (repo_dir / "docs" / "ARCHITECTURE.md").write_text("# Ouroboros v1.2.3 — Architecture", encoding="utf-8")
     (repo_dir / "docs" / "DEVELOPMENT.md").write_text("# DEVELOPMENT.md", encoding="utf-8")
     (repo_dir / "README.md").write_text("version-1.2.3", encoding="utf-8")
-    (repo_dir / "docs" / "CHECKLISTS.md").write_text("## Repo Commit Checklist", encoding="utf-8")
+    (repo_dir / "docs" / "CHECKLISTS.md").write_text("## Change Review Checklist", encoding="utf-8")
     (drive_root / "state" / "state.json").write_text('{"spent_usd": 0}', encoding="utf-8")
     (drive_root / "memory" / "scratchpad.md").write_text("scratch", encoding="utf-8")
     (drive_root / "memory" / "identity.md").write_text("identity", encoding="utf-8")

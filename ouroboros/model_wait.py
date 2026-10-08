@@ -197,6 +197,23 @@ def copy_wait_context() -> contextvars.Context:
     return copied
 
 
+def independent_turn_context() -> contextvars.Context:
+    """The context an initiated independent turn starts from (#1536).
+
+    Like ``copy_wait_context`` it starts empty: the initiating call's physical capture,
+    usage scope, send clock, tool-result slot and billing frame stay with that call.
+    Settings and explicit calendar deadlines carry; the initiating operation's own
+    execution deadline, wait owner and re-preparation callbacks do not: the new turn's
+    task frame installs its own controls, and a tool's call bound is not its lifetime.
+    """
+    from ouroboros.settings_integrity import copy_task_settings_context
+
+    copied = contextvars.Context()
+    copy_task_settings_context(copied)
+    copied.run(_CALENDAR.set, _CALENDAR.get())
+    return copied
+
+
 @contextlib.contextmanager
 def execution_deadline_scope(deadline: float, *, review_slot_id: str | None = None) -> Iterator[None]:
     """The inner waiter and its existing caller share one execution deadline."""

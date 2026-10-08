@@ -446,7 +446,7 @@ def orphan_capture_read_target(
     for row in rows:
         if str(row.task_id or "") != owner_tid:
             continue
-        cap_dir = custody.delegated_capture_dir(drive, row.task_id, row.snapshot_id or row.run_id)
+        cap_dir = custody.delegated_capture_dir(drive, row.task_id, custody.capture_key(row))
         if cap_dir.name != capture_name or not path_is_relative_to(resolved, cap_dir):
             continue
         retry_status, _entry, predecessor = retry_result_status(ctx, drive, str(row.run_id), state=state)

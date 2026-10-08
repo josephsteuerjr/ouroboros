@@ -197,6 +197,8 @@ def test_clean_commit_path_and_structured_advice_are_distinct(candidate, monkeyp
     result = git._run_reviewed_stage_cycle(ctx, "Review changed candidate", 0,
         skip_advisory_pre_review=True, require_release_tag=False)
     assert result["status"] == ("passed" if kind == "clean" else "reviewed")
+    # Every dispatched wave leaves one durable review ledger record the result names.
+    assert (result if kind == "clean" else result["review_reference"])["review_record_id"]
 
 
 @pytest.mark.parametrize("basis", ["partial", "custody_lost", "explicit_prior", "unrelated_prior"])

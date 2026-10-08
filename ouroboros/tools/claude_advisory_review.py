@@ -205,7 +205,7 @@ def _run_advisory_native(
     from ouroboros.llm import LLMClient
     from ouroboros.review_execution import ReviewAssignment
     from ouroboros.review_native_episode import NativeToolRoundReviewExecutor, native_episode_transcript_bound
-    from ouroboros.review_substrate import ReviewRequest
+    from ouroboros.review_substrate import ReviewRequest, resolve_review_wave
     from ouroboros.reviewer_slot_config import reviewer_slots
     from ouroboros.usage_accounting import UsageScope, current_usage_scope, usage_scope
 
@@ -258,10 +258,9 @@ def _run_advisory_native(
         custody_root=custody_root(ctx),
     )
     executor = NativeToolRoundReviewExecutor(assignment, llm=LLMClient())
-    _scope = _dc_replace(
-        current_usage_scope() or UsageScope(),
-        category="advisory_review", source="advisory_native",
-    )
+    _base = current_usage_scope() or UsageScope()  # the advisory names its round's wave (#1544)
+    _scope = _dc_replace(_base, category="advisory_review", source="advisory_native",
+                         review_wave_id=resolve_review_wave(request, request.usage_attribution, _base.review_wave_id))
     try:
         with usage_scope(_scope):
             attempt = executor.execute()
@@ -1004,8 +1003,12 @@ def _advisory_pre_sdk_gate(
             ),
         })
 
+    from ouroboros import body_candidate
+    # A commit prepared in a body candidate may take P9's version-neutral form; the serving checkout
+    # keeps the numbered release (the prepared index lane is the contribution path and allows it).
     release_preflight_err = (_release_metadata_preflight(repo_dir, commit_message, paths, source="index")
-                             if prepared else _release_metadata_preflight(repo_dir, commit_message, paths))
+                             if prepared else _release_metadata_preflight(
+                                 repo_dir, commit_message, paths, neutral_allowed=body_candidate.is_bound(ctx)))
     if release_preflight_err:
         from ouroboros.commit_admission import preflight_evidence_unavailable
         unavailable = preflight_evidence_unavailable(release_preflight_err)
@@ -1110,7 +1113,10 @@ def _handle_advisory_pre_review(
         if source not in ("worktree", "index"):
             return _json_response({"status": "error", "failure_code": "PREFLIGHT_SOURCE_REQUIRED",
                                    "message": "deterministic_only requires explicit source=worktree or source=index."})
-        return _json_response({**release_metadata_diagnostics(ctx.repo_dir, paths, source=source),
+        from ouroboros import body_candidate
+        return _json_response({**release_metadata_diagnostics(
+                                   ctx.repo_dir, paths, source=source,
+                                   neutral_allowed=True if source == "index" else body_candidate.is_bound(ctx)),
                                "deterministic_only": True, "review_freshness": False})
     skip_advisory_pre_review = bool(skip_advisory_review or skip_advisory_pre_review)
     repo_dir = pathlib.Path(ctx.repo_dir)

@@ -87,27 +87,35 @@ def _review_output_budget() -> int:
     return max(8192, min(raw, 65536))
 
 
-def triad_api_messages(prompt: str, stable_prefix_len: int, content: str) -> tuple:
+def triad_api_messages(prompt: str, stable_prefix_len: int, content: str,
+                       *, layer: str = "body") -> tuple:
     """The exact api-row message pair of a triad panel, and the BIBLE text it
-    carries ("" when BIBLE.md could not be loaded).
+    carries ("" when BIBLE.md could not be loaded, or when the checklist
+    ``layer`` is ``core``: a subject that is not the Ouroboros body is not
+    governed by the constitution, so the head carries no constitutional
+    preamble and no BIBLE — `review_body_fact.layer_for`).
 
     One builder for both consumers: the fan-out sends these messages, and the
     commit gate's wave admission measures them — a reservation priced on
     anything else would admit a wave the ledger then refuses seat by seat.
     """
-    bible_text = _rev().load_governance_doc(_rev()._REPO_ROOT, "BIBLE.md", on_missing="explicit")
-    if bible_text:
-        stable_head = (
-            _CONSTITUTIONAL_PREAMBLE
-            + "### BIBLE.md (Full Text)\n\n" + bible_text
-            + "\n\n---\n\n## REVIEW INSTRUCTIONS\n\n"
-        )
+    bible_text = ""
+    if layer != "body":
+        stable_head = "## REVIEW INSTRUCTIONS\n\n"
     else:
-        log.warning("Proceeding without BIBLE.md — constitutional compliance cannot be guaranteed")
-        stable_head = (
-            _CONSTITUTIONAL_PREAMBLE
-            + "(BIBLE.md could not be loaded)\n\n## REVIEW INSTRUCTIONS\n\n"
-        )
+        bible_text = _rev().load_governance_doc(_rev()._REPO_ROOT, "BIBLE.md", on_missing="explicit")
+        if bible_text:
+            stable_head = (
+                _CONSTITUTIONAL_PREAMBLE
+                + "### BIBLE.md (Full Text)\n\n" + bible_text
+                + "\n\n---\n\n## REVIEW INSTRUCTIONS\n\n"
+            )
+        else:
+            log.warning("Proceeding without BIBLE.md — constitutional compliance cannot be guaranteed")
+            stable_head = (
+                _CONSTITUTIONAL_PREAMBLE
+                + "(BIBLE.md could not be loaded)\n\n## REVIEW INSTRUCTIONS\n\n"
+            )
     # System content is split at the caller-declared stable/dynamic boundary so
     # the byte-stable prefix (constitutional preamble + BIBLE + the prompt's own
     # stable governance head) carries a provider cache marker; per-round evidence
@@ -136,7 +144,8 @@ def _handle_multi_model_review(ctx: ToolContext, content: str = "",
                                 surface: str = "multi_model_review",
                                 session_policy: dict = None,
                                 usage_attribution: dict = None,
-                                retry_key: str = "", task_evidence: dict = None) -> str:
+                                retry_key: str = "", task_evidence: dict = None,
+                                layer: str = "body") -> str:
     if models is None:
         models = []
     try:
@@ -153,13 +162,13 @@ def _handle_multi_model_review(ctx: ToolContext, content: str = "",
                     _multi_model_review_async(content, prompt, models, ctx, stable_prefix_len,
                                               routes, session_task, session_root, row_plan,
                                               surface, session_policy, usage_attribution,
-                                              retry_key, task_evidence),
+                                              retry_key, task_evidence, layer=layer),
                 ).result()
         except RuntimeError:
             result = asyncio.run(_multi_model_review_async(content, prompt, models, ctx, stable_prefix_len,
                                                            routes, session_task, session_root, row_plan,
                                                            surface, session_policy, usage_attribution,
-                                                           retry_key, task_evidence))
+                                                           retry_key, task_evidence, layer=layer))
         return json.dumps(result, ensure_ascii=False)
     except Exception as e:
         log.error("Multi-model review failed: %s", e, exc_info=True)
@@ -181,7 +190,7 @@ async def _query_model(
     session_profile: str = "",
     surface: str = "multi_model_review", session_policy: dict = None, usage_attribution: dict = None,
     retry_key: str = "", subagent_id: str = "", use_local: bool | None = None, task_evidence: dict = None,
-    native_retrieval: bool = False,
+    native_retrieval: bool = False, resolved_wave_id: str = "",
 ):
     async with semaphore:
         slot = None
@@ -218,6 +227,7 @@ async def _query_model(
                 evidence={"task_execution": evidence} if evidence else {},
                 evidence_refs=commit_review_evidence_refs(evidence),
                 usage_attribution=usage_attribution or {},
+                resolved_wave_id=resolved_wave_id,
                 task_attempt=getattr(ctx, "task_attempt", None) if ctx is not None else None,
                 retry_key=str(retry_key or ""),
                 reconcile_only=bool(getattr(ctx, "_review_reconcile_only", False)),
@@ -293,7 +303,8 @@ async def _multi_model_review_async(content: str, prompt: str,
                                      surface: str = "multi_model_review",
                                      session_policy: dict = None,
                                      usage_attribution: dict = None,
-                                     retry_key: str = "", task_evidence: dict = None):
+                                     retry_key: str = "", task_evidence: dict = None,
+                                     layer: str = "body"):
     from ouroboros.review_execution import ReviewRouteKind
     from ouroboros.reviewer_slot_config import row_plan_retrieves
 
@@ -331,11 +342,18 @@ async def _multi_model_review_async(content: str, prompt: str,
     # assembles the api pack (5.2); the constitutional flag below stays a fact
     # about the repository either way.
     if any_api_rows:
-        messages, bible_text = triad_api_messages(prompt, stable_prefix_len, content)
+        messages, bible_text = triad_api_messages(prompt, stable_prefix_len, content, layer=layer)
     else:
         messages = []
-        bible_text = _rev().load_governance_doc(_rev()._REPO_ROOT, "BIBLE.md", on_missing="explicit")
+        # The core layer carries no constitution on any delivery (review_body_fact.layer_for).
+        bible_text = "" if layer != "body" else _rev().load_governance_doc(
+            _rev()._REPO_ROOT, "BIBLE.md", on_missing="explicit")
 
+    # One round, one wave: each row sends its own request, so a fan-out without a paid-cycle
+    # key names its round here (review_records.resolve_review_wave); attribution only.
+    from ouroboros.review_records import new_review_wave_id
+
+    fan_out_wave = "" if retry_key or (usage_attribution or {}).get("review_wave_id") else new_review_wave_id()
     semaphore = asyncio.Semaphore(CONCURRENCY_LIMIT)
     llm_client = _rev().LLMClient()
     tasks = [
@@ -345,6 +363,7 @@ async def _multi_model_review_async(content: str, prompt: str,
                      session_profile=row_profiles[idx], surface=surface,
                      session_policy=session_policy, usage_attribution=usage_attribution,
                      retry_key=retry_key, subagent_id=row_actors[idx], use_local=row_local[idx], task_evidence=task_evidence,
+                     resolved_wave_id=fan_out_wave,
                      native_retrieval=row_retrieves[idx] and row_routes[idx] is ReviewRouteKind.API_CHAT
                      and not row_actors[idx])
         for idx, m in enumerate(models)

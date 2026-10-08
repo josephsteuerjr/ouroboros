@@ -775,7 +775,7 @@ def _exact_continuation_row(limit_ctx: Any, ctx: Any, *, pause_id: str, rail: st
         **settlement,
         "pause_generation": int(getattr(ctx, "_budget_pause_generation", 0) or 0),
         "rail": rail, "scope": str(scope or "global"),
-        "root_task_id": str(root_task_id or getattr(ctx, "root_task_id", "") or ""),
+        "root_task_id": root_task_id,
         "reason_text": str(reason_text or ""),
         "task_attempt": int(ctx.task_attempt or 1),
         "is_direct_chat": bool(getattr(ctx, "is_direct_chat", False)),
@@ -829,6 +829,11 @@ def request_pause(limit_ctx: Any, *, rail: str, scope: str, reason_text: str,
         usage["exact_pause_unavailable"] = ineligible
         return None
     task_id = str(ctx.task_id)
+    # ONE tree for the seed's launch lock and the durable row: an explicit root (a refused
+    # dispatch's group) verbatim, else ``member_fence``'s (a ToolContext has no root field).
+    from ouroboros.owner_pause import _member_coordinates
+
+    root_task_id = str(root_task_id or _member_coordinates(ctx)[1] or task_id)
     begin_dispatch_fence(task_id)
     setattr(ctx, "_budget_pausing", True)
     pause_id = uuid.uuid4().hex
@@ -912,7 +917,7 @@ def request_pause(limit_ctx: Any, *, rail: str, scope: str, reason_text: str,
 
                 # Close durable cold-tree admission before proving quiescence.
                 # The lock ends before any process/remote observation or wait.
-                with launch_lock(root, str(root_task_id or task_id)):
+                with launch_lock(root, root_task_id):
                     set_budget_pause(root, task_id, seed)
                 opened = True
             except Exception as exc:
@@ -998,9 +1003,9 @@ def enter_owner_pause(limit_ctx: Any) -> None:
 
         raise ModelWaitInterrupted("owner_pause_authority_unreadable")
     setattr(ctx, "_owner_pause_fence_id", str(fence.get("fence_id") or ""))
+    # No root argument: ``request_pause`` names the tree the fence above was read from.
     request_pause(limit_ctx, rail=RAIL_OWNER_PAUSE, scope="root",
-                  reason_text="The owner paused this task tree.",
-                  root_task_id=str(getattr(ctx, "root_task_id", "") or getattr(ctx, "task_id", "") or ""))
+                  reason_text="The owner paused this task tree.")
     usage = limit_ctx.accumulated_usage
     published = False
     while member_fence(ctx):
@@ -1043,8 +1048,7 @@ def enter_cold_sleep(limit_ctx: Any) -> None:
             + "; ".join(f"{b['kind']} {b.get('run_id') or b.get('name') or ''}" for b in blockers)
             + ". Sleep warm, wait for it, or stop it first.")})
         return
-    request_pause(limit_ctx, rail=RAIL_MODEL_SLEEP, scope="task", reason_text="The model chose a cold sleep.",
-                  root_task_id=str(getattr(ctx, "root_task_id", "") or getattr(ctx, "task_id", "") or ""))
+    request_pause(limit_ctx, rail=RAIL_MODEL_SLEEP, scope="task", reason_text="The model chose a cold sleep.")
     ctx._model_sleep = None  # no continuation owner: the ordinary loop continues awake
 
 
@@ -1126,6 +1130,62 @@ def exact_pause_marker(row: Dict[str, Any], *, default_root: str = "") -> Dict[s
             )
         },
     }
+
+
+# --- the queue row's selection against a root latch (assignment AND reservation) ----------
+
+BUDGET_HOLD_KEY = "_budget_pause_hold"
+
+
+def budget_hold_fact(task) -> Optional[Dict[str, Any]]:
+    """The durable NON-dispatch hold on one queued row (#1196), or ``None``.
+
+    Three shapes share it and none invents a checkpoint identity (no pause_id,
+    no ``exact_continuation``): a zero-dispatch sibling whose paused root's
+    admission fence was lifted by that root's Resume — lifting the fence must
+    not make it assignable, the model selects it explicitly (owner Q9) — a row
+    whose exact continuation could not be restored, and a row whose spent
+    grant could not be revoked. ``selected`` is the only release.
+    """
+    if isinstance(task, dict) and task.get("_continuation_prepared"):
+        return {"reason": "continuation_publication_unconfirmed", "selected": False, "dispatchable": False}
+    hold = task.get(BUDGET_HOLD_KEY) if isinstance(task, dict) else None
+    return hold if isinstance(hold, dict) and not hold.get("selected") else None
+
+
+def budget_fence_selected(task: Any, fence: Any) -> bool:
+    """Whether THIS row carries an explicit selection recorded against THIS fence.
+
+    A root's admission latch keeps a whole tree out of the queue and off the
+    money gate (``usage_accounting`` reads this predicate from the snapshot). The
+    owner (or, under the root's live grant, the model) may select ONE member
+    without lifting the latch for its siblings: the selection names the fence
+    generation it was granted against, so a later fence — a root that paused
+    again — is never pre-released by an older selection (#1196, owner Q9).
+
+    The exact Resume handoff, when present, decides alone (an older selected hold
+    never rescues it): an ``explicit_resume`` grant naming its pause, its grant
+    and this fence, issued by the owner or under a named root grant generation.
+    Sleep readiness is never money. A row paused again, a stale consumed carrier
+    or an active hold is not selected. Consumption does not spend the selection:
+    single use forbids consuming the continuation twice, not the resumed worker's
+    later sends. Dispatch still rechecks the live root grant
+    (``events_budget.budget_resume_dispatch_allowed``).
+    """
+    fence_id = str((fence or {}).get("fence_id") or "") if isinstance(fence, dict) else ""
+    if (not isinstance(task, dict) or not fence_id or isinstance(task.get("_budget_pause"), dict)
+            or task.get("_budget_pause_consumed") or budget_hold_fact(task) is not None):
+        return False
+    handoff = task.get("_budget_pause_resume")
+    if isinstance(handoff, dict):
+        return bool(str(handoff.get("pause_id") or "").strip() and str(handoff.get("grant_id") or "").strip()
+                    and handoff.get("authority") == "explicit_resume"
+                    and str(handoff.get("root_fence_id") or "") == fence_id
+                    and (handoff.get("selected_by") == "owner"
+                         or str(handoff.get("root_grant_id") or "").strip()
+                         and int(handoff.get("root_resume_generation") or 0) > 0))
+    hold = task.get(BUDGET_HOLD_KEY)
+    return bool(isinstance(hold, dict) and hold.get("selected") and str(hold.get("fence_id") or "") == fence_id)
 
 
 # --- resume (loop side) -----------------------------------------------------------------
@@ -1257,12 +1317,13 @@ def _reopen_owner_fence(ctx: Any, usage: Dict[str, Any], *, fence_id: str = "", 
     closed (``reopen_for_resume``). Failed publication HOLDS and retries; it
     never starts effects under missing authority.
     """
-    from ouroboros.owner_pause import reopen_for_resume
+    from ouroboros.owner_pause import _member_coordinates, reopen_for_resume
 
-    root_id = str(getattr(ctx, "root_task_id", "") or ctx.task_id)
+    # The fence ``member_fence`` reads, not the member's own record.
+    root_drive, root_id, _task_id = _member_coordinates(ctx)
     if root_id != str(ctx.task_id) and not fence_id:
         return
-    root = pathlib.Path(ctx.budget_drive_root or ctx.drive_root)
+    root = pathlib.Path(root_drive)
     published = ""
     while True:
         try:

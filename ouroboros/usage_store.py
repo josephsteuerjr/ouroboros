@@ -380,13 +380,14 @@ class Txn:
     def dirty_owners(self) -> List[Tuple[str, int]]:
         """The owners whose stored cost projection may be behind
         (``dirty_owners``) that own a non-review attempt or imported aggregate
-        (review-attributed rows never made an owner a candidate). Each owner's
-        check is an indexed lookup of its own rows."""
+        (rows under a review's own custody, ``_usage_rows.REVIEW_CUSTODY_KEYS``,
+        never made an owner a candidate). Each owner's check is an indexed
+        lookup of its own rows."""
         return [(record["owner_id"], record["revision"]) for record in self.conn.execute(
             "SELECT owner_id, revision FROM dirty_owners AS d WHERE EXISTS (SELECT 1 FROM attempts AS a "
             "WHERE (a.task_id = d.owner_id OR a.root_task_id = d.owner_id) "
             "AND COALESCE(a.kind, 'attempt') IN ('attempt', 'usage_baseline_group') "
-            "AND COALESCE(a.review_skill, '') = '' AND COALESCE(a.review_wave_id, '') = '' "
+            "AND COALESCE(a.review_skill, '') = '' "
             "AND COALESCE(a.review_slot_id, '') = '') ORDER BY owner_id")]
 
     def keys(self, scope: str) -> List[str]:

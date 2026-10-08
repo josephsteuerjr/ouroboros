@@ -195,6 +195,7 @@ def _refresh_costs(root: pathlib.Path, reads) -> None:
 def reconcile_abandoned_usage(drive_root: pathlib.Path) -> None:
     """Close unowned terminal-task attempts; price and remote custody stay separate."""
     from ouroboros import usage_accounting as usage
+    from ouroboros._usage_rows import REVIEW_CUSTODY_KEYS
     from ouroboros.claudexor_daemon import read_owned_gateway
     from ouroboros.gateways.claudexor import ClaudexorUnavailable
     from ouroboros.llm_claudexor import recover_model_attempt
@@ -256,7 +257,7 @@ def reconcile_abandoned_usage(drive_root: pathlib.Path) -> None:
     try:
         for row in rows:
             kind = row.get("kind", "attempt")
-            if kind not in {"attempt", "usage_baseline_group"} or any(row.get(key) for key in usage.REVIEW_ATTRIBUTION_KEYS):
+            if kind not in {"attempt", "usage_baseline_group"} or any(row.get(key) for key in REVIEW_CUSTODY_KEYS):
                 continue
             task_id = str(row.get("task_id") or "")
             remote = row.get("provider") == "claudexor"

@@ -249,6 +249,9 @@ class UsageScope:
     billing_group_limit_revision: Optional[str] = None
     root_limit_source: str = ""  # Original None + provenance is unlimited, not a new default.
     root_limit_revision: Optional[str] = None
+    # The wave a caller named to own its prompt-cache split (skill, plan review). A round the review
+    # derives (#1544: retry_key or a fresh id) is attribution only; the split stays per task.
+    cache_wave: str = ""
 @dataclass(frozen=True)
 class PhysicalAttemptContext:
     profile: Literal["owner_max", "owner_low", "owner_nano", "task_local_low", "task_local_nano"]
@@ -638,7 +641,7 @@ _CANDIDATE_ROW_FIELDS = (
 
 
 def _check_dispatch_fences(scope: UsageScope, root: pathlib.Path) -> None:
-    from ouroboros.budget_pause import dispatch_fenced
+    from ouroboros.budget_pause import budget_fence_selected, dispatch_fenced
 
     if dispatch_fenced(scope.task_id):
         # Process-local pause fence: no NEW send (loop, tool, reviewer, verdict
@@ -666,17 +669,16 @@ def _check_dispatch_fences(scope: UsageScope, root: pathlib.Path) -> None:
                 continue  # an owner Pause gates launches itself (owner_pause.py): never a money stop
             # ONE member explicitly selected against THIS fence generation is
             # admitted (owner Q9, #1196): the queue recorded that selection on
-            # the row itself, and the latch still refuses every unselected member.
-            fence_id = str(row.get("fence_id") or "")
+            # the row itself (a selected hold or an exact Resume handoff, read by
+            # the queue's own predicate), and the latch still refuses every
+            # unselected member. A just-assigned row may still be published pending.
             selected = False
             for bucket in ("running", "pending"):
                 for entry in (snapshot.get(bucket) or []) if isinstance(snapshot, dict) else []:
                     member = entry.get("task") if isinstance(entry, dict) else None
                     if not isinstance(member, dict) or str(member.get("id") or "") != scope.task_id:
                         continue
-                    hold = member.get("_budget_pause_hold")
-                    selected = bool(fence_id and isinstance(hold, dict) and hold.get("selected")
-                                    and str(hold.get("fence_id") or "") == fence_id)
+                    selected = budget_fence_selected(member, row)
             if not selected:
                 raise BudgetExceeded(
                     f"root model dispatch paused pending explicit resume for {scope.root_task_id}",

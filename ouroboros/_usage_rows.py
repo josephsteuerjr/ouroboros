@@ -22,6 +22,10 @@ from ouroboros.usage_ledger import _number
 from ouroboros._usage_money import billing_group_key, monetary_scope_key, ZERO_CASH, cash_contribution, render_cash, exact_money, decimal_of
 
 REVIEW_ATTRIBUTION_KEYS = ("review_skill", "review_wave_id", "review_slot_id")
+# A row under a review's own custody: every review-substrate send carries its reviewer slot and a
+# skill review its skill. A wave alone marks a review that runs its executor directly (advisory,
+# deep self-review); its rows stay with the generic reconciliation and cost refresh (#1544).
+REVIEW_CUSTODY_KEYS = ("review_skill", "review_slot_id")
 
 # Earliest cap/attribution binding per root and billing group (usage_admission).
 BINDING_KEYS = ("root_task_id", "billing_group_id", "billing_group_limit_usd", "billing_group_limit_source",

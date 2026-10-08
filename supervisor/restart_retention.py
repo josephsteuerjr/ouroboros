@@ -129,6 +129,41 @@ def census_without_saved_pauses(task_ids: Iterable[str], result_root: Any) -> Li
             if pause_retention(result_root, task_id) not in {RETAIN_SAVED, RETAIN_UNUSED_GRANT, RETAIN_SLEEP}]
 
 
+def pause_ids(task: Dict[str, Any]) -> tuple:
+    """The pause a queue row is parked under, and the one its grant handoff names."""
+    marker, handoff = (task.get(key) if isinstance(task.get(key), dict) else {}
+                       for key in ("_budget_pause", "_budget_pause_resume"))
+    return str((marker.get("checkpoint") or {}).get("pause_id") or ""), str(handoff.get("pause_id") or "")
+
+
+def unseen_pause(task: Dict[str, Any], before: tuple) -> bool:
+    """Whether a stop or restore just parked this row under a pause the queue's fence
+    map has not recorded (``before``: its ``pause_ids`` before its carriers changed):
+    not the pause it was already parked under, and newer than the pause its grant
+    named — or the ROOT's own unused grant back at its pause (that Resume had lifted
+    the latch). A member's unused grant returns to the SAME pause: nothing new."""
+    task_id = str(task.get("id") or "")
+    pause_id, (parked_under, granted) = pause_ids(task)[0], before
+    return bool(pause_id and pause_id != parked_under
+                and (pause_id != granted or str(task.get("root_task_id") or task_id) == task_id))
+
+
+def _latch_unseen_pause(task: Dict[str, Any]) -> None:
+    """A stop's half of the park event it pre-empted: the tree's monetary latch is
+    raised now under the normal generation rule, so the final snapshot carries what
+    restore trusts. An owner marker is left to its durable owner fence. Queue lock held."""
+    from ouroboros.owner_pause import REASON_OWNER
+    from supervisor import queue as q
+    from supervisor.events_budget import _set_root_budget_pause_locked
+
+    marker = task.get("_budget_pause") if isinstance(task.get("_budget_pause"), dict) else {}
+    root_id = str(marker.get("root_task_id") or "")
+    if marker.get("scope") == "root" and root_id and marker.get("reason") != REASON_OWNER:
+        # An unused grant's old marker never replaces a newer current latch.
+        pause = {**marker, "fence_id": None} if q.BUDGET_ROOT_FENCES.get(root_id) else marker
+        marker["fence_id"] = _set_root_budget_pause_locked(root_id, pause)["fence_id"]
+
+
 def park_saved_pause(task: Dict[str, Any], attempt: int, result_root: Any, *,
                      pause_source: str, sleep_hold_reason: str = HOLD_SAVED_SLEEP_RECOVERY) -> Optional[Dict[str, Any]]:
     """Return ``task`` as a PENDING row under its exact pause marker, or ``None``.
@@ -319,11 +354,14 @@ def park_saved_running_rows(running: Dict[str, Any], pending: List[Dict[str, Any
         if task_id in preserved or not isinstance(meta, dict) or not isinstance(meta.get("task"), dict):
             continue
         task = meta["task"]
+        before = pause_ids(task)
         parked = park_saved_pause(task, int(meta.get("attempt") or task.get("_attempt") or 1),
                                   pathlib.Path(task.get("budget_drive_root") or drive_root),
                                   pause_source="stopped_during_pausing", sleep_hold_reason=sleep_hold_reason)
         if parked is None:
             continue
+        if unseen_pause(parked, before):
+            _latch_unseen_pause(parked)
         running.pop(task_id, None)
         if not any(isinstance(row, dict) and str(row.get("id") or "") == str(task_id) for row in pending):
             pending.append(parked)
@@ -339,7 +377,10 @@ def retained_pending(task: Dict[str, Any], *, sleep_hold_reason: str = "") -> bo
     if isinstance(task.get("_budget_pause_resume"), dict):
         from supervisor.budget_resume import revoke_exact_budget_resume
 
+        before = pause_ids(task)
         revoke_exact_budget_resume(task, "restart_before_dispatch")
+        if unseen_pause(task, before):
+            _latch_unseen_pause(task)
     pause = task.get("_budget_pause")
     saved = isinstance(pause, dict) and pause.get("exact_continuation") is True
     from supervisor.events_budget import budget_hold_fact

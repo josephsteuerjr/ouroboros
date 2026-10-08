@@ -47,10 +47,9 @@ from ouroboros.config import (
 from ouroboros.launcher_bootstrap import (
     BootstrapContext,
     bootstrap_repo as _bootstrap_repo,
-    check_git as _check_git,
+    check_git as _check_git, launcher_sources_changed, remember_loaded_checkout,
     install_deps as _install_deps_impl,
-    embedded_python_env,
-    update_external_host,
+    embedded_python_env, update_external_host,
     parse_launch_options,
     automatic_launch_allowed,
     sync_existing_repo_from_bundle as _sync_existing_repo_from_bundle_impl,
@@ -59,7 +58,7 @@ from ouroboros.launcher_onboarding import (
     prepare_first_run_settings as _prepare_first_run_settings,
     present_first_run_onboarding as _present_first_run_onboarding,
 )
-from ouroboros.launcher_background import (Background, activate_running_instance, background_env,
+from ouroboros.launcher_background import (Background, DesktopApi, activate_running_instance, background_env,
                                            request_tray_cleanup, stop_tray_before_exit)
 from ouroboros.launcher_server_reaper import (
     reap_same_install_strays as _reap_same_install_strays_impl,
@@ -746,6 +745,7 @@ def agent_lifecycle_loop(port: int = AGENT_SERVER_PORT) -> None:
         _external_host_result = update_external_host(_external_host_update, EMBEDDED_PYTHON, log, _shutdown_event)
         if _shutdown_event.is_set():
             break  # Native preparation has reaped its owned processes before returning.
+        remember_loaded_checkout(REPO_DIR)  # the commit this launcher's own modules came from
         proc = start_agent(port)
         if _shutdown_event.is_set():
             stop_agent()
@@ -809,10 +809,7 @@ def agent_lifecycle_loop(port: int = AGENT_SERVER_PORT) -> None:
             log.info("Agent requested restart (exit code 42). Restarting...")
             _sync_existing_repo_from_bundle()
             if not _install_deps():
-                # An evolved checkout may have added requirements its reviewed
-                # commit depends on. Pause visibly and retry once — pip failures
-                # are often transient (index/network) — instead of restarting as
-                # if nothing happened.
+                # Retry dependency sync once before letting imports fail under the crash fuse.
                 log.error(
                     "Dependency install failed after the restart request; "
                     "retrying once in %ds.", _DEPS_RETRY_DELAY_SEC,
@@ -826,9 +823,12 @@ def agent_lifecycle_loop(port: int = AGENT_SERVER_PORT) -> None:
                         "import them — see the pip output above for the cause.",
                         MAX_CRASH_RESTARTS, CRASH_WINDOW_SEC,
                     )
-            if _external_seed_bundle is not None:
+            if _external_seed_bundle is not None or launcher_sources_changed(REPO_DIR, bundle_dir=_bundle_dir()):
+                argv = list(_launch_argv)
+                if getattr(sys, "frozen", False):
+                    argv += ["--seed-bundle", str(_bundle_dir())]
                 release_pid_lock()
-                os.execv(EMBEDDED_PYTHON, [EMBEDDED_PYTHON, str(REPO_DIR / "launcher.py"), *_launch_argv])
+                os.execv(EMBEDDED_PYTHON, [EMBEDDED_PYTHON, str(REPO_DIR / "launcher.py"), *argv])
             # No port sweep here: _pre_generation_cleanup owns it next iteration.
             continue
 
@@ -1451,7 +1451,8 @@ def main(argv=()):
         with urllib.request.urlopen(full_url, timeout=60) as resp, target.open("wb") as fh:  # noqa: S310 - localhost validated above
             shutil.copyfileobj(resp, fh)
 
-    class MainApi:
+    class MainApi(DesktopApi):  # alerts, shell facts and system notifications: launcher_background.DesktopApi
+        _background = background
         @staticmethod
         def _native_confirm(title: str, message: str) -> bool:
             return bool(_webview_window and _webview_window.create_confirmation_dialog(title, message))
@@ -1514,9 +1515,6 @@ def main(argv=()):
 
         def open_external_url(self, url: str) -> dict:
             return _open_external_url(url)
-        def request_attention(self, sound: bool = True, title: str = "", body: str = "", cue_when_visible: bool = True) -> dict:
-            return background.attention(bool(sound), str(title or ""), str(body or ""), bool(cue_when_visible))
-        notify_owner = request_attention  # newer pages send the alert text; older launchers lack this name
 
         def save_bytes_to_downloads(self, filename: str, b64: str) -> dict:
             try:

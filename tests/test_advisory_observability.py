@@ -344,7 +344,7 @@ def _make_minimal_git_repo(tmp_path):
         encoding="utf-8",
     )
     (tmp_path / "docs").mkdir(parents=True, exist_ok=True)
-    (tmp_path / "docs" / "CHECKLISTS.md").write_text("# Repo Commit Checklist\n", encoding="utf-8")
+    (tmp_path / "docs" / "CHECKLISTS.md").write_text("# Change Review Checklist\n", encoding="utf-8")
     (tmp_path / "docs" / "ARCHITECTURE.md").write_text(
         "# Ouroboros v5.99.0-rc.1 — Architecture & Reference\n",
         encoding="utf-8",
