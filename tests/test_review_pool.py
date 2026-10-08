@@ -364,3 +364,48 @@ def test_the_commit_review_ceiling_is_the_catalog_ceiling():
     from ouroboros.tools.review_multi_model import MAX_MODELS as POOL_MAX
 
     assert MAX_MODELS == POOL_MAX == MAX_CONFIGURED_SUBAGENTS == 26
+
+
+# --- the wait card's persistent choice names a catalog row -----------------------------
+
+
+def test_a_persisted_reviewer_choice_changes_that_catalog_rows_route_and_nothing_else():
+    """``reviewer:<id>`` on the wait card is the pool seat's own row: its route
+    changes (pin included), while the mark, delivery, effort, the other rows and
+    the catalog order are exactly as saved — and no review lanes key is authored."""
+    from ouroboros.model_slots import apply_model_role_override
+
+    before = {SUBAGENTS_SETTING: _MIXED, "OUROBOROS_MODEL": "openai/gpt-5.6-sol"}
+    saved = apply_model_role_override(before, role="reviewer:packet-critic", model="claudexor::codex=gpt-5.6-luna",
+                                      credential_profile_id="pin-2", use_local=False)
+
+    assert before[SUBAGENTS_SETTING] == _MIXED, "the input document is never mutated"
+    assert "OUROBOROS_REVIEWER_SLOTS" not in saved
+    rows = json.loads(saved[SUBAGENTS_SETTING])["items"]
+    assert [row["subagent_id"] for row in rows] == ["api-critic", "packet-critic", "session-critic", "helper"]
+    changed = rows[1]
+    assert changed["route"] == {"kind": "api_model", "target_id": "claudexor::codex=gpt-5.6-luna",
+                                "credential_profile_id": "pin-2"}
+    assert changed["delivery"] == "packet" and changed["review_eligible"] is True
+    from ouroboros.configured_subagents import normalize_configured_subagents
+
+    untouched = json.loads(normalize_configured_subagents(_MIXED)[1])["items"]
+    assert [rows[index] for index in (0, 2, 3)] == [untouched[index] for index in (0, 2, 3)]
+    seats = rsc.review_pool_slots(saved)
+    assert [(seat.slot_id, seat.model, seat.session_profile) for seat in seats][1] == (
+        "packet-critic", "claudexor::codex=gpt-5.6-luna", "pin-2")
+    replayed = apply_model_role_override(saved, role="reviewer:packet-critic", model="claudexor::codex=gpt-5.6-luna",
+                                         credential_profile_id="pin-2", use_local=False)
+    assert replayed == saved, "replaying a saved choice changes nothing"
+
+
+def test_a_persisted_reviewer_choice_for_a_row_that_is_gone_is_a_typed_refusal_naming_the_pool():
+    from ouroboros.model_slots import apply_model_role_override
+
+    with pytest.raises(ValueError, match=r"no longer exists \(the review pool is: api-critic, packet-critic, session-critic\)"):
+        apply_model_role_override({SUBAGENTS_SETTING: _MIXED}, role="reviewer:retired-critic",
+                                  model="openai/gpt-5.6-terra", credential_profile_id="", use_local=False)
+    with pytest.raises(ValueError, match=r"the review pool is: empty"):
+        apply_model_role_override({SUBAGENTS_SETTING: _roster(_row("helper", "openai/gpt-5.6-luna", marked=False))},
+                                  role="reviewer:retired-critic", model="openai/gpt-5.6-terra",
+                                  credential_profile_id="", use_local=False)

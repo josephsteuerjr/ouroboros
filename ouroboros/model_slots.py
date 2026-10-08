@@ -191,9 +191,10 @@ def apply_model_role_override(settings: dict, *, role: str, model: str,
                               credential_profile_id: str, use_local: bool) -> dict:
     """Apply explicit wait-card persistence to one role; never infer it from a model.
 
-    The gateway owns locking and writes. Referenced reviewer actors are copied
-    before editing so another reviewer or task actor keeps its prior assignment
-    and native-inspection delivery is not silently converted to packed chat.
+    The gateway owns locking and writes. A ``reviewer:<id>`` or ``subagent:<id>``
+    role names ONE catalog row by its stored id (a review pool seat's identity is
+    its row), and the override changes that row's route — its mark, delivery,
+    effort and every other field stay as the owner saved them.
     """
     from ouroboros.provider_models import provider_for_model, parse_claudexor_model
 
@@ -237,62 +238,22 @@ def apply_model_role_override(settings: dict, *, role: str, model: str,
         result[MODEL_ACCOUNTS_KEY] = normalize_model_role_options(MODEL_ACCOUNTS_KEY, accounts)[1]
         return result
     from ouroboros.configured_subagents import normalize_configured_subagents, configured_subagents_dict
-    from ouroboros.reviewer_slot_config import reviewer_slot_save_check
 
-    routed_model = model if not use_local or model.endswith(" (local)") else f"{model} (local)"
-    slots = None
-    actor_id = identity
-    if family == "reviewer":
-        raw = result.get("OUROBOROS_REVIEWER_SLOTS")
-        if not raw:
-            from ouroboros.subscription_install_presets import preview_api_reviewer_slots
-            raw = preview_api_reviewer_slots(result)
-        slots = json.loads(raw) if isinstance(raw, str) else copy.deepcopy(raw)
-        if not result.get("OUROBOROS_REVIEWER_SLOTS") and identity != "deep_review_slot_1":
-            # The stored ABI is one triad/scope panel, not sparse overrides.
-            # Preserve its other effective rows, but do not author the independent
-            # legacy-derived deep-review placeholder on an unrelated row edit.
-            slots.pop("deep_review", None)
-        rows = [*slots.get("triad", []), *slots.get("scope", [])]
-        rows.extend(slots[name] for name, slot_id in (
-            ("advisory", "advisory_slot_1"), ("deep_review", "deep_review_slot_1"))
-                    if identity == slot_id and isinstance(slots.get(name), dict))
-        row = next((item for item in rows if item.get("slot_id", identity) == identity), None)
-        if row is None:
-            raise ValueError("The selected reviewer no longer exists")
-        actor_id = str(row.get("subagent_id") or "")
-        if not actor_id:
-            row["route"] = {"kind": "api_chat", "target_id": routed_model, "profile_id": pin}
-    elif family != "subagent":
+    if family not in ("reviewer", "subagent"):
         raise ValueError("Unknown waiting model role")
-    if actor_id:
-        roster = configured_subagents_dict(normalize_configured_subagents(result.get("OUROBOROS_SUBAGENTS"))[0])
-        actor = next((item for item in roster["items"] if item["subagent_id"] == actor_id), None)
-        if actor is None:
-            raise ValueError("The selected task agent or referenced reviewer no longer exists")
+    routed_model = model if not use_local or model.endswith(" (local)") else f"{model} (local)"
+    roster = configured_subagents_dict(normalize_configured_subagents(result.get("OUROBOROS_SUBAGENTS"))[0])
+    actor = next((item for item in roster["items"] if item["subagent_id"] == identity), None)
+    if actor is None:
         if family == "reviewer":
-            current_route = actor["route"]
-            if (current_route.get("kind") == "api_model" and current_route.get("target_id") == routed_model
-                    and str(current_route.get("credential_profile_id") or "") == pin):
-                return result  # Replaying a saved role cannot mint duplicate roster actors.
-            actor = copy.deepcopy(actor)
-            ids = {item["subagent_id"] for item in roster["items"]}
-            base, number = f"reviewer-{identity}", 1
-            actor_id = base
-            while actor_id in ids:
-                number += 1
-                actor_id = f"{base}-{number}"
-            actor.update(subagent_id=actor_id, route={"kind": "api_model", "target_id": routed_model,
-                                                     "credential_profile_id": pin})
-            roster["items"].append(actor)
-            row["subagent_id"] = actor_id
-        else:
-            actor["route"] = {"kind": "api_model", "target_id": routed_model, "credential_profile_id": pin}
-        actor.pop("access", None)  # Native/API rows have no session access profile.
-        result["OUROBOROS_SUBAGENTS"] = normalize_configured_subagents(roster)[1]
-    if slots is not None:
-        result["OUROBOROS_REVIEWER_SLOTS"] = json.dumps(slots, ensure_ascii=False)
-        reviewer_slot_save_check(result["OUROBOROS_REVIEWER_SLOTS"], subagents_raw=result.get("OUROBOROS_SUBAGENTS"))
+            from ouroboros.reviewer_slot_config import review_pool_rows
+
+            handles = ", ".join(row.slot_id for row in review_pool_rows(result)) or "empty"
+            raise ValueError(f"The selected reviewer no longer exists (the review pool is: {handles})")
+        raise ValueError("The selected task agent no longer exists")
+    actor["route"] = {"kind": "api_model", "target_id": routed_model, "credential_profile_id": pin}
+    actor.pop("access", None)  # Native/API rows have no session access profile.
+    result["OUROBOROS_SUBAGENTS"] = normalize_configured_subagents(roster)[1]
     return result
 
 
