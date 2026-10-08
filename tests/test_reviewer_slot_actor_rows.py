@@ -22,7 +22,6 @@ from ouroboros.reviewer_slot_config import (
     load_reviewer_slot_config,
     parse_reviewer_slots,
     project_reviewer_slots_into_env,
-    structured_scope_review_slots,
 )
 
 _ROSTER = {
@@ -131,17 +130,6 @@ def test_api_rows_of_both_forms_project_their_model_ids_into_the_legacy_key(rost
     import os
 
     assert os.environ["OUROBOROS_REVIEW_MODELS"] == "openai/gpt-5.6-terra,openai/gpt-5.5"
-
-
-def test_scope_actor_slot_reaches_review_slot(roster_env):
-    roster_env.setenv(REVIEWER_SLOTS_ENV, _payload(
-        [{"slot_id": "t1", "route": {"kind": "api_chat", "target_id": "openai/gpt-5.5"}}],
-        scope_rows=[{"slot_id": "s1", "subagent_id": "api-critic"}],
-    ))
-    slots = structured_scope_review_slots()
-    assert slots is not None and len(slots) == 1
-    assert slots[0].subagent_id == "api-critic"
-    assert slots[0].native_retrieval and slots[0].retrieves
 
 
 def test_actor_binding_is_attempt_identity(roster_env):

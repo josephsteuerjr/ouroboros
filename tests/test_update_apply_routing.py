@@ -382,9 +382,8 @@ def test_assisted_update_refuses_when_one_review_wave_is_unaffordable(monkeypatc
     monkeypatch.setattr(state, "load_state", lambda: {})
     monkeypatch.setattr(state, "budget_remaining", lambda *_a, **_k: 0.4)
     monkeypatch.setattr(control, "_respawn_workers_after_failed_update", lambda: None)
-    api_row = SimpleNamespace(target_id="openai/gpt-test", is_session=False)
-    monkeypatch.setattr(reviewer_slot_config, "commit_triad_rows", lambda: [api_row])
-    monkeypatch.setattr(reviewer_slot_config, "commit_scope_rows", lambda: [api_row])
+    api_row = SimpleNamespace(model="openai/gpt-test", is_session=False)
+    monkeypatch.setattr(reviewer_slot_config, "review_pool_slots", lambda **_kw: [api_row, api_row])
     monkeypatch.setattr(
         usage_admission,
         "review_wave_admission",
@@ -427,8 +426,7 @@ def test_assisted_resolver_boots_before_conflicts_reach_live_tree(
 
     # No API reviewer rows -> the wave-floor estimator is skipped entirely
     # (agent-session rows ride subscriptions, not USD budget).
-    monkeypatch.setattr(reviewer_slot_config, "commit_triad_rows", lambda: [])
-    monkeypatch.setattr(reviewer_slot_config, "commit_scope_rows", lambda: [])
+    monkeypatch.setattr(reviewer_slot_config, "review_pool_slots", lambda **_kw: [])
     calls = []
     monkeypatch.setattr(git_ops, "BRANCH_DEV", "ouroboros")
     monkeypatch.setattr(git_ops, "_create_rescue_snapshot", lambda *_a, **_k: None)
@@ -556,8 +554,7 @@ def test_resolver_fence_blockers_still_unwind_the_stash(monkeypatch):
     import supervisor.update_merge as update_merge
     import supervisor.workers as workers
 
-    monkeypatch.setattr(reviewer_slot_config, "commit_triad_rows", lambda: [])
-    monkeypatch.setattr(reviewer_slot_config, "commit_scope_rows", lambda: [])
+    monkeypatch.setattr(reviewer_slot_config, "review_pool_slots", lambda **_kw: [])
     monkeypatch.setattr(git_ops, "BRANCH_DEV", "ouroboros")
     monkeypatch.setattr(git_ops, "_create_rescue_snapshot", lambda *_a, **_k: None)
     monkeypatch.setattr(

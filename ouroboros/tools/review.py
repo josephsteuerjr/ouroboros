@@ -1129,14 +1129,10 @@ def _prepare_unified_review(ctx: ToolContext, commit_message: str,
     # receive a packet at all, and their windows size its governance share.
     from ouroboros.review_execution import ReviewRouteKind
     from ouroboros.reviewer_slot_config import commit_triad_delivery, row_plan_retrieves
-    from ouroboros.tools.review_admission import (
-        assemble_packet_prompt, fold_coupling_only_seats, prepare_retrieving_seats,
-    )
+    from ouroboros.tools.review_admission import assemble_packet_prompt, prepare_retrieving_seats, seat_vectors
 
     try:
-        # TRANSITIONAL: rows still configured under the old scope role join the
-        # one wave as coupling-only seats (explicit read, never fail-open).
-        row_plan = fold_coupling_only_seats(commit_triad_delivery())
+        row_plan = seat_vectors(commit_triad_delivery())
     except ValueError as exc:
         ctx._last_review_block_reason = "infra_failure"
         return None, _handle_review_block_or_warning(

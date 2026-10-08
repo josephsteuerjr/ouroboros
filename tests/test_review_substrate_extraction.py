@@ -89,7 +89,6 @@ def test_review_substrate_keeps_the_coordinator():
     for name in (
         "ReviewCoordinator",
         "run_review_request",
-        "scope_reviewer_slots",
         "review_repo_dirs_for",
     ):
         assert getattr(review_substrate, name).__module__ == "ouroboros.review_substrate", name

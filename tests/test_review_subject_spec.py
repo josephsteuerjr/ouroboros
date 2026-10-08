@@ -148,11 +148,9 @@ def _run_wave(monkeypatch, ctx, subject=None):
     from ouroboros.tools import parallel_review as pr
     from ouroboros.tools import review as review_mod
     import ouroboros.reviewer_slot_config as slot_cfg
-    import ouroboros.tools.review_admission as admission
 
     given = {}
     monkeypatch.setattr(slot_cfg, "commit_triad_delivery", lambda: _row_plan(["api", "session", "session"]))
-    monkeypatch.setattr(admission, "fold_coupling_only_seats", admission.seat_vectors)  # no legacy scope rows
     monkeypatch.setattr(review_mod, "calibrated_input_token_limit", lambda *a, **k: 2_000_000)
 
     def fake_dispatch(_ctx, _msg, prepared):

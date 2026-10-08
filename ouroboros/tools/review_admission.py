@@ -454,38 +454,6 @@ def seat_vectors(row_plan: dict) -> dict:
     return plan
 
 
-def fold_coupling_only_seats(row_plan: dict) -> dict:
-    """TRANSITIONAL (until packet A retires ``config.scope``): the rows an owner
-    still configures under the old scope role join the ONE wave as coupling-only
-    seats — same brief, ``parts=("coupling",)``, their own route and identity
-    (``review_substrate.scope_reviewer_slots``: every such row retrieves). The
-    read is explicit, never a fail-open import trap: a malformed configuration
-    surfaces as the gate's infra block."""
-    from ouroboros.review_execution import ReviewRouteKind
-    from ouroboros.review_substrate import scope_reviewer_slots
-
-    plan = seat_vectors(row_plan)
-    seen = set(str(s) for s in plan.get("slot_ids") or [])
-    blanks = {"retrieves": False, "use_local": None, "parts": ()}
-    for slot in scope_reviewer_slots():
-        slot_id = str(getattr(slot, "slot_id", "") or "")
-        if not slot_id or slot_id in seen:
-            continue
-        seen.add(slot_id)
-        width = len(plan.get("models") or [])
-        for key, value in (("routes", getattr(slot, "route", None) or ReviewRouteKind.API_CHAT),
-                           ("efforts", str(getattr(slot, "effort", "") or "")),
-                           ("session_targets", str(getattr(slot, "session_target", "") or "")),
-                           ("session_profiles", str(getattr(slot, "session_profile", "") or "")),
-                           ("slot_ids", slot_id), ("subagent_ids", str(getattr(slot, "subagent_id", "") or "")),
-                           ("retrieves", True), ("use_local", getattr(slot, "use_local", None)),
-                           ("parts", ("coupling",)), ("models", str(getattr(slot, "model", "") or ""))):
-            rows = list(plan.get(key) or [])
-            rows += [blanks.get(key, "")] * (width - len(rows))
-            plan[key] = [*rows, value]
-    return plan
-
-
 def retrieving_brief_for_seat(*, review_root: Any, governance_root: Any, path_subject: Any, managed_subject: Any,
                               diff_text: Optional[str], layer: str, checklist_section: str, commit_message: str,
                               intent: Any, parts: Sequence[str], delegated: bool, model: str, slot_id: str,
@@ -834,20 +802,19 @@ def managed_update_wave_floor(remaining_usd: float) -> Tuple[dict, list]:
     """Affordability floor of ONE commit-gate wave for the managed-update resolver:
     ``(admission, events)``. The pool is the one wave's paid seats — every
     api-route row of the panel (packet or native, both parts of the brief ride
-    one seat) plus, transitionally, the coupling-only rows still configured under
-    the old scope role — priced at the packs' own worst-case caps (the shared
+    one seat) — priced at the packs' own worst-case caps (the shared
     920K-token input SSOT per API row, the review output reserve) with the
     shared reservation math; agent-session rows ride subscriptions and are
     counted, not priced. Estimator errors fail open INSIDE the estimate (one
     typed event), never by swallowing a missing symbol: this function is called
     explicitly and a broken import propagates to the caller."""
-    from ouroboros.reviewer_slot_config import commit_scope_rows, commit_triad_rows
+    from ouroboros.reviewer_slot_config import review_pool_slots
     from ouroboros.tools.review_helpers import REVIEW_PROMPT_TOKEN_BUDGET
     from ouroboros.tools.review_multi_model import _review_output_budget
     from ouroboros.usage_admission import review_wave_admission
 
-    rows = [*commit_triad_rows(), *commit_scope_rows()]
-    models = [row.target_id for row in rows if not row.is_session and row.target_id]
+    rows = review_pool_slots()
+    models = [row.model for row in rows if not row.is_session and row.model]
     session_slots = sum(1 for row in rows if row.is_session)
     admission: dict = {"fits": True}
     events: list = []

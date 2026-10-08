@@ -12,7 +12,6 @@ import pytest
 from ouroboros.reviewer_slot_config import (
     REVIEWER_SLOTS_ENV,
     parse_reviewer_slots,
-    structured_scope_review_slots,
 )
 
 
@@ -106,22 +105,6 @@ def test_malformed_advisory_target_never_consults_the_shared_route(monkeypatch):
         reviewer_slot_config.advisory_slot_config()
 
 
-def test_compound_session_effort_precedes_the_scope_surface_default(monkeypatch):
-    payload = _payload()
-    payload["scope"] = [
-        {
-            "slot_id": "agy-row",
-            "route": {
-                "kind": "agent_session",
-                "target_id": "agy=gemini-3.1-pro-max-fast",
-            },
-        },
-    ]
-    monkeypatch.setenv(REVIEWER_SLOTS_ENV, json.dumps(payload))
-    monkeypatch.setenv("OUROBOROS_EFFORT_SCOPE_REVIEW", "medium")
-    assert [slot.effort for slot in structured_scope_review_slots()] == ["max"]
-
-
 def test_last_execution_projection_keeps_a_declared_effort_apart_from_the_row(tmp_path, monkeypatch):
     """«Выполняется как» must not show the agent's one-off panel strength as the
     row's saved configuration: requested.effort is the ROW's effort ('' when the
@@ -147,22 +130,20 @@ def test_compound_effort_stabilizes_commit_fingerprint_against_global_drift(
     monkeypatch,
 ):
     from ouroboros.tools.commit_gate import commit_review_contract_fingerprint
+    from tests.review_pool_rosters import pool_roster, pool_seat, set_review_pool
 
-    payload = _payload()
-    payload["triad"][0]["route"]["target_id"] = "cursor=cursor-grok-4.6-xhigh"
-    payload["scope"][0]["route"] = {
-        "kind": "agent_session",
-        "target_id": "agy=gemini-3.1-pro-max-fast",
-    }
-    monkeypatch.setenv(REVIEWER_SLOTS_ENV, json.dumps(payload))
+    def pool(second: str) -> str:
+        return pool_roster(pool_seat("grok-row", "cursor=cursor-grok-4.6-xhigh", kind="agent_session"),
+                           pool_seat("agy-row", second, kind="agent_session"))
+
+    # The pool's compound session rows carry their effort in the route slug: a
+    # changed global effort moves nothing on them.
+    set_review_pool(monkeypatch, pool("agy=gemini-3.1-pro-max-fast"))
     monkeypatch.setenv("OUROBOROS_EFFORT_REVIEW", "low")
-    monkeypatch.setenv("OUROBOROS_EFFORT_SCOPE_REVIEW", "medium")
     first = commit_review_contract_fingerprint()
 
     monkeypatch.setenv("OUROBOROS_EFFORT_REVIEW", "high")
-    monkeypatch.setenv("OUROBOROS_EFFORT_SCOPE_REVIEW", "low")
     assert commit_review_contract_fingerprint() == first
 
-    payload["scope"][0]["route"]["target_id"] = "agy=gemini-3.1-pro-xhigh-fast"
-    monkeypatch.setenv(REVIEWER_SLOTS_ENV, json.dumps(payload))
+    set_review_pool(monkeypatch, pool("agy=gemini-3.1-pro-xhigh-fast"))
     assert commit_review_contract_fingerprint() != first

@@ -113,7 +113,6 @@ def test_two_part_brief_reads_the_subject_under_the_installed_body_governance(tm
         return "brief", {"sha": {"brief": "b1"}}
 
     monkeypatch.setattr(slot_cfg, "commit_triad_delivery", _plan)
-    monkeypatch.setattr(admission, "fold_coupling_only_seats", admission.seat_vectors)
     monkeypatch.setattr(admission, "retrieving_brief_for_seat", fake_brief)
     ctx = ToolContext(repo_dir=subject, system_repo_dir=governance, workspace_root=subject,
                       workspace_mode="external", drive_root=tmp_path / "data")
@@ -421,116 +420,6 @@ def test_coupling_history_keeps_all_rounds_and_structured_ids():
     assert "Round 1" in out and "Round 4" in out
     assert "⚠️ OMISSION NOTE" not in out
     assert "obligation=obl-001" in out
-
-
-def test_coupling_review_effort_configurable():
-    """OUROBOROS_EFFORT_SCOPE_REVIEW resolves via resolve_effort for the
-    coupling-only seats folded from the old scope rows."""
-    from ouroboros.config import resolve_effort
-    import os
-
-    old = os.environ.get("OUROBOROS_EFFORT_SCOPE_REVIEW")
-    try:
-        os.environ["OUROBOROS_EFFORT_SCOPE_REVIEW"] = "low"
-        assert resolve_effort("scope_review") == "low"
-        assert resolve_effort("scope-review") == "low"
-    finally:
-        if old is None:
-            os.environ.pop("OUROBOROS_EFFORT_SCOPE_REVIEW", None)
-        else:
-            os.environ["OUROBOROS_EFFORT_SCOPE_REVIEW"] = old
-
-
-# ---------------------------------------------------------------------------
-# Coupling-only seat identity: one owner, one id per configured row
-# ---------------------------------------------------------------------------
-
-
-def _run_coupling_fanout(monkeypatch, tmp_path, models):
-    """Fold the configured coupling-only rows (``models``) into an otherwise empty
-    wave, dispatch it through the real seat loop with the substrate patched, and
-    collect every id surface: the ids the substrate physically ran the rows under
-    (sorted — the rows run concurrently), the ids on the actor records, and the
-    ids the plan itself carries."""
-    import asyncio
-
-    from ouroboros import config, review_substrate
-    from ouroboros import reviewer_slot_config as slot_cfg
-    from ouroboros.tools import review_admission as admission
-    from ouroboros.tools.review_multi_model import _multi_model_review_async
-
-    substrate_ids: list = []
-    lock = threading.Lock()
-
-    def fake_run_review_request(request, *, slots, drive_root, llm, usage_ctx=None):
-        with lock:
-            substrate_ids.extend(slot.slot_id for slot in slots)
-        return SimpleNamespace(actors=[{
-            "slot_id": slots[0].slot_id, "model": slots[0].model, "status": "ok",
-            "raw_text": json.dumps({"coupling": _matrix()}), "usage": {}, "prompt_ref": {}, "response_ref": {},
-        }])
-
-    monkeypatch.setattr(slot_cfg, "structured_scope_review_slots", lambda: None)
-    monkeypatch.setattr(config, "get_scope_review_models", lambda: list(models))
-    monkeypatch.setattr(review_substrate, "run_review_request", fake_run_review_request)
-
-    plan = admission.fold_coupling_only_seats(_plan(()))
-    assert plan["parts"] == [("coupling",)] * len(models)
-    ctx = SimpleNamespace(repo_dir=str(tmp_path), drive_root=str(tmp_path), task_id="coupling-slot-identity",
-                          pending_events=[], _review_history=[], _review_advisory=[])
-    result = asyncio.run(_multi_model_review_async(
-        "staged diff", "", list(plan["models"]), ctx, routes=list(plan["routes"]), row_plan=plan))
-    parsed = parse_seat_answers(result, dict(zip(plan["slot_ids"], plan["parts"])))
-    actor_ids = [str(record.to_dict().get("slot_id") or "") for record in parsed.actor_records]
-    return sorted(substrate_ids), actor_ids, [str(s) for s in plan["slot_ids"]]
-
-
-def test_coupling_rows_sharing_a_model_keep_distinct_identities(tmp_path, monkeypatch):
-    """Duplicate model ids are valid independent seats (review_substrate contract,
-    and get_scope_review_models preserves them on purpose)."""
-    substrate_ids, actor_ids, plan_ids = _run_coupling_fanout(monkeypatch, tmp_path, ["model/a", "model/a"])
-    assert len(set(substrate_ids)) == 2, substrate_ids
-    assert len(set(actor_ids)) == 2, actor_ids
-    assert len(set(plan_ids)) == 2, plan_ids
-
-
-def test_coupling_rows_whose_models_sanitize_alike_keep_distinct_identities(tmp_path, monkeypatch):
-    """Two DIFFERENT models can normalize to the same token (``openai::gpt-5`` and
-    ``openai/gpt/5`` both sanitize to ``openai_gpt_5``)."""
-    substrate_ids, actor_ids, plan_ids = _run_coupling_fanout(monkeypatch, tmp_path, ["openai::gpt-5", "openai/gpt/5"])
-    assert len(set(substrate_ids)) == 2 and len(set(actor_ids)) == 2 and len(set(plan_ids)) == 2
-
-
-def test_coupling_row_identity_survives_editing_that_row_model(tmp_path, monkeypatch):
-    """Editing a row's model in the settings UI must not re-identify the seat:
-    its receipts have to keep lining up with its own history."""
-    before = _run_coupling_fanout(monkeypatch, tmp_path, ["model/a", "model/b"])
-    after = _run_coupling_fanout(monkeypatch, tmp_path, ["model/a", "model/EDITED"])
-    assert before == after, (before, after)
-
-
-def test_coupling_actor_records_and_substrate_agree_on_one_identity(tmp_path, monkeypatch):
-    """The durable actor record, the plan and the substrate call that produced the
-    prompt/response refs must name the SAME seat. Pinned spelling: durable records
-    written before v6.87.21 already carry these ids, so historical receipts line up
-    with new ones without a translation table."""
-    substrate_ids, actor_ids, plan_ids = _run_coupling_fanout(monkeypatch, tmp_path, ["model/a", "model/b"])
-    assert sorted(substrate_ids) == sorted(actor_ids) == sorted(plan_ids), (substrate_ids, actor_ids, plan_ids)
-    assert actor_ids == ["scope_slot_1", "scope_slot_2"], actor_ids
-
-
-def test_coupling_row_ids_come_from_the_one_mint(tmp_path, monkeypatch):
-    """Every surface must READ the row's id from the one mint, never re-derive an
-    identical string: repointing the mint moves every surface together."""
-    from ouroboros import review_substrate
-
-    monkeypatch.setattr(
-        review_substrate, "slot_id_for_row",
-        lambda index, *, prefix=review_substrate.SLOT_ID_PREFIX: f"{prefix}_row{int(index)}",
-    )
-    substrate_ids, actor_ids, plan_ids = _run_coupling_fanout(monkeypatch, tmp_path, ["model/a", "model/b"])
-    expected = ["scope_slot_row1", "scope_slot_row2"]
-    assert substrate_ids == expected and actor_ids == expected and plan_ids == expected
 
 
 # ---------------------------------------------------------------------------

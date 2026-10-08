@@ -212,13 +212,9 @@ def test_retired_route_envs_are_ignored(monkeypatch):
     per-row route spellings changes NOTHING — rows built from a plain model
     list stay api_chat."""
     from ouroboros.review_execution import ReviewRouteKind
-    from ouroboros.review_substrate import scope_reviewer_slots
     from ouroboros.reviewer_slot_config import reviewer_slots
 
     monkeypatch.delenv("OUROBOROS_REVIEWER_SLOTS", raising=False)
     monkeypatch.setenv("OUROBOROS_REVIEW_ROUTES", "agent_session,agent_session,agent_session")
-    monkeypatch.setenv("OUROBOROS_SCOPE_REVIEW_ROUTES", "agent_session,agent_session")
-    assert all(row.route is ReviewRouteKind.API_CHAT
-               for row in scope_reviewer_slots(["m1", "m2"]))
     assert all(row.route is ReviewRouteKind.API_CHAT
                for row in reviewer_slots(["m1", "m2", "m3"], role_hint="commit review"))

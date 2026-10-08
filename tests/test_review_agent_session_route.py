@@ -23,7 +23,6 @@ from ouroboros.review_substrate import (
     ReviewSlot,
     reviewer_slots,
     run_review_request,
-    scope_reviewer_slots,
 )
 from ouroboros.triad_review import empty_array_is_verified_clean
 
@@ -560,27 +559,9 @@ def test_retired_route_envs_are_ignored(monkeypatch):
     structured-SSOT fact (``OUROBOROS_REVIEWER_SLOTS`` rows) only.
     """
     monkeypatch.setenv("OUROBOROS_REVIEW_ROUTES", "agent_session,agent_session")
-    monkeypatch.setenv("OUROBOROS_SCOPE_REVIEW_ROUTES", "agent_session")
-    rows = scope_reviewer_slots(["m1", "m2"])
+    rows = reviewer_slots(["m1", "m2"], role_hint="commit review")
     assert all(row.route is ReviewRouteKind.API_CHAT for row in rows)
-    assert rows[0].slot_id == "scope_slot_1" and rows[1].slot_id == "scope_slot_2"
-    assert all(row.route is ReviewRouteKind.API_CHAT
-               for row in reviewer_slots(["m1", "m2"], role_hint="commit review"))
-
-
-def test_scope_rows_default_to_the_configured_scope_review_effort(monkeypatch):
-    """Regression (v6.89.0): with no structured reviewer slots, the legacy path took
-    this function's old literal default ("medium") instead of the owner's configured
-    OUROBOROS_EFFORT_SCOPE_REVIEW — the BLOCKING constitutional scope reviewer
-    silently ran below its configured reasoning strength on every stock install."""
-    monkeypatch.delenv("OUROBOROS_REVIEWER_SLOTS", raising=False)
-    monkeypatch.setenv("OUROBOROS_SCOPE_REVIEW_MODELS", "some/model")
-    monkeypatch.delenv("OUROBOROS_EFFORT_SCOPE_REVIEW", raising=False)
-    assert [row.effort for row in scope_reviewer_slots()] == ["high"]  # config default
-    monkeypatch.setenv("OUROBOROS_EFFORT_SCOPE_REVIEW", "xhigh")
-    assert [row.effort for row in scope_reviewer_slots()] == ["xhigh"]
-    # An explicit effort still wins for callers that rebuild one positional row.
-    assert [row.effort for row in scope_reviewer_slots(["m"], effort="low")] == ["low"]
+    assert rows[0].slot_id == "slot_1" and rows[1].slot_id == "slot_2"
 
 
 def _persisted_response_payloads(drive_root):

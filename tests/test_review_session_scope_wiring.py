@@ -80,24 +80,19 @@ def _dispatch_plan(ctx, plan, *, session_task="BRIEF", session_root=""):
     return result, parsed
 
 
-def test_mixed_coupling_only_fanout_sends_each_row_over_its_own_route(tmp_path, monkeypatch):
-    """A MIXED configuration of the old scope rows joins the one wave as
-    coupling-only seats, each delivered over the route it was configured with
-    (structured SSOT; ABI-10: the phase-5 route envs are retired). Both rows
-    retrieve: both carry the brief and neither receives an assembled pack."""
+def test_mixed_retrieving_pool_sends_each_row_over_its_own_route(tmp_path, monkeypatch):
+    """A MIXED pool of retrieving rows (a session and a natively reading api row)
+    joins the one wave, each delivered over the route it was configured with
+    (the catalog is the SSOT; ABI-10: the phase-5 route envs are retired). Both
+    retrieve: both carry the brief, are asked both parts, and neither receives an
+    assembled pack."""
+    from ouroboros.reviewer_slot_config import commit_triad_delivery
     from ouroboros.tools import review_admission as admission
+    from tests.review_pool_rosters import pool_roster, pool_seat, set_review_pool
 
-    monkeypatch.setenv("OUROBOROS_REVIEWER_SLOTS", json.dumps({
-        "triad": [
-            {"slot_id": "t_api", "route": {"kind": "api_chat", "target_id": "m/api"}},
-        ],
-        "scope": [
-            {"slot_id": "scope_slot_1",
-             "route": {"kind": "agent_session", "target_id": "m/session"}},
-            {"slot_id": "scope_slot_2",
-             "route": {"kind": "api_chat", "target_id": "m/api"}},
-        ],
-    }))
+    set_review_pool(monkeypatch, pool_roster(
+        pool_seat("pool_slot_1", "fake-review=fake-small", kind="agent_session"),
+        pool_seat("pool_slot_2", "m/api", delivery="native")))
     dispatched: list = []
 
     def _capture(request, *, slots, drive_root, llm, usage_ctx=None):
@@ -106,19 +101,18 @@ def test_mixed_coupling_only_fanout_sends_each_row_over_its_own_route(tmp_path, 
                            bool(request.session_task), bool(request.messages)))
         return SimpleNamespace(actors=[{
             "slot_id": slot.slot_id, "model": slot.model, "status": "ok",
-            "raw_text": json.dumps({"coupling": _coupling_matrix_rows()}),
-            "usage": {}, "prompt_ref": {}, "response_ref": {},
+            "raw_text": json.dumps(_two_part_answer()), "usage": {}, "prompt_ref": {}, "response_ref": {},
         }])
 
     monkeypatch.setattr("ouroboros.review_substrate.run_review_request", _capture)
 
-    plan = admission.fold_coupling_only_seats(_empty_plan())
-    assert plan["parts"] == [("coupling",), ("coupling",)]
+    plan = admission.seat_vectors(commit_triad_delivery())
+    assert plan["parts"] == [("change", "coupling"), ("change", "coupling")]
     _result, parsed = _dispatch_plan(_wave_ctx(tmp_path), plan)
 
     assert sorted(dispatched) == [
-        ("scope_slot_1", "m/session", "agent_session", True, False),
-        ("scope_slot_2", "m/api", "api_chat", True, False),
+        ("pool_slot_1", "fake-review=fake-small", "agent_session", True, False),
+        ("pool_slot_2", "m/api", "api_chat", True, False),
     ], dispatched
     assert [r.status for r in parsed.actor_records] == ["responded", "responded"]
     assert all(r.answers["coupling"]["verdict"] == "PASS" for r in parsed.actor_records)

@@ -504,7 +504,6 @@ def test_brief_assembly_failure_blocks_the_whole_wave_before_dispatch(tmp_path, 
     plan.update(subagent_ids=["", "critic"], retrieves=[False, True])
     plan["routes"] = [ReviewRouteKind.API_CHAT, ReviewRouteKind.API_CHAT]
     monkeypatch.setattr(slot_cfg, "commit_triad_delivery", lambda: plan)
-    monkeypatch.setattr(admission, "fold_coupling_only_seats", admission.seat_vectors)
 
     def _boom(**_kwargs):
         raise RuntimeError("the coupling checklist could not be loaded")
@@ -531,12 +530,15 @@ def test_healthy_assembly_dispatches_the_one_wave(tmp_path, monkeypatch):
     """The REAL assembly runs over the plain-repo fixture; only the LLM
     dispatch seam is patched — the dispatched packet must carry the ACTUAL
     staged hunk, proving assembly assembled the real evidence (m3a), and the
-    one seat list carries every seat's ``parts`` — the coupling-only seat folded
-    from the scope rows beside the packet seats."""
+    one seat list carries every seat's ``parts`` — the retrieving seats asked the
+    coupling question beside the packet seats."""
     from ouroboros.review_ledger import CouplingOutcome
     from ouroboros.tools import parallel_review as pr
     from ouroboros.tools import review as review_mod
+    from tests.review_pool_rosters import mixed_pool_rows, pool_roster, set_review_pool
 
+    # A mixed pool: the retrieving seats carry the coupling question of the one wave.
+    set_review_pool(monkeypatch, pool_roster(*mixed_pool_rows()))
     repo = _plain_repo(tmp_path)
     ctx = _admission_ctx(repo)
     ctx._review_iteration_count = 0
@@ -567,7 +569,7 @@ def test_healthy_assembly_dispatches_the_one_wave(tmp_path, monkeypatch):
     assert calls == {"wave": 1}
     assert coupling is not None and coupling.status == "responded"
     structured = ctx._last_review_structured
-    assert [r["parts"] for r in structured["rows"]].count(["coupling"]) >= 1
+    assert [r["parts"] for r in structured["rows"]] == [["change", "coupling"], ["change", "coupling"], ["change"]]
     assert structured["brief_texts"] and all(
         r["brief_sha"] in structured["brief_texts"] for r in structured["rows"] if "coupling" in r["parts"])
 
@@ -584,7 +586,6 @@ def _triad_real_fit_env(tmp_path, monkeypatch, row_plan):
     at every rung and terminates in the ladder's own block message. No error
     string is injected anywhere."""
     from ouroboros.tools import review as review_mod
-    from ouroboros.tools import review_admission as admission
     import ouroboros.reviewer_slot_config as slot_cfg
 
     repo, ctx, _tx = _managed_resolution_repo(tmp_path, monkeypatch)
@@ -595,7 +596,6 @@ def _triad_real_fit_env(tmp_path, monkeypatch, row_plan):
     monkeypatch.setattr(slot_cfg, "commit_triad_delivery", lambda: row_plan)
     # The configured panel alone: the transitional fold of the old scope rows
     # is pinned by test_healthy_assembly_dispatches_the_one_wave.
-    monkeypatch.setattr(admission, "fold_coupling_only_seats", admission.seat_vectors)
     monkeypatch.setattr(
         review_mod, "calibrated_input_token_limit", lambda *a, **k: 50
     )

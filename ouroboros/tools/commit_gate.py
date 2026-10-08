@@ -216,12 +216,12 @@ def commit_review_contract_fingerprint() -> str:
     try:
         from ouroboros.config import get_review_enforcement
         from ouroboros.reviewer_slot_config import commit_triad_delivery
-        from ouroboros.tools.review_admission import fold_coupling_only_seats
+        from ouroboros.tools.review_admission import seat_vectors
         from ouroboros.tools.review_helpers import CRITICAL_FINDING_CALIBRATION, REVIEW_PREAMBLE
         from ouroboros.tools.scope_required_sources import SCOPE_REQUIRED_SOURCES_POLICY
         from ouroboros.triad_review import REVIEW_JSON_ARRAY_CONTRACT, REVIEW_TWO_PART_OBJECT_CONTRACT
 
-        row_plan = fold_coupling_only_seats(commit_triad_delivery())
+        row_plan = seat_vectors(commit_triad_delivery())
         rows = [
             [
                 str(model),

@@ -315,7 +315,6 @@ def test_the_required_source_manifest_reaches_both_retrieving_deliveries(
     assembly (``_prepare_unified_review``) builds them per seat; its dispatch
     hands them to the substrate as the seat's policy."""
     from ouroboros.tools import review as review_mod
-    from ouroboros.tools import review_admission as admission
     from ouroboros.tools.registry import ToolContext
     from ouroboros.tools.scope_required_sources import SCOPE_REQUIRED_SOURCES_POLICY
     import ouroboros.reviewer_slot_config as slot_cfg
@@ -336,7 +335,6 @@ def test_the_required_source_manifest_reaches_both_retrieving_deliveries(
 
     monkeypatch.setattr("ouroboros.review_substrate.run_review_request", _capture)
     monkeypatch.setattr(slot_cfg, "commit_triad_delivery", lambda: _one_retrieving_seat(delivery))
-    monkeypatch.setattr(admission, "fold_coupling_only_seats", admission.seat_vectors)
     (tmp_path / "data").mkdir(exist_ok=True)
     ctx = ToolContext(repo_dir=repo, drive_root=tmp_path / "data")
     ctx.task_id = "required-sources"
@@ -497,7 +495,6 @@ def test_the_review_contract_fingerprint_binds_the_parts_and_the_contracts(monke
     are all hashed into the commit gate's contract identity."""
     import ouroboros.reviewer_slot_config as slot_cfg
     from ouroboros.review_records import ReviewRouteKind
-    from ouroboros.tools import review_admission as admission
     from ouroboros.tools.commit_gate import commit_review_contract_fingerprint
 
     def _plan(parts):
@@ -505,7 +502,6 @@ def test_the_review_contract_fingerprint_binds_the_parts_and_the_contracts(monke
                 "session_profiles": [""], "subagent_ids": [""], "use_local": [None], "slot_ids": ["slot_1"],
                 "retrieves": [True], "parts": [parts]}
 
-    monkeypatch.setattr(admission, "fold_coupling_only_seats", lambda plan: plan)
     monkeypatch.setattr(slot_cfg, "commit_triad_delivery", lambda: _plan(("change", "coupling")))
     baseline = commit_review_contract_fingerprint()
     assert baseline

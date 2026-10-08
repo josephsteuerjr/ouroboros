@@ -231,10 +231,9 @@ def test_the_managed_update_floor_prices_the_whole_wave(monkeypatch):
     import ouroboros.usage_admission as admission_mod
     from ouroboros.tools.review_admission import managed_update_wave_floor
 
-    rows = [SimpleNamespace(target_id="api/a", is_session=False), SimpleNamespace(target_id="api/b", is_session=False),
-            SimpleNamespace(target_id="harness=c", is_session=True)]
-    monkeypatch.setattr(slot_cfg, "commit_triad_rows", lambda: rows[:2])
-    monkeypatch.setattr(slot_cfg, "commit_scope_rows", lambda: rows[2:])
+    rows = [SimpleNamespace(model="api/a", is_session=False), SimpleNamespace(model="api/b", is_session=False),
+            SimpleNamespace(model="harness=c", is_session=True)]
+    monkeypatch.setattr(slot_cfg, "review_pool_slots", lambda **_kw: rows)
     seen = {}
 
     def _estimate(_root=None, **kwargs):

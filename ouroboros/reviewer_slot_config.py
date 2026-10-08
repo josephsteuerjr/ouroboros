@@ -914,11 +914,6 @@ def commit_triad_rows() -> List[ConfiguredReviewerSlot]:
     return list(load_reviewer_slot_config().triad)
 
 
-# removed by package B (the scope lane).
-def commit_scope_rows() -> List[ConfiguredReviewerSlot]:
-    return list(load_reviewer_slot_config().scope)
-
-
 # removed by package A after package C freezes the lane readers (package D
 # moves the preflight to ``review_change(surface=preflight, reviewers=[one])``).
 def advisory_slot_config() -> AdvisorySlotConfig:
@@ -947,21 +942,6 @@ def synthesized_deep_review_slot(*, authored_panel: bool = False) -> ConfiguredR
         target_id=get_deep_self_review_model(authored_panel=authored_panel),
         processing_preference=_row_processing(role="deep_review"),
     )
-
-
-# removed by package B (the scope lane).
-def structured_scope_review_slots() -> Optional[list]:
-    """The scope ReviewSlots from the structured SSOT (or a composed panel), or None on legacy.
-
-    Lives here (not in the substrate) purely for module-size altitude: the
-    substrate stays the owner of ReviewSlot semantics and calls this first.
-    """
-    if _COMPOSED_PANEL.get() is None and not structured_reviewer_slots_present():
-        return None
-    return [
-        _delivery_slot(row, effort_surface="scope_review", role_hint=SCOPE_ROLE_HINT)
-        for row in commit_scope_rows()
-    ]
 
 
 def _delivery_slot(
@@ -1571,7 +1551,6 @@ __all__ = [
     "AdvisorySlotConfig",
     "ReviewerSlotConfig",
     "advisory_slot_config",
-    "commit_scope_rows",
     "commit_triad_rows",
     "deep_review_slot",
     "synthesized_deep_review_slot",
@@ -1582,6 +1561,5 @@ __all__ = [
     "acceptance_delivery_disclosure",
     "reviewer_slot_save_check",
     "structured_reviewer_slots_present",
-    "structured_scope_review_slots",
     "structured_reviewer_slots_raw",
 ]

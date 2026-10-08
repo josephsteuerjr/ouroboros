@@ -67,7 +67,6 @@ def brief_env(tmp_path, monkeypatch):
     ctx._review_history, ctx._review_advisory, ctx._scope_review_history = [], [], {}
     monkeypatch.setenv("OUROBOROS_REVIEW_ENFORCEMENT", "blocking")
     monkeypatch.setattr(brief_mod, "first_send_bound", lambda _brief: 900_000)
-    monkeypatch.setattr(admission, "fold_coupling_only_seats", admission.seat_vectors)
     monkeypatch.setattr(slot_cfg, "commit_triad_delivery", lambda: _plan("api_chat"))
     dispatch = Mock(side_effect=AssertionError("preparation must not dispatch a reviewer"))
     monkeypatch.setattr(review_mod, "_handle_multi_model_review", dispatch)

@@ -437,25 +437,6 @@ def test_projection_malformed_leaves_legacy_keys_and_floors(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_scope_slots_from_structured_config(monkeypatch):
-    payload = json.loads(json.dumps(_STRUCTURED))
-    payload["scope"] = [
-        {"slot_id": "s_owner", "route": {"kind": "agent_session", "target_id": "codex=gpt-5.6-sol"},
-         "effort": "max"},
-    ]
-    _set_structured(monkeypatch, payload)
-    from ouroboros.review_execution import ReviewRouteKind
-    from ouroboros.review_substrate import scope_reviewer_slots
-
-    slots = scope_reviewer_slots()
-    assert len(slots) == 1
-    slot = slots[0]
-    assert slot.slot_id == "s_owner"
-    assert slot.route is ReviewRouteKind.AGENT_SESSION
-    assert slot.session_target == "codex=gpt-5.6-sol"
-    assert slot.effort == "max"
-
-
 def test_session_executor_prefers_the_slots_own_target(monkeypatch):
     from ouroboros.review_execution import (
         ReviewRouteKind,
