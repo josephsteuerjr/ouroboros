@@ -1,7 +1,6 @@
 """Registered catalogue -> ordinary result cap -> captured SDK request, no network."""
 import copy
 import json
-from types import SimpleNamespace
 
 import httpx
 import openai
@@ -12,7 +11,6 @@ from ouroboros.llm import LLMClient
 from ouroboros.loop_tool_execution import process_tool_results
 from ouroboros.skill_loader import summarize_skills
 from ouroboros.tool_capabilities import tool_result_limit
-from ouroboros.tools.core import _read_file
 from ouroboros.tools.registry import ToolContext, ToolRegistry
 
 
@@ -276,6 +274,10 @@ def test_oversized_source_survives_forked_execution_store_retirement(registry, t
     registry._ctx.task_metadata = {"budget_drive_root": str(canonical)}
     page = _consumer(registry, {"name": "tail", "detail": True})
     ref = page["skills"][0]["source_ref"]
+    # The current fork can read its execution mirror before retirement too.
+    mirror = registry.execute(ref["read"]["tool"],
+        {**ref["read"]["arguments"], "start_char": 22000})
+    assert "CANONICAL_INSTRUCTIONS_END" in mirror
     # The JSON ref is producer data, not a trusted observability closure carrier.
     # Retire the execution store without pretending generic copyback adopts it.
     artifact_dir = registry._ctx.drive_root / "task_results" / "artifacts" / "catalogue-consumer"

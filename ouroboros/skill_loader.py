@@ -1522,8 +1522,8 @@ def summarize_skills(drive_root: pathlib.Path) -> Dict[str, Any]:
             "name": s.name,
             "description": s.manifest.description,
             "when_to_use": s.manifest.when_to_use,
-            # CPL-7: optional Model Experience prose travels to every
-            # model-visible skill surface (list_skills JSON, context section).
+            # CPL-7: retain Model Experience for named list_skills detail
+            # and the installed-skills context; compact selection omits it.
             "model_experience": s.manifest.model_experience,
             "type": s.manifest.type,
             "version": s.manifest.version,
