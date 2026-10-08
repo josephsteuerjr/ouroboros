@@ -739,7 +739,7 @@ def review_pool_rows(items: list, slots: list, handles: Dict[str, str],
             "processing_preference": str(item.get("processing_preference") or ""),
             "access": str(item.get("access") or ("full" if session else "")),
             "enabled": item.get("enabled") is not False, "review_eligible": True,
-            "minted_from": str(item.get("minted_from") or ""), "coupling_focus": item.get("coupling_focus") is True,
+            "minted_from": str(item.get("minted_from") or ""),
             "cost": costs.get(row_id) or {"usd_per_review": None, "basis": "unknown"}, "last_execution": last_executions.get(row_id),
         })
     pooled = {row["subagent_id"] for row in pool}

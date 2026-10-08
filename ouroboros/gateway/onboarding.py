@@ -718,7 +718,7 @@ def review_rows_on_main(catalog: Mapping[str, Any], settings: Mapping[str, Any])
         old = item.get("route") or {}
         effort = item.get("effort") or (compound_session_effort(RouteSpec(ROUTE_KIND_AGENT_SESSION, str(old.get("target_id") or "")))
                                         if old.get("kind") == ROUTE_KIND_AGENT_SESSION else "")
-        kept = ("subagent_id", "recommended_use", "enabled", "review_eligible", "minted_from", "coupling_focus")
+        kept = ("subagent_id", "recommended_use", "enabled", "review_eligible", "minted_from")
         return {**{key: item[key] for key in kept if key in item},
                 "route": {"kind": "api_model", "target_id": main, **({"credential_profile_id": profile} if profile else {})},
                 **({"effort": effort} if effort else {}), **({"processing_preference": processing} if processing else {})}

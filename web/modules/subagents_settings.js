@@ -31,7 +31,7 @@ const MINTED_FROM = { review_lane: 'From a former review lane', factory_default:
 const SETTING_KEYS = new Set(['enabled', 'items']);
 const ROW_KEYS = new Set([
     'subagent_id', 'name', 'recommended_use', 'route', 'effort', 'processing_preference', 'access', 'enabled',
-    'review_eligible', 'delivery', 'minted_from', 'coupling_focus',
+    'review_eligible', 'delivery', 'minted_from',
 ]);
 const ROUTE_KEYS = new Set(['kind', 'target_id', 'credential_profile_id']);
 
@@ -67,7 +67,6 @@ function canonicalRow(row) {
         ...(marked ? { review_eligible: true } : {}),
         ...(route.kind === ROUTE_KIND_API_MODEL && row?.delivery === 'packet' ? { delivery: 'packet' } : {}),
         ...(row?.minted_from ? { minted_from: String(row.minted_from) } : {}),
-        ...(marked && row?.coupling_focus === true ? { coupling_focus: true } : {}),
     };
 }
 
@@ -118,8 +117,6 @@ function rowParseError(row, index) {
     if (row.delivery !== undefined && !['native', 'packet'].includes(row.delivery)) return `${at} delivery must be native or packet`;
     if (row.delivery !== undefined && routeKind !== ROUTE_KIND_API_MODEL) return `${at} delivery requires an API model`;
     if (row.minted_from !== undefined && !Object.prototype.hasOwnProperty.call(MINTED_FROM, row.minted_from)) return `${at} has an unknown origin`;
-    if (row.coupling_focus !== undefined && typeof row.coupling_focus !== 'boolean') return `${at} coupling focus must be true or false`;
-    if (row.coupling_focus === true && row.review_eligible !== true) return `${at} coupling focus requires Reviewer`;
     return '';
 }
 

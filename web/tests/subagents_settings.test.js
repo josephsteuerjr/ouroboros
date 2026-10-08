@@ -1269,17 +1269,16 @@ test('duplicate carries the row switch and the two enabled axes stay independent
 // ---------------------------------------------------------------------------
 
 test('review fields parse strictly and only their non-default values are written', () => {
-    const marked = apiRow({ review_eligible: true, delivery: 'packet', minted_from: 'review_lane', coupling_focus: true });
+    const marked = apiRow({ review_eligible: true, delivery: 'packet', minted_from: 'review_lane' });
     assert.deepEqual(parseAvailableSubagentsSetting(setting([marked])).setting, setting([marked]));
-    const defaults = parseAvailableSubagentsSetting(setting([apiRow({ review_eligible: false, delivery: 'native', coupling_focus: false })]));
+    const defaults = parseAvailableSubagentsSetting(setting([apiRow({ review_eligible: false, delivery: 'native' })]));
     assert.deepEqual(defaults.setting, setting([apiRow()]), 'an untouched row keeps its exact bytes');
     for (const [row, error] of [
         [apiRow({ review_eligible: 'yes' }), /^row 1 reviewer mark must be true or false$/],
         [apiRow({ review_eligible: true, delivery: 'tools' }), /^row 1 delivery must be native or packet$/],
         [sessionRow({ review_eligible: true, delivery: 'packet' }), /^row 1 delivery requires an API model$/],
         [apiRow({ minted_from: 'elsewhere' }), /^row 1 has an unknown origin$/],
-        [apiRow({ coupling_focus: true }), /^row 1 coupling focus requires Reviewer$/],
-        [apiRow({ review_eligible: true, coupling_focus: 'yes' }), /^row 1 coupling focus must be true or false$/],
+        [apiRow({ review_eligible: true, coupling_focus: true }), /^row 1 has unknown field: coupling_focus$/],
     ]) {
         const parsed = parseAvailableSubagentsSetting(setting([row]));
         assert.equal(parsed.setting, null);
