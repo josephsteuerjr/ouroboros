@@ -82,10 +82,12 @@ Add the field to the active frozen owner — `ouroboros/contracts/` for the pack
     before the purge) reads a stored document ONCE per read with frozen copies of the lane readers and marks or
     mints reviewer rows of `OUROBOROS_SUBAGENTS` (`review_eligible: true`; effort and delivery as row properties;
     no seat loses its effort) — nothing partial: an unreadable lane leaves the document untouched with the error
-    disclosed. The first boot with an owner chat posts one message naming the rows that run, and writes the
-    snapshot `state/review_migrations/<ts>-slots-to-pool.json` and `state.json:review_pool_migrations`
-    (`server_maintenance._startup_review_pool_notice`). Who reviews is thereafter one list: the Reviewer-marked
-    catalog rows (`GET /api/review-pool`).
+    disclosed. The process that first SAVES the migrated document writes the snapshot
+    `state/review_migrations/<ts>-slots-to-pool.json` and the `state.json:review_pool_migrations` record before
+    its write (`review_pool_receipts.persist_receipts`, from the persistence prologue and the Colab writer; the
+    boot writes them when it read the document first), and the first boot with an owner chat posts one message
+    per unreported record, from the durable snapshot (`server_maintenance._startup_review_pool_notice`). Who
+    reviews is thereafter one list: the Reviewer-marked catalog rows (`GET /api/review-pool`).
   - *Plugin ABI.* `PLUGIN_API_VERSION` is `"2.0"` with manifest negotiation checked before plugin import or
     out-of-process cataloging; an absent field means legacy `1.3` by construction, and a hash-bound PASS is
     grandfathered.

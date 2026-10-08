@@ -1301,3 +1301,95 @@ def test_a_noop_outcome_leaves_no_receipt(boot):
     server_maintenance._startup_review_pool_notice(loaded)
     assert _snapshots(root) == [] and sent == []
     assert server_maintenance.review_pool_migration_records() == {}
+
+
+# --- 7. the receipts belong to the SAVING process, not to the boot's memory (VD3-01) -----
+
+
+def _other_root(tmp_path, name):
+    """A second data root with its own supervisor state (the Drive root of a Colab install)."""
+    root = tmp_path / name
+    for sub in ("state", "locks"):
+        (root / sub).mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def test_a_document_migrated_and_saved_by_another_process_still_gets_its_receipts_at_boot(boot, monkeypatch):
+    """VD3-01: the Colab kernel reads the N-1 Drive document (the lanes become the pool in ITS
+    process) and writes the Drive document back — the pre-image is gone before any server ran.
+    The kernel's writer gives the migration its snapshot under the Drive root (its supervisor
+    state is not bound there, so no state record); the server that later boots on that root
+    computes NO migration (the document is a pool now), yet reconciles the record from the
+    snapshot and tells the owner ONCE — and a second boot stays quiet."""
+    from ouroboros.colab_bootstrap import build_colab_settings, write_colab_settings
+
+    root, sent = boot  # the kernel's own process state is bound to ``root``, not to the Drive root
+    drive = _other_root(root, "drive")
+    kernel_view = build_colab_settings({"OPENROUTER_API_KEY": "present"}, existing=dict(N1_DOC))
+    assert [o.trigger for o in cfg.review_pool_migrations_seen()] == [m.TRIGGER_LANES_KEY]
+    write_colab_settings(drive, kernel_view)
+    (snapshot_file,) = _snapshots(drive)
+    assert _snapshots(root) == [] and server_maintenance.review_pool_migration_records() == {}
+    snapshot = json.loads(snapshot_file.read_text(encoding="utf-8"))
+    assert snapshot["input_sha256"] == m.input_sha256(N1_DOC) and snapshot["before"][SLOTS] == ""
+    assert SLOTS not in json.loads((drive / "settings.json").read_text(encoding="utf-8"))
+
+    # The server: a fresh process on the Drive root.
+    m._MIGRATIONS_SEEN.clear()
+    state.init(drive)
+    state.save_state({"owner_chat_id": 7})
+    monkeypatch.setattr(server_maintenance, "DATA_DIR", drive)
+    served = cfg.normalize_settings_raw(json.loads((drive / "settings.json").read_text(encoding="utf-8")))
+    assert cfg.review_pool_migrations_seen() == ()
+    server_maintenance._startup_review_pool_notice(served)
+    server_maintenance._startup_review_pool_notice(served)
+
+    assert _snapshots(drive) == [snapshot_file]
+    (record,) = server_maintenance.review_pool_migration_records().values()
+    assert record["snapshot"] == f"state/review_migrations/{snapshot_file.name}" and record["ts"] == snapshot["ts"]
+    assert (record["trigger"], record["outcome"], record["error"]) == (m.TRIGGER_LANES_KEY, "factory", "")
+    assert record["reported"]
+    assert len(sent) == 1 and sent[0][0] == 7
+    assert sent[0][1] == m.owner_message(m.migrate_review_lanes(dict(N1_DOC)), record["snapshot"])
+
+
+def test_the_saving_process_writes_the_receipts_before_its_write_and_the_boot_adds_nothing(boot, monkeypatch):
+    """VD3-01: the UI's owner save (or the launcher menu) persists the migrated document BEFORE
+    the supervisor generation starts. Every in-process writer passes the persistence prologue,
+    which writes the snapshot AND the state record (this process's state is bound to the root)
+    before the document write; the boot then finds the record, tells the owner once and
+    writes no second snapshot — and a save after the boot (the normal order) adds nothing."""
+    root, sent = boot
+    monkeypatch.setattr(cfg, "DATA_DIR", root)
+    monkeypatch.setattr(cfg, "SETTINGS_PATH", root / "settings.json")
+    loaded = cfg.normalize_settings_raw(anton_document())
+    assert _snapshots(root) == []
+
+    cfg.save_settings(dict(loaded))
+
+    (snapshot_file,) = _snapshots(root)
+    (record,) = server_maintenance.review_pool_migration_records().values()
+    assert record["snapshot"] == f"state/review_migrations/{snapshot_file.name}" and record["reported"] is None
+    assert (record["trigger"], record["outcome"], record["error"]) == (m.TRIGGER_LANES_KEY, "converted", "")
+    on_disk = json.loads((root / "settings.json").read_text(encoding="utf-8"))
+    assert SLOTS not in on_disk and json.loads(on_disk[SUBAGENTS]) == json.loads(loaded[SUBAGENTS])
+
+    state.update_state(lambda st: st.__setitem__("owner_chat_id", 7))
+    server_maintenance._startup_review_pool_notice(loaded)
+    cfg.save_settings(dict(loaded))
+    server_maintenance._startup_review_pool_notice(loaded)
+    assert _snapshots(root) == [snapshot_file] and len(sent) == 1
+    (record,) = server_maintenance.review_pool_migration_records().values()
+    assert record["reported"] and snapshot_file.name in sent[0][1]
+
+
+def test_a_receipt_failure_never_blocks_the_save(boot, monkeypatch):
+    from ouroboros import review_pool_receipts as receipts
+
+    root, _sent = boot
+    monkeypatch.setattr(cfg, "DATA_DIR", root)
+    monkeypatch.setattr(cfg, "SETTINGS_PATH", root / "settings.json")
+    loaded = cfg.normalize_settings_raw(anton_document())
+    monkeypatch.setattr(receipts, "read_snapshots", lambda data_dir: (_ for _ in ()).throw(OSError("disk")))
+    cfg.save_settings(dict(loaded))
+    assert (root / "settings.json").exists() and _snapshots(root) == []

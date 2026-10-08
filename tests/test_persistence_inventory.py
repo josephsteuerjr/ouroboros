@@ -698,7 +698,8 @@ def scan_data_paths(root: pathlib.Path = REPO) -> frozenset[str]:
 # was removed with the writer).
 # 346 -> 348 (review pool, PR-3): the review-lane -> review-pool migration receipt
 # ``state/review_migrations/<ts>-slots-to-pool.json`` and its directory
-# (``ouroboros/server_maintenance.py`` ``_startup_review_pool_notice``; one section-2 row).
+# (``ouroboros/review_pool_receipts.py`` ``persist_receipts``, written by the process that
+# saves the migrated document — FIX6b moved it there from the supervisor boot; one section-2 row).
 EXPECTED_SCAN_PATHS = 348
 
 # Scanned paths that must always be present — guards the scanner itself

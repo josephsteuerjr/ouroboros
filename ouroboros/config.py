@@ -494,7 +494,12 @@ def prepare_settings_for_persist(settings: dict, *, authored_keys: Sequence[str]
         allow_context_lowering: bool = False, allow_safety_lowering: bool = False) -> dict:
     """Normalize settings writes under existing ratchets. Only the actual writer
     names authored_keys; a defaults merge preserves absent disk-owned intent,
-    forwarded environment choices and install-time provenance."""
+    forwarded environment choices and install-time provenance. A review-pool migration
+    this process computed gets its durable receipts here, BEFORE the write replaces the
+    pre-image on disk (``review_pool_receipts``: the saving process, not the boot, owns them)."""
+    from ouroboros.review_pool_receipts import persist_receipts
+
+    persist_receipts(DATA_DIR)
     authored = set(authored_keys or ())
     prepared = {k: v for k, v in settings.items() if not (
         k in _DISK_AUTHORED_SETTINGS and k not in authored and not _settings_file_value(k, "")

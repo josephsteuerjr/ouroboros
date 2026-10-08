@@ -417,107 +417,81 @@ def _startup_retired_settings_notice(settings: dict) -> None:
         log.debug("retired settings owner notice failed", exc_info=True)
 
 
-REVIEW_POOL_MIGRATION_STATE_KEY = "review_pool_migrations"
+REVIEW_POOL_MIGRATION_STATE_KEY = "review_pool_migrations"  # ``review_pool_receipts.STATE_KEY``
 REVIEW_POOL_NOTICE_TYPE = "review_pool_migration_notice"
-
-
-def _review_pool_snapshot_path() -> tuple[str, pathlib.Path]:
-    """``(ts, state/review_migrations/<ts>-slots-to-pool.json)`` for a NEW record: the stamp
-    is the current UTC second, and a second migration landing in the same second waits
-    for the next one rather than overwriting a sibling record."""
-    directory = DATA_DIR / "state" / "review_migrations"
-    while True:
-        ts = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-        path = directory / f"{ts}-slots-to-pool.json"
-        if not path.exists():
-            return ts, path
-        time.sleep(0.2)
 
 
 def review_pool_migration_records(state: dict | None = None) -> dict:
     """The durable per-document migration records (``state.json:review_pool_migrations``):
-    ``input_sha256 -> {ts, snapshot, error, reported}``. Read by the settings UI to show
-    that a migration happened and where its snapshot is."""
-    if state is None:
-        from supervisor.state import load_state
+    ``input_sha256 -> {ts, snapshot, trigger, outcome, error, reported}`` — the ledger
+    ``review_pool_receipts`` keeps; this is the name the ``## Review`` block reads."""
+    from ouroboros.review_pool_receipts import migration_records
 
-        state = load_state()
-    records = (state or {}).get(REVIEW_POOL_MIGRATION_STATE_KEY)
-    return dict(records) if isinstance(records, dict) else {}
+    return migration_records(state)
+
+
+def review_pool_migration_payload(settings: dict) -> dict | None:
+    """The review-pool payload's ``migration`` fact for this data root
+    (``review_pool_receipts.migration_payload`` over the ledger plus the snapshot files no
+    record names yet): ``{snapshot, reported, trigger, outcome, error, source}`` or ``None``."""
+    from ouroboros.review_pool_receipts import migration_payload
+
+    return migration_payload(settings, DATA_DIR, review_pool_migration_records())
 
 
 def _startup_review_pool_notice(settings: dict) -> None:
-    """Record the review-lane -> review-pool migration the settings reads of this boot
-    computed, and tell the OWNER once what runs now.
+    """Tell the OWNER once about every review-lane -> review-pool migration recorded for this
+    data root, from the DURABLE receipts — never from this process's memory alone.
 
     The migration itself is pure and runs at the read seam (``config.normalize_settings_raw``
-    -> ``review_pool_migration.apply_at_read_seam``); it writes nothing. This boot step gives
-    each migrated document its durable receipts: the snapshot
-    ``state/review_migrations/<ts>-slots-to-pool.json`` (the lanes and keys as read,
-    every effective seat before, the catalog after, the row report) written ONCE per
-    document digest, and ONE English owner-chat message (``review_pool_migration.owner_message``)
-    once an owner chat is bound.     A migration that could not finish is recorded and reported
-    the same way (its snapshot carries the error; the lane keys stay in the document for the
-    owner's catalog save). A no-op outcome (the catalog was already a pool) leaves no
-    receipt: nothing changed. ``settings`` is what RUNS (the environment merged over the
-    document): when the rows the seam minted for a document without review settings of its
-    own were overridden by the catalog the environment carries
-    (``review_pool_migration.environment_overridable_keys``), the message says so and names
-    THAT pool — loudly empty when none of its rows is marked — instead of the minted rows.
+    -> ``review_pool_migration.apply_at_read_seam``) in whichever process reads an old document;
+    the process that SAVES the migrated document writes its receipts before that write
+    (``review_pool_receipts.persist_receipts`` from the persistence prologue and the Colab
+    writer): the snapshot ``state/review_migrations/<ts>-slots-to-pool.json`` and the
+    ``state.json`` record. This boot step first gives its own outcomes their receipts (the
+    normal order: the boot read the document before anything saved it), then reconciles a
+    record for every snapshot another process left without one (a Colab kernel, the launcher
+    menu, the UI before this supervisor generation), and sends ONE English owner-chat message
+    (``review_pool_migration.owner_message``) per record whose ``reported`` is still unset,
+    once an owner chat is bound. A migration that could not finish is reported the same way
+    (its snapshot carries the error; the lane keys stay in the document for the owner's catalog
+    save). A no-op outcome (the catalog was already a pool) leaves no receipt: nothing changed.
+    ``settings`` is what RUNS (the environment merged over the document): when the rows the
+    seam minted for a document without review settings of its own were overridden by the
+    catalog the environment carries (``review_pool_migration.environment_overridable_keys``),
+    the message says so and names THAT pool — loudly empty when none of its rows is marked —
+    instead of the minted rows.
     """
     try:
-        from ouroboros.config import review_pool_migrations_seen
+        from ouroboros import review_pool_receipts as receipts
         from ouroboros.review_pool_migration import owner_message
-        from ouroboros.utils import atomic_write_json
         from supervisor.message_bus import send_with_budget
         from supervisor.state import load_state, update_state
 
+        receipts.persist_receipts(DATA_DIR)
         state = load_state()
         owner_chat = int(state.get("owner_chat_id") or 0)
-        records = review_pool_migration_records(state)
-        for outcome in review_pool_migrations_seen():
-            if outcome.noop:
+        records = receipts.reconcile_records(DATA_DIR, state, update_state)
+        if not owner_chat:
+            return
+        for digest, record in sorted(records.items(), key=lambda item: str(item[1].get("ts") or "")):
+            if record.get("reported"):
                 continue
-            record = dict(records.get(outcome.input_sha256) or {})
-            if not record.get("snapshot"):
-                ts, path = _review_pool_snapshot_path()
-                path.parent.mkdir(parents=True, exist_ok=True)
-                atomic_write_json(path, {**outcome.snapshot, "ts": ts}, trailing_newline=True)
-                record.update({"ts": ts, "snapshot": str(path.relative_to(DATA_DIR)),
-                               "error": outcome.error, "reported": None})
-                _record_review_pool_migration(update_state, outcome.input_sha256, record)
-                log.info("review pool migration snapshot written: %s", record["snapshot"])
-            if record.get("reported") or not owner_chat:
+            snapshot = receipts.load_snapshot(DATA_DIR, record)
+            if snapshot is None:
+                log.warning("review pool migration snapshot missing, owner not told: %s", record.get("snapshot"))
                 continue
+            outcome = receipts.outcome_from_snapshot(snapshot)
             snapshot_path = str(record.get("snapshot") or "")
-            in_force = _environment_catalog_in_force(outcome, settings)
+            in_force = receipts.environment_catalog_in_force(outcome, settings)
             text = (_environment_pool_message(snapshot_path, in_force) if in_force is not None
                     else owner_message(outcome, snapshot_path))
             if not text:
                 continue
             send_with_budget(owner_chat, text, role="system", system_type=REVIEW_POOL_NOTICE_TYPE)
-            record["reported"] = utc_now_iso()
-            _record_review_pool_migration(update_state, outcome.input_sha256, record)
+            receipts.mark_reported(update_state, digest, record)
     except Exception:
         log.debug("review pool migration notice failed", exc_info=True)
-
-
-def _environment_catalog_in_force(outcome: Any, settings: dict) -> str | None:
-    """The catalog that RUNS in place of the rows the migration minted for ``outcome``'s
-    document, or ``None`` when the minted rows run (or nothing was minted). The seam's
-    rows are a default only where the document authored no lanes and saved no catalog
-    (``environment_overridable_keys`` over the snapshot's ``before``: the lanes key and
-    the catalog as read), and the settings reader lets the environment's catalog win
-    exactly there — so a catalog in force that is not the minted one is the environment's."""
-    from ouroboros.review_pool_migration import REVIEWER_SLOTS_KEY, SUBAGENTS_KEY, environment_overridable_keys
-
-    minted = str(getattr(outcome, "catalog_after", None) or "")
-    before = (getattr(outcome, "snapshot", None) or {}).get("before") or {}
-    as_read = {key: before[key] for key in (REVIEWER_SLOTS_KEY, SUBAGENTS_KEY) if before.get(key) is not None}
-    if not minted or SUBAGENTS_KEY not in environment_overridable_keys(as_read):
-        return None
-    running = str(settings.get(SUBAGENTS_KEY) or "")
-    return None if running == minted else running
 
 
 def _environment_pool_message(snapshot_path: str, catalog_text: str) -> str:
@@ -542,16 +516,6 @@ def _environment_pool_message(snapshot_path: str, catalog_text: str) -> str:
         body = (f"{len(rows)} reviewer rows, {len({row.target_id for row in rows})} distinct models: "
                 + "; ".join(f"{row.slot_id} ({row.target_id})" for row in rows) + ".")
     return "\n".join([head, body, f"{where} Adjust in Settings → Agents or in the environment."])
-
-
-def _record_review_pool_migration(update_state, digest: str, record: dict) -> None:
-    def _mark(st: dict) -> None:
-        seen = st.get(REVIEW_POOL_MIGRATION_STATE_KEY)
-        seen = dict(seen) if isinstance(seen, dict) else {}
-        seen[digest] = dict(record)
-        st[REVIEW_POOL_MIGRATION_STATE_KEY] = seen
-
-    update_state(_mark)
 
 
 def _prune_event(event_type: str, keys: tuple, **reports: dict) -> None:
