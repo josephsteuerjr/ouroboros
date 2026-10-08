@@ -182,9 +182,9 @@ def review_call_cost_text(usd: Optional[float], *, reading: bool) -> str:
 
 
 def _api_review_cost_hint(slot: Any) -> str:
-    """One api seat's price (:func:`review_call_cost_text`), from the tariff already cached
-    in this process — context assembly never waits on a tariff fetch. A model call through
-    a subscription uses a seat, as Settings → Agents says."""
+    """One api seat's price (:func:`review_call_cost_text`), from the tariff and the window
+    already held in this process — context assembly never waits on a provider catalog. A
+    model call through a subscription uses a seat, as Settings → Agents says."""
     from ouroboros.provider_models import provider_for_model
     from ouroboros.tools.review_helpers import review_row_call_usd
 

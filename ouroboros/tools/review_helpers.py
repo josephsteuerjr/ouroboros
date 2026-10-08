@@ -121,7 +121,11 @@ def review_row_call_usd(row: Any, *, allow_live_fetch: bool = True) -> Optional[
     by the reservation math a review wave is admitted with. A packet reviewer makes one such
     call per review; a reading reviewer makes several, each reserved as it is sent, so this
     never bounds a whole review. ``None`` is unknown, never zero; a local route is the known
-    zero (``pricing.estimate_cost_optional`` prices route ``local`` at ``0.0``)."""
+    zero (``pricing.estimate_cost_optional`` prices route ``local`` at ``0.0``).
+
+    ``allow_live_fetch=False`` keeps the whole measurement in this process: the tariff AND
+    the reviewer window are read as already held (an unevidenced window prices at the full
+    window), so a context-assembly reader never waits on a provider catalog."""
     get = row.get if isinstance(row, dict) else lambda key, default=None: getattr(row, key, default)
     model = str(get("model", "") or "")
     if not model:
@@ -137,7 +141,7 @@ def review_row_call_usd(row: Any, *, allow_live_fetch: bool = True) -> Optional[
         from ouroboros.usage_admission import review_wave_admission
 
         output = _review_output_budget()
-        window = reviewer_context_window(model, **reviewer_window_binding(row))
+        window = reviewer_context_window(model, allow_fetch=allow_live_fetch, **reviewer_window_binding(row))
         reserve, margin = window_scaled_reserves(window, output_reserve=output, tokenizer_margin=50_000)
         prompt = max(0, calibrated_input_token_limit(
             model, context_window=window, output_reserve=reserve, tokenizer_margin=margin))

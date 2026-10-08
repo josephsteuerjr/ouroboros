@@ -122,6 +122,26 @@ def test_the_pool_is_the_marked_rows_named_by_their_catalog_handle(tmp_path, mon
     assert _records(tmp_path) == {"recent_records": [], "omitted": {"records": 0}, "full_source": "state/review_ledger/"}
 
 
+def test_the_cost_hint_of_a_cold_seat_never_waits_on_the_provider_catalog(tmp_path, monkeypatch):
+    """Context assembly is a hot path (every round builds it): an api seat whose window this
+    process has not measured yet is priced from the evidence already held — the full window
+    when there is none — and never through OpenRouter's live ``/models`` catalog. (The
+    measurement used to reach `LLMClient._fetch_openrouter_capabilities`, a 5-second network
+    wait per unevidenced seat, and left the catalog in the process caches for every later send.)"""
+    from ouroboros.llm import LLMClient
+
+    monkeypatch.setenv(SUBAGENTS_SETTING, _roster(
+        _row("cold-key", f"openai/never-measured-{tmp_path.name.lower()}", effort="medium")))
+    monkeypatch.setattr(LLMClient, "_fetch_openrouter_capabilities",
+                        classmethod(lambda cls: pytest.fail("the ## Review block reached the live provider catalog")))
+
+    block, _text = _block()
+
+    (seat,) = block["pool"]
+    assert seat["seat_id"] == "cold-key"
+    assert seat["cost_hint"] == COST_UNKNOWN_HINT or seat["cost_hint"].startswith("≈$")
+
+
 def test_the_pool_ignores_the_catalog_switch_and_reads_only_enabled_rows(monkeypatch):
     # Delegation off (``enabled: false``) does not switch review off (F6); a
     # row's own ``enabled: false`` does take it out of the pool.
