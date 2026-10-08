@@ -87,6 +87,22 @@ def test_a_defective_coupling_block_is_recorded_against_part_two_only(raw, error
     assert error in answers["coupling"]["error"], answers["coupling"]
 
 
+def test_a_defective_matrix_keeps_its_fail_rows_as_discarded_diagnostics():
+    """A critical FAIL inside a matrix the gate cannot count (a terse PASS elsewhere)
+    is not counted (``findings`` empty, ``critical`` 0, the part ``unanswered``) and
+    not lost: it rides beside the error as ``discarded`` with this seat's model."""
+    rows = _matrix(fail="implicit_contracts")
+    rows[0] = {**rows[0], "reason": "ok"}
+    answers = parse_two_part_answer(_b(coupling=rows), BOTH, model_label="m", slot_id="s1")
+    coupling = answers["coupling"]
+    assert coupling["status"] == "unanswered" and coupling["findings"] == [] and coupling["critical"] == 0
+    assert "too terse" in coupling["error"]
+    assert [(d["item"], d["severity"], d["verdict"], d["model"], d["slot_id"]) for d in coupling["discarded"]] == [
+        ("implicit_contracts", "critical", "FAIL", "m", "s1")]
+    assert "discarded" not in parse_two_part_answer(_b(coupling=_matrix(fail="implicit_contracts")), BOTH)["coupling"]
+    assert parse_two_part_answer(_b(coupling=_matrix(reason="ok")), BOTH)["coupling"]["discarded"] == []
+
+
 def test_a_bare_array_from_a_both_part_seat_leaves_part_two_out():
     finding = {"item": "secrets_check", "verdict": "FAIL", "severity": "critical", "reason": "a key is committed"}
     answers = parse_two_part_answer(json.dumps([finding]), BOTH)

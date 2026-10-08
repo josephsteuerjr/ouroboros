@@ -382,3 +382,95 @@ def test_not_dispatched_is_the_first_branch():
     refused = rl.reduce_verdict([], dispatch_refusal={"kind": "review_wave_budget_insufficient"})
     assert refused["aggregate"] == "NOT_DISPATCHED" and refused["reason"] == "dispatch_refusal"
     assert rl.reduce_verdict([])["reason"] == "nothing_dispatched"
+
+
+# --- an uncounted coupling answer is named per seat, never hidden (D2-V5) ----------
+
+
+_SEATS = (("s1", "openai/a"), ("s2", "anthropic/b"), ("s3", "google/c"))
+_RETRIEVING_PANEL = {**_PANEL, "retrieves": [True] * 3, "parts": [("change", "coupling")] * 3, "brief_shas": ["b1", "b2", "b3"]}
+_PACKET_PANEL = {**_PANEL, "retrieves": [False] * 3, "parts": [("change",)] * 3, "brief_shas": ["", "", ""]}
+_TERSE = _two_part(coupling=[{**row, "reason": "ok"} for row in _COUPLING_PASS])
+
+
+def _prepared(ctx, panel, *, blocking=True):
+    return {"blocking_review": blocking, "prompt": "fixture", "models": list(panel["models"]), "stable_prefix_len": 0,
+            "routes": list(panel["routes"]), "session_task": "", "target_repo": ctx.repo_dir, "row_plan": dict(panel),
+            "retry_key": "fixture", "retrieving_manifests": [{"slot_id": s, "sha": {"brief": b}, "governance_manifest": []}
+                                                             for s, b in zip(panel["slot_ids"], panel["brief_shas"]) if b]}
+
+
+def _dispatch(ctx, monkeypatch, panel, results, *, blocking=True):
+    from ouroboros.tools import review
+
+    git._reset_commit_review_state(ctx)
+    monkeypatch.setattr(review, "_handle_multi_model_review", lambda *a, **kw: json.dumps({"results": list(results)}))
+    return review._dispatch_unified_review(ctx, "Fix amount", _prepared(ctx, panel, blocking=blocking))
+
+
+@pytest.mark.parametrize("enforcement", ["blocking", "advisory"])
+def test_three_uncountable_coupling_answers_are_named_per_seat(candidate, monkeypatch, enforcement):  # noqa: F811
+    """Three retrieving seats each answer Part 2 with a matrix the gate cannot count
+    (terse PASS reasons). NOT_PERFORMED names every seat's own error — in the block
+    (blocking) or in the author's advisory list beside the typed per-seat entries
+    (advisory) — and does not send the owner to configure a retrieving seat: the
+    pool has three. That advice belongs to a panel in which no seat read the work."""
+    ctx = candidate
+    monkeypatch.setenv("OUROBOROS_REVIEW_ENFORCEMENT", enforcement)
+    blocking = enforcement == "blocking"  # the assembled wave carries the enforcement into the dispatch
+    error = _dispatch(ctx, monkeypatch, _RETRIEVING_PANEL, [_seat(s, m, _TERSE) for s, m in _SEATS], blocking=blocking)
+    assert ctx._last_review_verdict["reason"] == "coupling_not_performed"
+    text = error if enforcement == "blocking" else ctx._review_advisory[0]
+    assert (error is None) is (enforcement == "advisory")
+    assert "Part 2" in text and "asked of: s1, s2, s3" in text
+    for seat_id, model in _SEATS:
+        line = text.split(f"- {seat_id} ({model}): ", 1)
+        assert len(line) == 2 and "PASS reason is too terse" in line[1].split("\n- ")[0], text
+    assert "configure a retrieving reviewer seat" not in text
+    typed = ctx._last_review_advisory_findings
+    assert [(f["item"], f["model"]) for f in typed] == [("review_coupling_unanswered", m) for _s, m in _SEATS]
+    assert all("too terse" in f["reason"] for f in typed)
+    if enforcement == "advisory":
+        assert ctx._review_advisory[1:] == typed, "the early branch keeps the wave's typed diagnostics for the author"
+    # No seat could read the work: the same branch, and now the advice is the pool.
+    error = _dispatch(ctx, monkeypatch, _PACKET_PANEL, [_seat(s, m, "[]") for s, m in _SEATS], blocking=blocking)
+    text = error if enforcement == "blocking" else ctx._review_advisory[0]
+    assert ctx._last_review_verdict["reason"] == "coupling_not_performed" and "asked of: no seat" in text
+    assert "configure a retrieving reviewer seat" in text and ctx._last_review_advisory_findings == []
+
+
+def test_a_critical_in_an_uncountable_matrix_stays_visible_under_an_aggregate_pass(candidate, monkeypatch):  # noqa: F811
+    """One retrieving seat finds a critical coupling FAIL but writes a terse PASS on
+    another item; the other two seats are clean. Part 2 reaches PASS on the two
+    countable answers (contract: the broken matrix is ``unanswered``), the gate
+    passes — and the discarded critical is still in the author's advisory list,
+    in the record's advisory findings and on the seat's own ledger row."""
+    ctx = candidate
+    monkeypatch.setenv("OUROBOROS_REVIEW_ENFORCEMENT", "blocking")
+    broken = [{**_COUPLING_PASS[7], "verdict": "FAIL", "severity": "critical",
+               "reason": "the new helper bypasses the documented invariant on a live path"},
+              {**_COUPLING_PASS[0], "reason": "ok"}, *_COUPLING_PASS[1:7]]
+    results = [_seat("s1", "openai/a", _two_part(coupling=broken)), _seat("s2", "anthropic/b", _two_part()),
+               _seat("s3", "google/c", _two_part())]
+    error = _dispatch(ctx, monkeypatch, _RETRIEVING_PANEL, results)
+    verdict = ctx._last_review_verdict
+    assert error is None and verdict["aggregate"] == "PASS" and verdict["per_question"]["coupling"] == "PASS"
+    assert verdict["per_row"] == {"s1": "unanswered", "s2": "PASS", "s3": "PASS"}
+    assert ctx._last_review_critical_findings == [], "nothing uncountable is counted"
+    typed = ctx._last_review_advisory_findings
+    by_item = {f["item"]: f for f in typed}
+    assert set(by_item) == {"review_coupling_unanswered", "implicit_contracts"}
+    discarded = by_item["implicit_contracts"]
+    assert discarded["model"] == "openai/a" and discarded["severity"] == "advisory"
+    assert "not counted" in discarded["reason"] and "critical FAIL" in discarded["reason"]
+    assert "bypasses the documented invariant" in discarded["reason"]
+    assert discarded in ctx._review_advisory, "the author's commit result carries it"
+    # The seat's own answer keeps the row the gate could not count, into the ledger.
+    from ouroboros import review_ledger as rl
+
+    raw = next(r for r in ctx._last_triad_raw_results if r["slot_id"] == "s1")["answers"]["coupling"]
+    assert raw["status"] == "unanswered" and raw["findings"] == [] and raw["critical"] == 0
+    assert [(d["item"], d["severity"]) for d in raw["discarded"]] == [("implicit_contracts", "critical")]
+    row = next(r for r in rl.rows_from_plan(_RETRIEVING_PANEL, _RETRIEVING_PANEL["routes"], ctx._last_triad_raw_results)
+               if r["seat_id"] == "s1")
+    assert row["answers"]["coupling"]["discarded"] == raw["discarded"] and row["critical_count"] == 0

@@ -394,7 +394,8 @@ def parse_two_part_answer(raw_text: str, parts: Sequence[str], *, model_label: s
     the response is a non-response (no JSON value, prose around it, wrong form).
     ``change: []`` is a clean answer only with ``change_clean: true``; a
     ``coupling`` block that fails the required matrix (``normalize_scope_items``)
-    is ``unanswered`` with its ``error`` while ``change`` still counts; a bare
+    is ``unanswered`` with its ``error`` (its FAIL rows kept as ``discarded``
+    diagnostics, not counted) while ``change`` still counts; a bare
     array from a seat asked both parts answers ``change`` and leaves ``coupling``
     unanswered (``coupling_block_missing``). A seat asked ``coupling`` alone may
     answer the object with only that key or the bare matrix array."""
@@ -427,12 +428,18 @@ def parse_two_part_answer(raw_text: str, parts: Sequence[str], *, model_label: s
             covered = {str(i.get("item") or "") for i in (items or payload["coupling"]) if isinstance(i, dict)}
             n_required = sum(1 for item in SCOPE_REQUIRED_ITEMS if item in covered)
             coverage = "full" if n_required == len(SCOPE_REQUIRED_ITEMS) else "partial" if n_required else "missing"
+            critical, advisory = classify_scope_findings(items or [])
+            for finding in critical + advisory:  # the projection's placeholder model → this seat
+                finding.update(model=model_label, slot_id=slot_id)
             if error or items is None:
-                answers["coupling"] = {**_unanswered("coupling", error or "coupling matrix invalid"), "coverage": coverage}
+                # The matrix is not countable (contract §1.7: ``unanswered`` with
+                # its error), but the FAIL rows it did spell out are kept beside
+                # the error as ``discarded`` diagnostics — never counted, never
+                # silently lost (a critical in a broken matrix stays visible even
+                # when the panel's other seats carry the question to PASS).
+                answers["coupling"] = {**_unanswered("coupling", error or "coupling matrix invalid"),
+                                       "coverage": coverage, "discarded": critical + advisory}
             else:
-                critical, advisory = classify_scope_findings(items)
-                for finding in critical + advisory:  # the projection's placeholder model → this seat
-                    finding.update(model=model_label, slot_id=slot_id)
                 answers["coupling"] = {"status": "responded", "verdict": "FAIL" if critical else "PASS",
                                        "findings": critical + advisory, "critical": len(critical), "coverage": coverage,
                                        "items": [dict(i, model=model_label, slot_id=slot_id) for i in items]}

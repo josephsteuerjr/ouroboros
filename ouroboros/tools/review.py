@@ -798,8 +798,23 @@ def _collect_review_findings(ctx: ToolContext, model_results: list, row_plan: Op
             continue
         for part, answer in (record.answers or {}).items():
             if answer.get("status") != "responded":
-                if answer.get("error"):
-                    advisory_warns.append(f"[{record.model_id}] Part '{part}' unanswered: {answer['error']}")
+                error = str(answer.get("error") or "")
+                if error:
+                    # The seat spoke but this part is not countable: the error is a
+                    # typed advisory entry (it reaches the record and the author),
+                    # not only a log line.
+                    advisory_warns.append(f"[{record.model_id}] Part '{part}' unanswered: {error}")
+                    structured_advisory.append(_review_entry(
+                        severity="advisory", item=f"review_{part}_unanswered",
+                        reason=f"Part '{part}' unanswered: {error}", model=record.model_id))
+                # FAIL rows of a matrix the gate could not count stay visible as
+                # diagnostics (their severity named in the text; nothing counted).
+                for item in answer.get("discarded") or []:
+                    reason = (f"not counted ({part} answer unanswered: {error or 'invalid'}); "
+                              f"the seat's {str(item.get('severity') or 'advisory')} FAIL said: {item.get('reason', '')}")
+                    structured_advisory.append(_review_entry(
+                        severity="advisory", item=str(item.get("item", "?")), reason=reason, model=record.model_id))
+                    advisory_warns.append(f"[{record.model_id}] {item.get('item', '?')}: {reason}")
                 continue
             for item in answer.get("findings") or []:
                 if str(item.get("verdict", "")).upper() != "FAIL":
@@ -1324,6 +1339,29 @@ def _review_actor_label(row: dict) -> str:
     return str(row.get("model_id") or row.get("slot_id") or row.get("slot") or "reviewer")
 
 
+def _uncounted_part_seat_lines(rows: list, part: str) -> List[str]:
+    """One line per ledger seat row asked ``part``: how it left the question
+    uncounted (the answer's own ``error``, else the seat's status) and the FAIL
+    rows of a matrix the gate could not count (``discarded``, never counted)."""
+    lines: List[str] = []
+    for seat in rows:
+        if part not in (seat.get("parts") or []):
+            continue
+        answer = dict((seat.get("answers") or {}).get(part) or {})
+        model = str((seat.get("requested") or {}).get("model") or seat.get("observed_model") or "?")
+        label = f"{seat.get('seat_id') or '?'} ({model})" + (" [additional, not counted]" if seat.get("additional") else "")
+        if str(answer.get("status") or "") == "responded":
+            lines.append(f"{label}: answered {str(answer.get('verdict') or '?')}")
+            continue
+        detail = str(answer.get("error") or "") or f"no answer (seat status: {seat.get('status') or 'unknown'})"
+        discarded = [f"{i.get('item') or '?'} ({str(i.get('severity') or 'advisory')})"
+                     for i in (answer.get("discarded") or []) if isinstance(i, dict)]
+        if discarded:
+            detail += f"; FAIL rows not counted: {', '.join(discarded)}"
+        lines.append(f"{label}: {detail}")
+    return lines
+
+
 def _dispatch_unified_review(ctx: ToolContext, commit_message: str, prepared: dict) -> Optional[str]:
     """Dispatch the one wave and post-process the panel verdict in the §1.7
     order: NOT_DISPATCHED/pending → QUORUM_FAILED → NOT_PERFORMED (coupling)
@@ -1469,7 +1507,8 @@ def _dispatch_unified_review(ctx: ToolContext, commit_message: str, prepared: di
 
     if verdict["aggregate"] == "NOT_PERFORMED":
         # Quorum stands but the gate has no answer to count; the sentence names the
-        # branch that decided (``verdict["reason"]``), never a guessed one.
+        # branch that decided (``verdict["reason"]``), never a guessed one, and
+        # every seat asked Part 2 says how it left the question uncounted.
         reason = str(verdict["reason"] or "review_not_performed")
         ctx._last_review_block_reason = reason
         asked = [str(s.get("seat_id") or "") for s in rows if "coupling" in (s.get("parts") or [])]
@@ -1480,15 +1519,32 @@ def _dispatch_unified_review(ctx: ToolContext, commit_message: str, prepared: di
             "review_late_result_pending": ("physical review operation(s) remain unresolved"
                                            f" ({', '.join(pending_models) or 'custody open'}); no verdict is counted yet"),
         }.get(reason, f"the wave reduced to no countable answer ({reason})")
+        part = {"coupling_not_performed": "coupling", "change_unanswered": "change"}.get(reason, "")
+        seat_lines = _uncounted_part_seat_lines(rows, part) if part else []
+        if reason == "coupling_not_performed" and not asked:
+            # No seat read the work: only a retrieving row can answer Part 2.
+            advice = ("retry the commit or configure a retrieving reviewer seat "
+                      "(Settings → Agents, a Reviewer row that reads the work itself).")
+        elif seat_lines:
+            advice = ("retry the commit — the seats asked answered in a form the gate cannot count; "
+                      "each seat's error is listed above and recorded.")
+        else:
+            advice = "retry the commit."
         blocked_msg = (
             f"⚠️ REVIEW_BLOCKED: review NOT_PERFORMED — {what}.\n"
-            "The commit gate counts only a PASS/FAIL answer; retry the commit or configure a "
-            "retrieving reviewer seat (Settings → Agents, a Reviewer row that reads the work itself)." + errored_note
+            + "".join(f"  - {line}\n" for line in seat_lines)
+            + f"The commit gate counts only a PASS/FAIL answer; {advice}" + errored_note
         )
-        return _handle_review_block_or_warning(
+        outcome = _handle_review_block_or_warning(
             ctx, blocking_review, blocked_msg,
             "Review enforcement=Advisory: review was not performed; an explicit author decision is required. ",
         )
+        # The wave's typed diagnostics (per-seat errors, FAIL rows the gate could
+        # not count) reach the author on this early branch as on the full path.
+        if outcome is None:
+            for warning in getattr(ctx, "_last_review_advisory_findings", []) or []:
+                _append_review_warning(ctx, warning)
+        return outcome
 
     if critical_fails:
         # All parse issues get a parse_failure block reason.
