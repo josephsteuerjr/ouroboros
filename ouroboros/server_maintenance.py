@@ -488,17 +488,12 @@ def review_pool_migration_records(state: dict | None = None) -> dict:
 
 
 def review_pool_migration_payload(settings: dict, *, document: dict | None = None) -> dict | None:
-    """The review-pool payload's ``migration`` fact for this data root
-    (``review_pool_receipts.migration_payload`` over the ledger plus the snapshot files no
-    record names yet): ``{snapshot, reported, trigger, outcome, error, source}`` or ``None``.
-    ``settings`` is what RUNS; ``document`` the settings document the receipt is judged against
-    (default: ``settings`` — a caller holding the loaded document). The GET handler serves the
-    process projection, which carries no retained lane value, so it passes the document on disk
-    (``review_pool_receipts.document_as_read``) beside it (VD3-06)."""
+    """The review-pool payload's ``migration`` fact for this data root (``review_pool_receipts.migration_payload`` over
+    the ledger plus the snapshot files no record names yet). ``settings`` is what RUNS; ``document`` (default ``settings``)
+    is the settings document the receipt is judged against — the GET handler passes the document on disk (VD3-06)."""
     from ouroboros.review_pool_receipts import migration_payload
 
-    return migration_payload(settings if document is None else document, DATA_DIR, review_pool_migration_records(),
-                             running=settings)
+    return migration_payload(settings if document is None else document, DATA_DIR, review_pool_migration_records(), running=settings)
 
 
 def _startup_review_pool_notice(settings: dict) -> None:
@@ -520,13 +515,14 @@ def _startup_review_pool_notice(settings: dict) -> None:
     once an owner chat is bound. A migration that could not finish is reported the same way
     (its snapshot carries the error; the lane keys stay in the document for the owner's catalog
     save). A no-op outcome (the catalog was already a pool) leaves no receipt: nothing changed.
-    ``settings`` is what RUNS (the environment merged over the document): when the rows the
-    seam minted for a document without review settings of its own were overridden by the
-    catalog the environment carries (``review_pool_migration.environment_overridable_keys``),
-    the message says so and names THAT pool — loudly empty when none of its rows is marked —
-    instead of the minted rows. A never-configured document whose process environment still
-    carries the retired review keys is not told it had "no review settings": the message names
-    those keys as no longer read (``environment_retired_review_keys``).
+    Each unreported record is judged against the document AS READ (``review_pool_receipts.document_as_read``: the
+    file as the seam leaves it, no environment); ``settings`` is what RUNS (the environment merged over it). A record
+    whose outcome no longer decides that document (the factory rows receipted at a file-less start before the wizard
+    saved its own catalog) is closed as history without a message (``review_pool_receipts.close_as_history``), never
+    delivered as if the owner's catalog were the environment's. Where the environment's catalog overrides the rows the
+    seam minted for a document without review settings of its own (``environment_overridable_keys``), the message names
+    THAT pool — loudly empty when none of its rows is marked. A never-configured document whose process environment
+    still carries the retired review keys is told those keys are no longer read (``environment_retired_review_keys``).
     """
     try:
         from ouroboros import config, review_pool_receipts as receipts
@@ -550,10 +546,11 @@ def _startup_review_pool_notice(settings: dict) -> None:
                 continue
             outcome = receipts.outcome_from_snapshot(snapshot)
             snapshot_path = str(record.get("snapshot") or "")
+            if receipts.close_as_history(outcome, document, update_state, digest, record):
+                continue
             in_force = receipts.environment_catalog_in_force(outcome, document, settings)
-            text = (_environment_pool_message(snapshot_path, in_force) if in_force is not None
-                    else owner_message(outcome, snapshot_path,
-                                       environment_retired_keys=environment_retired_review_keys()))
+            text = (_environment_pool_message(snapshot_path, in_force) if in_force is not None else
+                    owner_message(outcome, snapshot_path, environment_retired_keys=environment_retired_review_keys()))
             if not text:
                 continue
             send_with_budget(owner_chat, text, role="system", system_type=REVIEW_POOL_NOTICE_TYPE)

@@ -31,7 +31,7 @@ from tests.test_onboarding_complete_endpoint import (
     LIVE_SNAPSHOT,
     onboarding as onboarding,  # explicit fixture re-export: the real wizard endpoint over a tmp settings file
 )
-from tests.test_review_pool_migration import N1_DOC, SLOTS, SUBAGENTS, anton_document
+from tests.test_review_pool_migration import N1_DOC, SLOTS, SUBAGENTS, anton_document, catalog, session_row
 
 MAIN = "claudexor::codex=default"
 MODEL_CATALOG = [{"value": MAIN, "is_default": True, "input_modalities": ["text", "image"]}]
@@ -159,3 +159,47 @@ def test_a_save_whose_receipt_failed_is_receipted_by_the_boot_that_finds_its_res
     assert json.loads(snapshot_file.read_text(encoding="utf-8"))["input_sha256"] == m.input_sha256(anton_document())
     (record,) = server_maintenance.review_pool_migration_records().values()
     assert record["reported"] and _notices(sent) == [m.owner_message(cfg.review_pool_migrations_seen()[0], record["snapshot"])]
+
+
+@pytest.mark.parametrize("wizard_saved", [True, False], ids=["wizard_saved_its_own_catalog", "document_unchanged"])
+def test_a_receipt_deferred_past_the_wizard_never_calls_the_saved_catalog_the_environments(boot, monkeypatch,
+                                                                                            wizard_saved):
+    """NEW-H1. The fresh install's first boot has no settings file and no owner chat yet: the read
+    seam mints the factory rows for the defaults, the boot receipts them (the defaults ARE what runs)
+    and the message waits for a chat. The owner then finishes the wizard, which saves a document with a
+    catalog of its own, and the next boot binds the chat. That deferred receipt no longer decides the
+    document on disk, and the catalog that runs is the OWNER'S — ``OUROBOROS_SUBAGENTS`` is not in the
+    process environment — so the record is closed without a message, never delivered as "the
+    environment's pool is in force" because the catalog differs from the minted rows. Control: while
+    the document is unchanged (still no file) the deferred receipt is delivered once at the first boot
+    with a chat, as before. The environment direction — a catalog the environment really carries over
+    an N-1 document — is pinned in ``test_review_pool_migration`` (N1)."""
+    root, sent = boot
+    state.save_state({})  # no owner chat bound yet
+    path = root / "settings.json"
+    monkeypatch.setattr(cfg, "SETTINGS_PATH", path)
+    monkeypatch.delenv(SUBAGENTS, raising=False)
+    first = cfg.load_settings()  # the server's first start: no file, the factory rows of the defaults run
+    (defaults,) = cfg.review_pool_migrations_seen()
+    server_maintenance._startup_review_pool_notice(first)
+    (snapshot_file,) = _snapshots(root)
+    (record,) = server_maintenance.review_pool_migration_records().values()
+    assert record["reported"] is None and _notices(sent) == []
+
+    own = catalog(session_row("reviewer", MAIN, review_eligible=True))
+    if wizard_saved:
+        path.write_text(json.dumps({"OUROBOROS_MODEL": MAIN, SUBAGENTS: own}), encoding="utf-8")
+    m._MIGRATIONS_SEEN.clear()  # the next start is a fresh process
+    state.update_state(lambda st: st.__setitem__("owner_chat_id", 7))
+    settings = cfg.load_settings()
+    server_maintenance._startup_review_pool_notice(settings)
+    server_maintenance._startup_review_pool_notice(settings)  # a supervisor revival adds nothing
+
+    (record,) = server_maintenance.review_pool_migration_records().values()
+    assert record["reported"] and _snapshots(root) == [snapshot_file], "the receipt itself stays: it is history"
+    if wizard_saved:
+        assert settings[SUBAGENTS] == own != defaults.catalog_after
+        assert _notices(sent) == []
+    else:
+        assert settings[SUBAGENTS] == defaults.catalog_after
+        assert _notices(sent) == [m.owner_message(defaults, record["snapshot"])]

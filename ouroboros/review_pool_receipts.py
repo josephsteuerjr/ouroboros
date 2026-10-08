@@ -312,6 +312,20 @@ def mark_reported(update_state: Callable[..., Any], digest: str, record: Dict[st
     write_record(update_state, digest, record)
 
 
+def close_as_history(outcome: Any, document: Mapping[str, Any], update_state: Callable[..., Any], digest: str,
+                     record: Dict[str, Any]) -> bool:
+    """Whether the unreported ``record`` describes an EARLIER document than ``document`` (the document
+    as read, :func:`document_as_read`): its ``outcome`` no longer decides it — a file-less start
+    receipted the factory rows before any owner chat was bound, then the wizard saved a catalog of its
+    own. Such a record is marked reported with a log line and no owner message; the snapshot and the
+    record stay on disk and in the ledger as history. ``False`` leaves a current record to its message."""
+    if outcome_decides_document(outcome, document):
+        return False
+    log.info("review pool migration receipt %s: an earlier document, closed without an owner message", record.get("snapshot"))
+    mark_reported(update_state, digest, record)
+    return True
+
+
 def outcome_decides_document(outcome: Any, settings: Mapping[str, Any]) -> bool:
     """Whether ``outcome`` (a ``review_pool_migration.MigrationOutcome``) decided the document
     ``settings`` shows — the ONE predicate the owner's receipt and the model's ``## Review``
@@ -338,18 +352,23 @@ def environment_catalog_in_force(outcome: Any, document: Mapping[str, Any],
                                  running: Mapping[str, Any]) -> Optional[str]:
     """The catalog the ENVIRONMENT carries when it runs in place of the rows the migration
     minted for ``outcome``'s document, or ``None`` when the minted rows run (or nothing was
-    minted). ``document`` is the settings document as read (:func:`document_as_read`: the file
-    as the seam leaves it, no environment), ``running`` what runs (the environment merged over
-    it). The seam's rows are a default only where the document authored no lanes and saved no
-    catalog (``environment_overridable_keys`` over the snapshot's ``before``), and the settings
-    reader lets the environment's catalog win exactly there — so a catalog in force that is not
-    the minted one is the environment's."""
+    minted, or ``outcome`` no longer describes ``document``). ``document`` is the settings
+    document as read (:func:`document_as_read`: the file as the seam leaves it, no environment),
+    ``running`` what runs (the environment merged over it). The seam's rows are a default only
+    where the document authored no lanes and saved no catalog (``environment_overridable_keys``
+    over the snapshot's ``before``), and the settings reader lets the environment's catalog win
+    exactly there — so a catalog in force that is not the minted one is the environment's ONLY
+    while the minted rows are still the document's own catalog. A document the owner has since
+    saved with a catalog of its own (the wizard after a file-less start) is a different document:
+    its catalog is the owner's, not the environment's, and this says nothing about it."""
     from ouroboros.review_pool_migration import REVIEWER_SLOTS_KEY, SUBAGENTS_KEY, environment_overridable_keys
 
     minted = str(outcome.catalog_after or "")
     before = (outcome.snapshot or {}).get("before") or {}
     as_read = {key: before[key] for key in (REVIEWER_SLOTS_KEY, SUBAGENTS_KEY) if before.get(key) is not None}
     if not minted or SUBAGENTS_KEY not in environment_overridable_keys(as_read):
+        return None
+    if not outcome_decides_document(outcome, document):
         return None
     in_force = str(running.get(SUBAGENTS_KEY) or "")
     return None if in_force == minted else in_force
@@ -389,6 +408,7 @@ def migration_payload(document: Mapping[str, Any], data_dir: Any, records: Optio
 
 __all__ = [
     "STATE_KEY",
+    "close_as_history",
     "document_as_read",
     "environment_catalog_in_force",
     "known_receipts",
