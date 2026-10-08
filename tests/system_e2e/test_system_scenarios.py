@@ -58,6 +58,8 @@ from ouroboros.settings_defaults import SETTINGS_DEFAULTS, settings_env_keys
 from tests.system_e2e.harness import (
     _CREDENTIAL_SHAPE_RE,
     ACCEPTANCE_KEYS_MARKER,
+    KEYLESS_PACKET_ROWS,
+    KEYLESS_REVIEW_ROWS,
     LANE_MOCK,
     MARKER_SOURCES,
     MOCK_SLUG,
@@ -413,6 +415,15 @@ def test_keyless_review_catalog_parses_under_the_trees_own_parser(monkeypatch):
         assert row.route.kind == "api_model" and row.route.target_id == MOCK_SLUG, row
         assert row.enabled, row
     assert all(item["review_eligible"] is True for item in json.loads(raw)["items"])
+    # The panel is mixed by construction: the packet rows deliver as packets (contract
+    # A), the last row keeps the catalog default — a native episode (contract B) — so
+    # one wave exercises both delivery classes. A row's delivery is read from its
+    # ``delivery`` field alone.
+    assert [row.subagent_id for row in config.items] == list(KEYLESS_REVIEW_ROWS)
+    assert [row.delivery for row in config.items] == [
+        configured_subagents.REVIEW_DELIVERY_PACKET if row_id in KEYLESS_PACKET_ROWS
+        else configured_subagents.REVIEW_DELIVERY_NATIVE for row_id in KEYLESS_REVIEW_ROWS]
+    assert 0 < len(KEYLESS_PACKET_ROWS) < len(KEYLESS_REVIEW_ROWS)
     distinct = configured_subagents.parse_configured_subagents(keyless_review_catalog(distinct_models=True))
     assert [row.route.target_id for row in distinct.items] == [
         f"{MOCK_SLUG}-t{i}" for i in (1, 2, 3)]

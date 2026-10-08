@@ -63,6 +63,8 @@ import subprocess
 import pytest
 
 from tests.system_e2e.harness import (
+    KEYLESS_PACKET_ROWS,
+    KEYLESS_REVIEW_ROWS,
     LANE_MOCK,
     NATIVE_EPISODE_MARKER,
     PLAN_REVIEW_MARKER,
@@ -524,7 +526,10 @@ S12_SCRIPT = [
 def test_s15_advisory_class_red_verdict_recorded_and_commit_lands(e2e_clone, tmp_path_factory):
     require_lane(LANE_MOCK)
     root = tmp_path_factory.mktemp("s12")
-    review_script = ReviewScript({"triad_review": [W3A_TRIAD_RED] * 3})
+    # One wave, one brief: the packet rows answer contract A (the scripted red
+    # verdicts), the native row answers contract B clean; one critical anywhere
+    # makes the wave red.
+    review_script = ReviewScript({"triad_review": [W3A_TRIAD_RED] * len(KEYLESS_PACKET_ROWS)})
     feedback = {}
     decision = {"disposition": "rejected", "rationale": "I inspected the missing-marker criticism; this doc-only enforcement fixture intentionally retains the note and records my decision."}
 
@@ -579,9 +584,11 @@ def test_s15_advisory_class_red_verdict_recorded_and_commit_lands(e2e_clone, tmp
             assert author["enforcement"] == "advisory" and author["source"] == "author"
             assert {key: author[key] for key in decision} == decision and author["recorded_at"]
             assert len(_tool_rows(task_drive, "commit_reviewed")) >= 2
+            # ONE paid wave over the whole pool: every packet row and the native row
+            # once; the author's commit paid no second panel.
             kinds = stub.kinds()
-            assert kinds.count("triad_review") == 3, kinds
-            assert kinds.count("two_part_review") == 1, kinds
+            assert kinds.count("triad_review") == len(KEYLESS_PACKET_ROWS), kinds
+            assert kinds.count("two_part_review") == len(KEYLESS_REVIEW_ROWS) - len(KEYLESS_PACKET_ROWS), kinds
             review_script.assert_consumed()
         finally:
             server.stop()
@@ -628,7 +635,8 @@ def test_s16_blocking_class_red_blocks_identical_refused_free_then_green_lands(
         e2e_clone, tmp_path_factory):
     require_lane(LANE_MOCK)
     root = tmp_path_factory.mktemp("s13")
-    review_script = ReviewScript({"triad_review": [W3A_TRIAD_RED] * 3})
+    # Wave 1: the packet rows answer red (contract A) beside a clean native seat.
+    review_script = ReviewScript({"triad_review": [W3A_TRIAD_RED] * len(KEYLESS_PACKET_ROWS)})
     stub = ScriptedStubModel(S13_SCRIPT, review_script=review_script)
     with stub:
         settings = keyless_settings(
@@ -673,15 +681,15 @@ def test_s16_blocking_class_red_blocks_identical_refused_free_then_green_lands(
                 head_before, head_after, parent)
 
             # Durable ledger: a VERDICT-blocked attempt (critical_findings) is
-            # recorded; the identical resubmit paid nothing (6 triad calls
-            # total: red wave + clean wave, none for the resubmit).
+            # recorded; the identical resubmit paid nothing (two paid waves over
+            # the whole pool: red wave + clean wave, none for the resubmit).
             attempts = task_drive.advisory_review().get("attempts") or []
             blocked = [a for a in attempts if isinstance(a, dict)
                        and a.get("block_reason") == "critical_findings"]
             assert blocked, attempts
             kinds = stub.kinds()
-            assert kinds.count("triad_review") == 6, kinds
-            assert kinds.count("two_part_review") == 2, kinds
+            assert kinds.count("triad_review") == 2 * len(KEYLESS_PACKET_ROWS), kinds
+            assert kinds.count("two_part_review") == 2 * (len(KEYLESS_REVIEW_ROWS) - len(KEYLESS_PACKET_ROWS)), kinds
             review_script.assert_consumed()
         finally:
             server.stop()
@@ -770,11 +778,12 @@ def test_s16_rejects_post_verdict_mutation(tmp_path_factory):
             assert S13B_MSG not in _git_log_subjects(clone)
 
             # Call accounting: no preflight was named, so no preflight seat ran;
-            # exactly one triad wave and the hooked scope call.
+            # exactly one wave over the whole pool — the packet rows and the
+            # hooked native seat.
             kinds = stub.kinds()
             assert "advisory_review" not in kinds, kinds
-            assert kinds.count("triad_review") == 3, kinds
-            assert kinds.count("two_part_review") == 1, kinds
+            assert kinds.count("triad_review") == len(KEYLESS_PACKET_ROWS), kinds
+            assert kinds.count("two_part_review") == len(KEYLESS_REVIEW_ROWS) - len(KEYLESS_PACKET_ROWS), kinds
             review_script.assert_consumed()
         finally:
             server.stop()

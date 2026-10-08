@@ -1115,6 +1115,15 @@ class KeylessIsolatedServer(IsolatedServer):
         self.candidate.release()
 
 
+# The pool rows of ``keyless_review_catalog``: seat ``t<i>`` is catalog row
+# ``review-t<i>`` — a reviewer's seat id IS its catalog row id, so the durable wave
+# artifacts (plan-review actors, finding ids ``<row>:<id>``) name seats by these.
+KEYLESS_REVIEW_ROWS = ("review-t1", "review-t2", "review-t3")
+# The rows that deliver as PACKETS (contract A: the JSON array + NO_FINDINGS); the
+# remaining row keeps the catalog default, a native inspection episode (contract B).
+KEYLESS_PACKET_ROWS = KEYLESS_REVIEW_ROWS[:2]
+
+
 def keyless_review_catalog(*, distinct_models: bool = False) -> str:
     """The ``OUROBOROS_SUBAGENTS`` catalog whose rows marked Reviewer are the whole
     review pool, every one an API route onto the loopback stub.
@@ -1127,18 +1136,38 @@ def keyless_review_catalog(*, distinct_models: bool = False) -> str:
     for rows marked Reviewer, while delegation stays as unconfigured as on a bare
     keyless install.
 
+    The panel is MIXED on purpose: ``KEYLESS_PACKET_ROWS`` deliver as packets
+    (``delivery: packet`` — the triad/skill/acceptance packet the stub classifies
+    by its marker) and the last row keeps the catalog default, a native inspection
+    episode (the stub classifies it by its ``Surface:`` line). One wave therefore
+    exercises both delivery classes end to end and their aggregate: a scripted red
+    packet verdict blocks beside a clean native seat, and a hooked native seat
+    (the post-verdict freshness probe) runs beside clean packets.
+
     ``distinct_models=True`` pins row ``review-t<i>`` to its own slug
     (``DISTINCT_MOCK_MODEL_IDS``) so a per-seat ReviewScript can tell the seats
     apart on the wire; the stub must advertise those ids (``model_ids``). A
     scenario that passes its own catalog owns its pool: it marks its own reviewers
-    or reviews nothing.
+    or reviews nothing — ``keyless_review_rows()`` are the rows to add to such a
+    roster when the scenario still reviews.
     """
-    return json.dumps({"enabled": False, "items": [{
-        "subagent_id": f"review-t{i}",
-        "recommended_use": "Keyless reviewer on the loopback stub.",
-        "route": {"kind": "api_model", "target_id": f"{MOCK_SLUG}-t{i}" if distinct_models else MOCK_SLUG},
-        "review_eligible": True,
-    } for i in (1, 2, 3)]})
+    return json.dumps({"enabled": False, "items": keyless_review_rows(distinct_models=distinct_models)})
+
+
+def keyless_review_rows(*, distinct_models: bool = False) -> list:
+    """The reviewer rows of ``keyless_review_catalog`` (see there), as catalog items."""
+    items = []
+    for i, row_id in enumerate(KEYLESS_REVIEW_ROWS, 1):
+        row = {
+            "subagent_id": row_id,
+            "recommended_use": "Keyless reviewer on the loopback stub.",
+            "route": {"kind": "api_model", "target_id": f"{MOCK_SLUG}-t{i}" if distinct_models else MOCK_SLUG},
+            "review_eligible": True,
+        }
+        if row_id in KEYLESS_PACKET_ROWS:
+            row["delivery"] = "packet"
+        items.append(row)
+    return items
 
 
 def keyless_settings(stub: ScriptedStubModel, **overrides) -> dict:
