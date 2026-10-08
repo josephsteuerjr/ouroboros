@@ -79,6 +79,8 @@ installed `ouroboros` distribution is refused explicitly. Owners:
 `test_candidate_checkout`, `test_candidate_checkout_consumers`, `test_test_environment`, `test_ui_fixture_lifecycle`,
 `test_ui_candidate_server`, `test_browser_ci_scope`.
 
+The real-engine custody witness is `python -I -S scripts/safe_test.py --temp-parent /tmp -- <python> scripts/claudexor_lifecycle_smoke.py`. It retains its disclosed temporary roots and always stops its own daemon children, even on a failed assertion. Its fake-only catalog projection is an explicit test exception: the real engine catalog excludes fake harnesses. All delegated admission and custody effects remain production paths; no credentials or vendor task are needed. CI runs it in `claudexor-platform-gate.yml` on all three desktop OSes, separately from the gateway-only fixture lane.
+
 ### Reading CI failure evidence
 
 Provider/UI summaries report Actions producer outcomes separately from testcase counts: a passing case cannot override a nonzero session exit. Skips and unavailable credentials remain explicit. Upload/report failures say `diagnostics_incomplete` and do not alter release eligibility, with one exception: the sharded UI lane is proven only by its shards' and its manifest's projections, so a missing, unreadable or red projection there fails `ui-smoke`. `tests.ci_evidence`, registered after isolation, writes safe projections with `--ci-evidence-dir`; raw JUnit stays outside uploads in `runner.temp/ci-private`.
