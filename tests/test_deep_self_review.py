@@ -306,6 +306,45 @@ class TestRunSystemReview:
             "agent_session", "xhigh", "prof-1")
         assert record["verdict"]["aggregate"] == "NOT_DISPATCHED"
 
+    def test_the_calls_goal_questions_and_reason_reach_the_executor_and_the_record(self, system_ctx, monkeypatch):
+        """D1-03 / V10: one typed ask (``SystemReviewAsk``) goes to the brief builder and
+        the ledger; the standing questionnaire stays, the call's own goal and questions
+        are added, and the reason is recorded as given."""
+        from ouroboros.deep_self_review import STANDING_GOAL, SystemReviewAsk
+        from ouroboros.review_ledger import load_record
+        from ouroboros.tools.review_change import run_review_change
+
+        _roster(monkeypatch)
+        seen = self._stub(monkeypatch, ("REPORT", {"resolved_model": "openai/fake-reviewer"}))
+        result = run_review_change(
+            system_ctx, subject="system", surface="system", reviewers=["api-scout"], goal="Check the routing",
+            author_questions=["Does the pinned profile reach the provider?", "Is the fallback disclosed?"],
+            reason="the route specialist")
+        ask = seen["ask"]
+        assert ask == SystemReviewAsk(goal="Check the routing", reason="the route specialist",
+                                      author_questions=("Does the pinned profile reach the provider?",
+                                                        "Is the fallback disclosed?"))
+        record = load_record(system_ctx.drive_root, result["record_id"])
+        assert record["brief"]["goal"] == "Check the routing"
+        assert record["brief"]["author_questions"] == list(ask.author_questions)
+        assert (record["panel"]["reason"], record["panel"]["reason_missing"]) == ("the route specialist", False)
+
+        bare = run_review_change(system_ctx, subject="system", surface="system")
+        assert seen["ask"] == SystemReviewAsk() and seen["ask"].effective_goal == STANDING_GOAL
+        assert load_record(system_ctx.drive_root, bare["record_id"])["brief"]["goal"] == STANDING_GOAL
+
+    def test_the_brief_carries_the_standing_questionnaire_and_the_calls_questions(self, system_ctx):
+        from ouroboros.deep_self_review import SystemReviewAsk, _ROLE_PROMPT, _retrieving_task
+
+        ask = SystemReviewAsk(goal="Check the routing", author_questions=("Does the pin reach the provider?",))
+        asked, _facts = _retrieving_task(system_ctx.repo_dir, system_ctx.drive_root, ask=ask)
+        bare, _facts = _retrieving_task(system_ctx.repo_dir, system_ctx.drive_root)
+        for text in (asked, bare):
+            assert text.startswith(_ROLE_PROMPT) and "Prioritize: CRITICAL > IMPORTANT > ADVISORY." in text
+        assert "The caller's goal for this review" in asked and "Check the routing" in asked
+        assert "Author questions (answer each as asked, after your own questionnaire):\n1. Does the pin reach the provider?" in asked
+        assert "Author questions" not in bare and "caller's goal" not in bare
+
     def test_the_record_binds_the_tree_the_reviewer_read_not_the_one_after(self, system_ctx, monkeypatch):
         """D1-06 / V13: the subject is snapshotted BEFORE the reviewer reads; a tree that
         moves under the review is disclosed, never passed off as the one read."""

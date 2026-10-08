@@ -807,22 +807,27 @@ def system_seat_plan(row: Any) -> Dict[str, Any]:
             "retrieves": True, "parts": [PART_CHANGE], "additional": False, "brief_sha": ""}
 
 
-def run_system_review(ctx: ToolContext, *, reviewer: str = "", effort: str = "", goal: str = "", llm: Any = None,
+def run_system_review(ctx: ToolContext, *, reviewer: str = "", effort: str = "", goal: str = "",
+                      author_questions: Sequence[str] = (), reason: str = "", llm: Any = None,
                       emit_progress: Any = None, deadline_at: str = "") -> Dict[str, Any]:
     """``/review`` = ``review_change(subject=system, surface=system)``: one seat (``system_review_row``)
     reads the whole system against BIBLE.md through ``deep_self_review`` (retrieving delivery, the
     memory whitelist inline) and writes a report, kept as that seat's answer in one ``surface=system``
-    record. The subject is the live tree snapshotted BEFORE the reviewer reads (a tree that moved
-    under the review is disclosed as a degraded reason). The report becomes ``memory/deep_review.md``
-    unless the review failed. Returns the record's result plus ``report`` and ``usage``;
-    ``BudgetExceeded`` propagates."""
+    record. ``goal``, ``author_questions`` and ``reason`` are the call's own ask beside the standing
+    questionnaire (``deep_self_review.SystemReviewAsk``): one typed object reaches the reviewer's brief
+    and the record. The subject is the live tree snapshotted BEFORE the reviewer reads (a tree that
+    moved under the review is disclosed as a degraded reason). The report becomes
+    ``memory/deep_review.md`` unless the review failed. Returns the record's result plus ``report``
+    and ``usage``; ``BudgetExceeded`` propagates."""
     from dataclasses import replace
 
-    from ouroboros.deep_self_review import run_deep_self_review
+    from ouroboros.deep_self_review import SystemReviewAsk, run_deep_self_review
     from ouroboros.review_records import new_review_wave_id
     from ouroboros.usage_accounting import UsageScope, current_usage_scope, usage_scope
 
     row = system_review_row(reviewer, effort)
+    ask = SystemReviewAsk(goal=str(goal or ""), author_questions=tuple(str(q) for q in author_questions if str(q or "").strip()),
+                          reason=str(reason or ""))
     system, drive, record_id = _system_repo(ctx), ledger_root(ctx), new_record_id()
     task_id, started = str(getattr(ctx, "task_id", "") or ""), utc_now_iso()
     if llm is None:
@@ -836,13 +841,12 @@ def run_system_review(ctx: ToolContext, *, reviewer: str = "", effort: str = "",
         report, usage = run_deep_self_review(
             system, pathlib.Path(ctx.drive_root), llm,
             emit_progress or getattr(ctx, "emit_progress_fn", None) or (lambda _text: None),
-            task_id=task_id, deadline_at=deadline_at, slot=row)
+            task_id=task_id, deadline_at=deadline_at, slot=row, ask=ask)
     usage = dict(usage or {})
     failed = str(usage.get("execution_status") or "") == "infra_failed"
     refused = failed and str(usage.get("reason_code") or "") == "deep_self_review_unavailable"
     cost = usage.get("cost")
     fact = body_fact(system, system_repo=system, data_dir=drive, treat_as_body=False)
-    goal = goal or "Deep self-review of the whole system against BIBLE.md."
     degraded = [f"system_review_failed: {usage.get('reason_code')}"] if failed and not refused else []
     after = _system_tree(system)
     if after != (tree, head):
@@ -852,7 +856,8 @@ def run_system_review(ctx: ToolContext, *, reviewer: str = "", effort: str = "",
         "review_wave_id": wave,
         "subject": {"root_kind": "system_repo", "root": str(system), "kind": "system", "base": head, "head": head,
                     "tree_sha": tree, "diff_sha": "", "checkout": ""},
-        "goal": goal, "layer": layer_for(fact), "body_fact": str(fact.body), "body_how": str(fact.how),
+        "goal": ask.effective_goal, "author_questions": list(ask.author_questions),
+        "layer": layer_for(fact), "body_fact": str(fact.body), "body_how": str(fact.how),
         "enforcement": str(get_review_enforcement() or ""),
         "structured": {"started_ts": started, "rows": [system_seat_plan(row)]},
         "triad_raw": [] if refused else [{
@@ -861,10 +866,13 @@ def run_system_review(ctx: ToolContext, *, reviewer: str = "", effort: str = "",
             "capability_delta": list(usage.get("capability_delta") or [])}],
         "dispatch_refusal": {"kind": "reviewer_unavailable", "message": report} if refused else None,
         "degraded_reasons": degraded,
+        "composition": "composed", "composition_reason": ask.reason, "chosen_by": "author" if reviewer else "owner",
     }, surface="system", record_id=record_id)
     _as_report(record, drive, "" if failed else report)
+    # One row by the author's choice (decision 3A) is not a narrowed pool: the reason is
+    # recorded as given and its absence is no ``reason_missing`` fact.
     record.panel = {**dict(record.panel or {}), "composition": "composed", "chosen_by": "author" if reviewer else "owner",
-                    "reason": "", "reason_missing": False, "reviewers_requested": [reviewer] if reviewer else [],
+                    "reason": ask.reason, "reason_missing": False, "reviewers_requested": [reviewer] if reviewer else [],
                     "additional": [], "reviewer_effort": {"order": effort}}
     payload, durable = _write(drive, record)
     if not failed:
@@ -884,7 +892,8 @@ def run_review_change(ctx: ToolContext, **args: Any) -> Dict[str, Any]:
     request = parse_request(args)
     if request.subject == "system":
         return run_system_review(ctx, reviewer=request.reviewers[0] if request.reviewers else "",
-                                 effort=request.reviewer_effort, goal=request.goal)
+                                 effort=request.reviewer_effort, goal=request.goal,
+                                 author_questions=request.author_questions, reason=request.reason)
     root_kind, root = resolve_review_root(ctx, binding, request)
     _verify_revisions(root, request)
     governance = _governance_repo(ctx)

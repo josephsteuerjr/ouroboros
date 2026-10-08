@@ -29,6 +29,7 @@ import json
 import pathlib
 import posixpath
 import time
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional, Tuple
 
 log = logging.getLogger(__name__)
@@ -112,6 +113,41 @@ _MANDATORY_READS = ("BIBLE.md",)
 # The inspection roots that resolve to the REPOSITORY (both name the review's
 # session root); a read under the data plane never satisfies a repository read.
 _REPO_ROOTS = frozenset({"", "active_workspace", "system_repo"})
+
+# The standing goal of a bare ``/review``: the one spelling the request, the ledger
+# record and the reviewer's brief share.
+STANDING_GOAL = "Deep self-review of the whole Ouroboros system against BIBLE.md."
+
+
+@dataclass(frozen=True)
+class SystemReviewAsk:
+    """What the caller asks of this self-review BESIDE its standing questionnaire —
+    ``review_change(subject=system, surface=system)``'s ``goal``, ``author_questions``
+    and ``reason``. ONE typed object reaches the brief builder and the ledger record,
+    so what the reviewer is asked and what the record says it was asked cannot
+    diverge: an empty goal is the standing goal; the questions are put to the
+    reviewer verbatim, after its own questionnaire; the reason names why this row
+    was chosen and is recorded with the panel."""
+
+    goal: str = ""
+    author_questions: Tuple[str, ...] = ()
+    reason: str = ""
+
+    @property
+    def effective_goal(self) -> str:
+        return self.goal.strip() or STANDING_GOAL
+
+    def brief_section(self) -> str:
+        """The caller's addition to the task text: its goal when it set one, then its
+        questions numbered as asked; ``""`` when the call asked nothing of its own."""
+        parts = []
+        if self.goal.strip():
+            parts.append(f"The caller's goal for this review (beside the standing review above): {self.goal.strip()}")
+        questions = [q.strip() for q in self.author_questions if str(q or "").strip()]
+        if questions:
+            asked = "".join(f"\n{number}. {question}" for number, question in enumerate(questions, 1))
+            parts.append(f"Author questions (answer each as asked, after your own questionnaire):{asked}")
+        return "\n\n".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -454,9 +490,11 @@ def _failed(text: str, *, reason_code: str, usage: Optional[Dict[str, Any]] = No
 def _retrieving_task(repo_dir: pathlib.Path, drive_root: pathlib.Path, *,
                      usable_window_tokens: int = 0,
                      required_sources: Optional[list] = None,
-                     required_sources_ref: Optional[dict] = None) -> Tuple[str, Dict[str, Any]]:
-    """The route-owned task text for a deep-review row: role + method, the
-    governance tiers this surface receives, and the memory whitelist inline
+                     required_sources_ref: Optional[dict] = None,
+                     ask: Optional[SystemReviewAsk] = None) -> Tuple[str, Dict[str, Any]]:
+    """The route-owned task text for a deep-review row: role + method, the caller's
+    own goal and questions when it set any (``ask``, after the standing questionnaire),
+    the governance tiers this surface receives, and the memory whitelist inline
     byte-exact.
 
     The tiers come from the ONE SSOT every review surface asks
@@ -511,6 +549,7 @@ def _retrieving_task(repo_dir: pathlib.Path, drive_root: pathlib.Path, *,
     sources = with_inline_sources(sources, governance.inline_whole_documents)
     parts = [
         _ROLE_PROMPT + _RETRIEVING_METHOD.format(bible_chars=len(bible)),
+        (ask or SystemReviewAsk()).brief_section(),
         governance.stable_inline,
         governance.selected_inline,
         governance.navigation,
@@ -563,11 +602,13 @@ def _run_retrieving_review(
     model: str = "",
     required_sources: Optional[list] = None,
     required_sources_ref: Optional[dict] = None,
+    ask: Optional[SystemReviewAsk] = None,
 ) -> Tuple[str, Dict[str, Any]]:
     """The row's delivery (native episode or delegated session): hand-built
     request, slot and assignment; the product is the
     report text. ``model`` is the sendable spelling ``deep_review_route``
-    resolved for the row (its own target when the caller names none)."""
+    resolved for the row (its own target when the caller names none); ``ask`` is
+    the caller's goal and questions, in the request's goal and the task text."""
     from dataclasses import asdict
 
     from ouroboros.config import get_finalization_grace_sec, get_task_abs_ceiling_sec, operation_window_sec
@@ -585,18 +626,20 @@ def _run_retrieving_review(
     # `utils.estimate_tokens` scale the tiering budgets with (4 chars a token).
     # A session row's harness model carries no evidenced window, so it resolves
     # the owner ceiling — the one bound that holds for every route.
+    ask = ask or SystemReviewAsk()
     task_text, task_facts = _retrieving_task(
         repo_dir, drive_root, required_sources=required_sources, required_sources_ref=required_sources_ref,
         usable_window_tokens=review_native_transcript_bound(
             sendable, output_reserve=_DEEP_MAX_OUTPUT_TOKENS, use_local=row.use_local,
             model_role=f"reviewer:{row.slot_id}",
-            credential_profile_id=row.profile_id or None) // 4)
+            credential_profile_id=row.profile_id or None) // 4,
+        ask=ask)
     policy = {"output_contract": _REPORT_CONTRACT, "native_data_root": str(drive_root)}
     policy.update(native_required_sources=task_facts["required_sources"],
                   native_required_sources_ref=required_sources_ref or {})
     request = ReviewRequest(
         surface="deep_self_review",
-        goal="Deep self-review of the whole Ouroboros system against BIBLE.md.",
+        goal=ask.effective_goal,
         task_id=task_id, call_type="deep_self_review",
         max_tokens=_DEEP_MAX_OUTPUT_TOKENS, no_proxy=True,
         session_root=str(repo_dir), session_task=task_text,
@@ -774,6 +817,7 @@ def run_deep_self_review(
     slot: Optional[ConfiguredReviewerSlot] = None,
     required_sources: Optional[list] = None,
     required_sources_ref: Optional[dict] = None,
+    ask: Optional[SystemReviewAsk] = None,
 ) -> Tuple[str, Dict[str, Any]]:
     """Execute the deep self-review on ``slot`` (default: the direct Main row).
 
@@ -787,7 +831,9 @@ def run_deep_self_review(
     exception that propagates is ``BudgetExceeded`` — the paid ledger's
     refusal is budget vocabulary for the agent's budget-pause rail, not a
     review error.
-    ``slot`` is the row ``/review`` chose (``review_change.system_review_row``).
+    ``slot`` is the row ``/review`` chose (``review_change.system_review_row``);
+    ``ask`` is what the call asked beside the standing questionnaire
+    (``SystemReviewAsk``: goal, author questions, reason).
     ``required_sources`` and its exact source handle may come from the caller's
     immutable review assembler. Without one, coverage names only the
     constitution actually delivered inline, never an inferred whole-tree scope.
@@ -807,7 +853,7 @@ def run_deep_self_review(
         return _run_retrieving_review(
             repo_dir, drive_root, llm, emit_progress, row, task_id=task_id, deadline_at=deadline_at,
             model=row.target_id if row.is_session else str(model or row.target_id),
-            required_sources=required_sources, required_sources_ref=required_sources_ref,
+            required_sources=required_sources, required_sources_ref=required_sources_ref, ask=ask,
         )
     except BudgetExceeded:
         # The paid ledger's refusal is BUDGET vocabulary, not a review error:
