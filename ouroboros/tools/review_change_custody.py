@@ -30,15 +30,23 @@ TOOL_NAME = "review_change"
 
 
 def attempt_record(wave: Any, ctx: Any, **fields: Any) -> Any:
-    """One attempt row of this wave (the gate's ``CommitAttemptRecord``): a review only."""
+    """One attempt row of this wave (the gate's ``CommitAttemptRecord``): a review only.
+    A paid row is bound to the process that pays it (``stamp_paid_review_owner``, as the
+    gate's rows are): should that process die mid-wave, the next server generation's
+    startup reconciliation proves the owner dead and closes the tokenless row as an
+    infra failure instead of leaving an open operation nobody can collect; a row whose
+    seats hold durable delegated tokens stays recoverable by their exact rejoin."""
+    from ouroboros.review_owner_custody import stamp_paid_review_owner
     from ouroboros.review_state import CommitAttemptRecord, make_repo_key
 
-    return CommitAttemptRecord(
+    attempt = CommitAttemptRecord(
         ts=utc_now_iso(), commit_message=wave.label, task_id=str(getattr(ctx, "task_id", "") or ""),
         root_task_id=wave.root_task_id, repo_key=make_repo_key(wave.root), tool_name=TOOL_NAME,
         pre_review_fingerprint=str(wave.frozen.diff_sha), review_retry_key=wave.retry_key,
         rebuttal_sha256=wave.rebuttal_sha, review_contract_fingerprint=wave.contract_fp,
         review_record_id=wave.record_id, **fields)
+    stamp_paid_review_owner(attempt, paid=bool(getattr(attempt, "paid", False)))
+    return attempt
 
 
 def pending_round_attempt(ctx: Any, *, root: pathlib.Path, retry_key: str) -> Optional[Any]:

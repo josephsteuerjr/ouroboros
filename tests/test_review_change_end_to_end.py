@@ -419,6 +419,125 @@ def test_a_rerun_after_a_restart_rejoins_the_pending_round_from_durable_state(tm
     assert not checkout.exists()
 
 
+class _ProcessDied(BaseException):
+    """The review process dies mid-wave: nothing settles, no cleanup of ours runs."""
+
+
+def _dies_right_after_the_paid_stamp(monkeypatch):
+    """The process is lost the moment the wave's paid row is durable: the row says
+    ``reviewing`` with its seats reserved and tokenless, and no seat ever answers."""
+    import ouroboros.tools.review_change as review_change_mod
+    from ouroboros.review_dispatch import ReviewPaidStamp
+
+    real = review_change_mod.install_paid_stamp
+
+    def install(ctx, wave):
+        holder = real(ctx, wave)
+        write = ctx._review_paid_stamp
+
+        def write_then_die() -> None:
+            write()
+            raise _ProcessDied()
+
+        ctx._review_paid_stamp = ReviewPaidStamp(write_then_die, fail_closed=True)
+        return holder
+
+    monkeypatch.setattr(review_change_mod, "install_paid_stamp", install)
+
+
+def _restart(monkeypatch, *, dead_pid: int):
+    """The next server generation: a new custody session, the old process proven dead,
+    and the process-local registries of the old one gone with it."""
+    import ouroboros.platform_layer as platform_layer
+    import ouroboros.process_custody as process_custody
+    from ouroboros import review_custody
+
+    monkeypatch.setattr(process_custody, "current_custody_session_id", lambda: "next-generation")
+    monkeypatch.setattr(platform_layer, "pid_is_alive", lambda pid: int(pid) != dead_pid)
+    with review_custody._ACTIVE_LOCK:
+        review_custody._ACTIVE.clear()
+        review_custody._NO_RESEND.clear()
+
+
+def test_a_wave_lost_to_process_death_is_closed_at_startup_and_a_new_wave_may_pay(tmp_path, monkeypatch):
+    """D2-02. The paid attempt row of a ``review_change`` wave is bound to the process
+    that pays it, as the gate's rows are. When that process dies mid-wave (a tokenless
+    seat still reserved), the next generation's startup reconciliation proves the owner
+    dead and closes the row as an infra failure — so a rerun of the round pays a NEW
+    wave instead of forever collecting an open operation nobody can finish."""
+    import os
+
+    from ouroboros.review_owner_custody import reconcile_review_custody_on_process_start
+
+    ctx, project = _foreign_project(tmp_path, monkeypatch)
+    (project / "app.py").write_text("VALUE = 2  # staged\n", encoding="utf-8")
+    shared.git(project, "add", "app.py")
+    sends: list[dict] = []
+    monkeypatch.setattr(substrate.ReviewCoordinator, "_run_slot", shared.golden_physical_seam(sends))
+    ask = dict(subject="index", goal="Bump", scope="app.py")
+    with monkeypatch.context() as dying:
+        _dies_right_after_the_paid_stamp(dying)
+        with pytest.raises(_ProcessDied):
+            run_review_change(ctx, **ask)
+    assert sends == []  # paid, then lost before any seat was sent
+    rows = _paid_rows(ctx.drive_root, project)
+    assert len(rows) == 1 and rows[0].status == "reviewing", rows
+    assert all(not row.get("pending_invocation_id") for row in rows[0].triad_raw_results)  # tokenless
+    lost_record = rows[0].review_record_id
+
+    _restart(monkeypatch, dead_pid=os.getpid())
+    outcome = reconcile_review_custody_on_process_start(ctx.drive_root)
+    assert [row.review_record_id for row in outcome["reconciled"]] == [lost_record], outcome
+    rows = _paid_rows(ctx.drive_root, project)
+    assert (rows[0].status, rows[0].block_reason, rows[0].late_result_pending) == ("failed", "infra_failure", False)
+
+    restarted = ToolContext(repo_dir=ctx.repo_dir, system_repo_dir=ctx.system_repo_dir, drive_root=ctx.drive_root,
+                            workspace_root=project, workspace_mode="external", task_id=ctx.task_id)
+    rerun = run_review_change(restarted, **ask)
+    assert (rerun["state"], rerun["aggregate"], rerun["reused"]) == ("settled", "PASS", False), rerun
+    assert rerun["record_id"] != lost_record
+    assert sorted(send["slot_id"] for send in sends) == ["s1", "t1", "t2"]  # a new wave, nothing rejoined
+    assert all(not send["reconcile_only"] for send in sends)
+    rows = _paid_rows(ctx.drive_root, project)
+    assert [row.status for row in rows] == ["failed", "reviewed"]
+
+
+def test_the_same_restart_keeps_a_tokened_pending_round_for_its_exact_rejoin(tmp_path, monkeypatch):
+    """Control for the owner stamp: a round whose delegated seat holds a durable start
+    token is NOT closed by the dead owner's reconciliation — the token is the recoverable
+    fact — and the restarted process rejoins exactly it."""
+    import os
+
+    from ouroboros.review_owner_custody import reconcile_review_custody_on_process_start
+
+    ctx, project = _foreign_project(tmp_path, monkeypatch)
+    (project / "app.py").write_text("VALUE = 2  # staged\n", encoding="utf-8")
+    shared.git(project, "add", "app.py")
+    sends: list[dict] = []
+    answer, starts = _pending_then_answering_seat("t2", "invocation-t2-owner-died")
+    monkeypatch.setattr(substrate.ReviewCoordinator, "_run_slot", shared.golden_physical_seam(sends, answer=answer))
+    ask = dict(subject="index", goal="Bump", scope="app.py")
+
+    first = run_review_change(ctx, **ask)
+    assert first["state"] == "pending" and len(sends) == 3, first
+    rows = _paid_rows(ctx.drive_root, project)
+    assert rows[0].review_owner_pid == os.getpid() and rows[0].late_result_pending
+
+    _restart(monkeypatch, dead_pid=os.getpid())
+    assert reconcile_review_custody_on_process_start(ctx.drive_root)["reconciled"] == []
+    rows = _paid_rows(ctx.drive_root, project)
+    assert rows[0].late_result_pending and rows[0].review_record_id == first["record_id"]
+
+    restarted = ToolContext(repo_dir=ctx.repo_dir, system_repo_dir=ctx.system_repo_dir, drive_root=ctx.drive_root,
+                            workspace_root=project, workspace_mode="external", task_id=ctx.task_id)
+    rerun = run_review_change(restarted, **ask)
+    assert (rerun["state"], rerun["aggregate"], rerun["record_id"]) == ("settled", "PASS", first["record_id"]), rerun
+    assert len(sends) == 4 and sends[3]["slot_id"] == "t2" and sends[3]["reconcile_only"] is True
+    assert sends[3]["retry_state"] == {"pending_invocation_id": "invocation-t2-owner-died"} and len(starts) == 1
+    rows = _paid_rows(ctx.drive_root, project)
+    assert len(rows) == 1 and not rows[0].late_result_pending
+
+
 def _pending_once_seat(seat_id: str, token: str):
     """The FIRST start of ``seat_id`` goes in flight with an unknown outcome (task A's
     wave); every later new start answers at once (another task's wave of the same
