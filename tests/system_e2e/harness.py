@@ -190,6 +190,22 @@ FINALIZATION_MARKERS = ("[OWNER_STOP]", "[FINALIZE_NOW]")
 # pre-review episode and any future native surface classify by NAME.
 _SURFACE_LINE_RE = re.compile(r"^Surface: ([A-Za-z_]+)$", re.MULTILINE)
 
+# A pool row delivers as a packet or as a native episode (catalog ``delivery``),
+# and both forms of ONE surface answer that surface's output contract — so the
+# stub names the native episode by the SAME kind as the surface's packet: a
+# scripted verdict or a call count reaches a native seat and a packet seat alike.
+# The native skill-review episode carries only the dynamic tail of the skill
+# pack (skill_review_passes: the stable prefix with SKILL_REVIEW_MARKER stays
+# behind), and the native acceptance episode carries no packet marker at all;
+# their surface line is the only name they have. An unknown surface stays a
+# typed ``native_episode``.
+_NATIVE_SURFACE_KINDS = {
+    TWO_PART_SURFACE: "two_part_review",   # the commit gate's one brief of two parts (contract B)
+    "task_acceptance": "acceptance",
+    "skill_review": "skill_review",
+    "advisory_review": "advisory_review",
+}
+
 MARKER_SOURCES = {
     REVIEWER_SLOT_MARKER: "ouroboros/review_execution.py",
     ACCEPTANCE_KEYS_MARKER: "ouroboros/review_execution.py",
@@ -272,10 +288,7 @@ def classify_call(body: dict) -> str:
         return "plan_review"
     if NATIVE_EPISODE_MARKER in full:
         match = _SURFACE_LINE_RE.search(full)
-        surface = match.group(1) if match else ""
-        if surface == TWO_PART_SURFACE:
-            return "two_part_review"   # the commit gate's retrieving seat (contract B)
-        return surface if surface == "advisory_review" else "native_episode"
+        return _NATIVE_SURFACE_KINDS.get(match.group(1) if match else "", "native_episode")
     if REVIEWER_SLOT_MARKER in full:
         return "acceptance" if ACCEPTANCE_KEYS_MARKER in full else "reviewer_slot"
     if any(marker in full for marker in FINALIZATION_MARKERS):
