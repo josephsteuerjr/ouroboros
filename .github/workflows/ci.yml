@@ -1307,7 +1307,10 @@ jobs:
             syft_binary: syft.exe
     runs-on: ${{ matrix.os }}
     # Build workers have no signing Environment. Signing uses a separate
-    # fresh Windows runner after this worker has exited.
+    # fresh Windows runner after this worker has exited. The runner drops
+    # empty outputs, so only the Windows leg sets this one.
+    outputs:
+      windows_archive_sha256: ${{ matrix.os == 'windows-latest' && steps.release_asset.outputs.sha256 || '' }}
     env:
       OUROBOROS_RELEASE_TAG: ${{ github.ref_name }}
       # Only non-secret booleans are job-wide. Credential values are exposed
@@ -1491,27 +1494,26 @@ jobs:
       - name: Build Windows executable
         if: matrix.os == 'windows-latest'
         shell: pwsh
-        env:
-          OUROBOROS_WINDOWS_DEFER_ARCHIVE: '1'
         run: .\build_windows.ps1
 
-      # Unprivileged build handoff; never a release asset. Failure leaves no
-      # signed Windows archive for release proof or publication.
-      - name: Transfer unsigned Windows payload to the isolated signing runner
-        if: matrix.os == 'windows-latest'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: windows-unsigned-payload
-          path: dist/Ouroboros/
-          include-hidden-files: true
-          if-no-files-found: error
-          retention-days: 1
-
       - name: Locate final release archive
-        if: matrix.os != 'windows-latest'
         id: release_asset
         shell: bash
         run: python scripts/release_proof.py locate --directory dist --github-output "$GITHUB_OUTPUT"
+
+      # Unprivileged handoff, never a release asset: windows-sign signs and
+      # repacks it when ESIGNER_CERT_SHA1 is set, otherwise windows-proof
+      # proves it as the explicitly unsigned release ZIP. Both check the
+      # job-output digest before extracting.
+      - name: Transfer unsigned Windows archive
+        if: matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-unsigned-archive
+          path: ${{ steps.release_asset.outputs.path }}
+          overwrite: true
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Smoke final macOS DMG
         id: smoke_macos
@@ -1962,9 +1964,14 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  # Build and sign never share a runner. Protected approval applies only here.
+  # Windows signing is selected by configuration. With ESIGNER_CERT_SHA1 unset
+  # (forks, repositories without a certificate) no job binds the signing
+  # Environment and windows-proof proves the build's ZIP as explicitly
+  # unsigned. Once it is set, signing is required: any failure here, a
+  # malformed thumbprint or a missing secret included, blocks the whole
+  # release. Build and sign never share a runner.
   windows-sign:
-    if: ${{ always() && !cancelled() && startsWith(github.ref, 'refs/tags/v') && needs.build.result == 'success' && needs.release-preflight.result == 'success' && needs.release-preflight.outputs.tag_valid == 'true' }}
+    if: ${{ always() && !cancelled() && startsWith(github.ref, 'refs/tags/v') && vars.ESIGNER_CERT_SHA1 != '' && needs.build.result == 'success' && needs.release-preflight.result == 'success' && needs.release-preflight.outputs.tag_valid == 'true' }}
     needs: [build, release-preflight]
     runs-on: windows-latest
     environment: windows-release-signing
@@ -1973,6 +1980,8 @@ jobs:
     permissions:
       contents: read
       artifact-metadata: write
+    outputs:
+      archive_sha256: ${{ steps.release_asset.outputs.sha256 }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -1981,11 +1990,17 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.10'
-      - name: Download unsigned payload (never a release asset)
+      - name: Download unsigned Windows archive (never a release asset)
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: windows-unsigned-payload
-          path: dist/Ouroboros
+          name: windows-unsigned-archive
+          path: unsigned
+      - name: Check unsigned archive digest before extraction
+        id: unsigned_asset
+        shell: bash
+        env:
+          EXPECTED_SHA256: ${{ needs.build.outputs.windows_archive_sha256 }}
+        run: python scripts/release_proof.py locate --directory unsigned --expect-sha256 "$EXPECTED_SHA256" --github-output "$GITHUB_OUTPUT"
       - name: Sign, verify and package Windows executable
         shell: pwsh
         env:
@@ -1994,49 +2009,54 @@ jobs:
           ESIGNER_CREDENTIAL_ID: ${{ secrets.ESIGNER_CREDENTIAL_ID }}
           ESIGNER_TOTP_SECRET: ${{ secrets.ESIGNER_TOTP_SECRET }}
           ESIGNER_CERT_SHA1: ${{ vars.ESIGNER_CERT_SHA1 }}
-        run: .\scripts\sign_windows_release.ps1
+          UNSIGNED_ARCHIVE: ${{ steps.unsigned_asset.outputs.path }}
+        run: .\scripts\sign_windows_release.ps1 -UnsignedArchive $env:UNSIGNED_ARCHIVE
       - name: Locate final release archive
         id: release_asset
         shell: bash
         run: python scripts/release_proof.py locate --directory dist --github-output "$GITHUB_OUTPUT"
-      - name: Record signed executable digest for isolated proof runner
-        shell: pwsh
-        run: |
-          $Hash = (Get-FileHash -LiteralPath 'dist\Ouroboros\Ouroboros.exe' -Algorithm SHA256).Hash
-          Set-Content -LiteralPath 'dist\windows-signed-exe.sha256' -Value $Hash -NoNewline
-      - name: Transfer signed ZIP and digest (not yet release proof)
+      - name: Transfer signed Windows archive (not yet release proof)
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: windows-signed-staging
-          path: |
-            ${{ steps.release_asset.outputs.path }}
-            dist/windows-signed-exe.sha256
+          name: windows-signed-archive
+          path: ${{ steps.release_asset.outputs.path }}
+          overwrite: true
           if-no-files-found: error
           retention-days: 1
 
-  # No eSigner secrets on this fresh runner: smoke executes the packaged app,
-  # creates the signed ZIP proof/SBOM/attestations, then uploads release assets.
+  # No eSigner secrets on this fresh runner, in either mode: it checks the
+  # final ZIP against its producer's job-output digest before extracting,
+  # verifies the signature when signing is configured, smokes the packaged
+  # app, then records the proof, SBOM and attestations for the release asset.
   windows-proof:
-    if: ${{ always() && !cancelled() && needs.windows-sign.result == 'success' }}
-    needs: windows-sign
+    if: ${{ always() && !cancelled() && startsWith(github.ref, 'refs/tags/v') && needs.build.result == 'success' && (vars.ESIGNER_CERT_SHA1 == '' || needs.windows-sign.result == 'success') }}
+    needs: [build, windows-sign]
     runs-on: windows-latest
     permissions:
       contents: read
       id-token: write
       attestations: write
       artifact-metadata: write
+    env:
+      WINDOWS_SIGNER_THUMBPRINT: ${{ vars.ESIGNER_CERT_SHA1 }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: ./.github/actions/setup-python-env
-      - name: Download signed ZIP and executable digest
+      - name: Download final Windows archive
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: windows-signed-staging
+          name: ${{ vars.ESIGNER_CERT_SHA1 != '' && 'windows-signed-archive' || 'windows-unsigned-archive' }}
           path: dist
-      - name: Locate final signed release archive
+      - name: Check final archive digest before extraction
         id: release_asset
         shell: bash
-        run: python scripts/release_proof.py locate --directory dist --github-output "$GITHUB_OUTPUT"
+        env:
+          SIGNED_SHA256: ${{ needs.windows-sign.outputs.archive_sha256 }}
+          UNSIGNED_SHA256: ${{ needs.build.outputs.windows_archive_sha256 }}
+        run: |
+          EXPECTED_SHA256="$UNSIGNED_SHA256"
+          if [ -n "$WINDOWS_SIGNER_THUMBPRINT" ]; then EXPECTED_SHA256="$SIGNED_SHA256"; fi
+          python scripts/release_proof.py locate --directory dist --expect-sha256 "$EXPECTED_SHA256" --github-output "$GITHUB_OUTPUT"
       - name: Smoke final Windows archive
         id: smoke_windows
         shell: pwsh
@@ -2046,11 +2066,9 @@ jobs:
           $HomeDir = Join-Path $env:RUNNER_TEMP "ouroboros-smoke-home"
           New-Item -ItemType Directory -Force -Path $SmokeRoot, $HomeDir | Out-Null
           Expand-Archive -Path "${{ steps.release_asset.outputs.path }}" -DestinationPath $SmokeRoot
-          & .\scripts\verify_windows_signature.ps1 -Executable "$SmokeRoot\Ouroboros\Ouroboros.exe" -ExpectedThumbprint '${{ vars.ESIGNER_CERT_SHA1 }}'
-          $ExpectedExeHash = (Get-Content -LiteralPath 'dist\windows-signed-exe.sha256' -Raw).Trim()
-          if ($ExpectedExeHash -notmatch '^[a-fA-F0-9]{64}$' -or
-              (Get-FileHash "$SmokeRoot\Ouroboros\Ouroboros.exe" -Algorithm SHA256).Hash -ne $ExpectedExeHash) {
-              throw 'Archive executable differs from the verified signed executable'
+          if ($env:WINDOWS_SIGNER_THUMBPRINT) {
+              $Signer = & .\scripts\verify_windows_signature.ps1 -Executable "$SmokeRoot\Ouroboros\Ouroboros.exe" -ExpectedThumbprint $env:WINDOWS_SIGNER_THUMBPRINT
+              Add-Content -Path $env:GITHUB_OUTPUT -Value "signer_thumbprint=$($Signer.Thumbprint)", "signer_publisher=$($Signer.Publisher)"
           }
           # PyInstaller 6 onedir puts datas under _internal\ (the runtime resolves
           # the bundle root itself — packaged_cli walks Resources/Frameworks/_internal).
@@ -2077,14 +2095,21 @@ jobs:
 
       - name: Record packaged artifact smoke
         shell: bash
+        env:
+          SIGNER_THUMBPRINT: ${{ steps.smoke_windows.outputs.signer_thumbprint }}
+          SIGNER_PUBLISHER: ${{ steps.smoke_windows.outputs.signer_publisher }}
         run: |
+          SIGNED=()
+          if [ -n "$WINDOWS_SIGNER_THUMBPRINT" ]; then
+            SIGNED=(--authenticode-thumbprint "$SIGNER_THUMBPRINT" --authenticode-publisher "$SIGNER_PUBLISHER"
+                    --check authenticode_signer --check timestamp --check signed_payload_archive_match)
+          fi
           python scripts/release_proof.py record-smoke \
             --proof-id windows-x64 --artifact "${{ steps.release_asset.outputs.path }}" \
             --output dist/release-smoke-windows-x64.json \
             --commit "$GITHUB_SHA" --tag "$GITHUB_REF_NAME" \
             --check embedded_repo_bundle --check embedded_claudexor_runtime \
-            --check embedded_betterleaks_runtime --check packaged_cli_help \
-            --check authenticode_signer --check timestamp --check signed_payload_archive_match
+            --check embedded_betterleaks_runtime --check packaged_cli_help "${SIGNED[@]}"
       - name: Install digest-pinned Syft
         id: syft
         shell: bash
@@ -2106,24 +2131,25 @@ jobs:
             "$ARCHIVE" "$TOOL_DIR"
           test -f "$TOOL_DIR/syft.exe"
           echo "path=$TOOL_DIR/syft.exe" >> "$GITHUB_OUTPUT"
-      - name: Generate CycloneDX SBOM from signed packaged payload
+      - name: Generate CycloneDX SBOM from final Windows payload
         shell: bash
         run: |
           "${{ steps.syft.outputs.path }}" "dir:${{ steps.smoke_windows.outputs.sbom_path }}" \
             --output cyclonedx-json=dist/sbom-windows-x64.cdx.json
-      - name: Attest signed Windows build provenance
+      - name: Attest Windows build provenance
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
         with:
           subject-path: ${{ steps.release_asset.outputs.path }}
-      - name: Attest signed Windows SBOM
+      - name: Attest Windows SBOM
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
         with:
           subject-path: ${{ steps.release_asset.outputs.path }}
           sbom-path: dist/sbom-windows-x64.cdx.json
-      - name: Upload signed Windows release asset and proof
+      - name: Upload Windows release asset and proof
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ouroboros-windows-latest
+          overwrite: true
           path: |
             ${{ steps.release_asset.outputs.path }}
             dist/release-smoke-windows-x64.json
@@ -2268,6 +2294,9 @@ jobs:
         env:
           ANDROID_BUILD_RESULT: ${{ needs.android-build.result }}
           ANDROID_ATTESTATION_RESULT: ${{ steps.verify_artifacts.outputs.android_result }}
+          # Empty selects the explicitly unsigned Windows ZIP; set, the proof
+          # receipt must name exactly this verified signer.
+          WINDOWS_SIGNER_THUMBPRINT: ${{ vars.ESIGNER_CERT_SHA1 }}
         shell: bash
         run: |
           set -euo pipefail
@@ -2282,6 +2311,7 @@ jobs:
             --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
             --android-build-result "$ANDROID_BUILD_RESULT" \
             --android-attestation-result "$ANDROID_ATTESTATION_RESULT" \
+            --windows-signer-thumbprint "$WINDOWS_SIGNER_THUMBPRINT" \
             --github-output "$GITHUB_OUTPUT" \
             --notes-output release-notes.md \
             "${ARGS[@]}"

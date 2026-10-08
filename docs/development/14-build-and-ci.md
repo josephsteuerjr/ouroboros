@@ -142,61 +142,71 @@ Prerelease artifacts may intentionally be unsigned and must report that state; s
 
 ### Windows Authenticode release signing (SSL.com eSigner)
 
-The tag-only `build` matrix binds no signing Environment and receives no
-eSigner secrets: its Windows shard defers ZIP creation
-(`OUROBOROS_WINDOWS_DEFER_ARCHIVE=1`) and uploads an unsigned intermediate.
-A separate `windows-sign` job on a fresh runner binds the
-`windows-release-signing` Environment, downloads it and runs
+The repository variable `ESIGNER_CERT_SHA1` selects the mode for every `v*`
+tag, prereleases included. **Unset** (forks, any repository without a
+certificate): no job binds a signing Environment or sees a signing secret, and
+the release publishes an explicitly unsigned Windows ZIP whose receipt and
+notes say so. **Set**: signing is required. A malformed value, a missing
+secret, a tool, signature, timestamp or digest failure stops the whole
+seven-asset release; it never falls back to an unsigned ZIP.
+
+The `build` matrix holds no eSigner secret. Its Windows shard always packs the
+unsigned ZIP with `scripts/pack_windows_archive.ps1`, the one packer for local
+and both release modes (ZipFile keeps hidden files such as `.local-browsers`;
+the ZIP is re-extracted and must match every directory and file digest), and
+hands it over with its digest as a job output. When configured, a separate
+`windows-sign` job on a fresh runner binds the `windows-release-signing`
+Environment, checks that digest before extracting, and runs
 `scripts/sign_windows_release.ps1`: SSL.com's CodeSignTool 1.3.2 from its
 versioned GitHub release asset, SHA-256
-`4afc32e8b7f79bbe1de7e4e7049aaad4e0f754357613b9bbec0e3052f06fd36b`, invoked
-through its bundled `java.exe -jar` (the vendor BAT expands `%*` unquoted);
-it signs `Ouroboros.exe`, checks Authenticode status, the configured SHA-1
-signer thumbprint and `signtool verify /pa /tw /v` with zero warnings via
-`verify_windows_signature.ps1`, then archives the payload with a per-file
-digest audit (hidden files included). A secret-free `windows-proof` runner
-re-verifies the extracted executable against the signer-written digest, runs
-the packaged smoke, records `authenticode_signer`, `timestamp` and
-`signed_payload_archive_match` in the proof, and attests the SBOM. Any missing
-input, digest mismatch, signature, timestamp or archive failure stops this
-chain, publication requires `windows-proof`, and the release downloads only
-`ouroboros-*` artifacts. Build, signing and proof stay on three distinct
-ephemeral runners; vendor output is discarded, never printed or uploaded; the
-upstream Action's moving branch and command-logging stay out.
+`4afc32e8b7f79bbe1de7e4e7049aaad4e0f754357613b9bbec0e3052f06fd36b`, run with
+the runner's maintained Java 11 (`JAVA_HOME_11_X64`; the bundled 2019 JDK
+lacks the root of `cs.ssl.com`'s current chain) through `java -jar` (the
+vendor BAT expands `%*` unquoted). It signs `Ouroboros.exe`, checks
+Authenticode status, the configured signer and `signtool verify /pa /tw /v` by
+documented exit code (0 passes; 1 fails; 2 warns, e.g. no timestamp), repacks
+and outputs the final ZIP digest. Vendor output is discarded, never printed,
+redacted or uploaded; each stage fails with its own message and says when the
+cause is not visible. The secret-free `windows-proof` runner checks the
+producer's digest before extracting, re-verifies the signature when
+configured, runs the packaged smoke, and records the signer thumbprint and
+publisher (or `unsigned`). Only signed receipts carry `authenticode_signer`,
+`timestamp` and `signed_payload_archive_match` checks. Both modes attest the
+ZIP and SBOM. Assembly requires a receipt matching `ESIGNER_CERT_SHA1`
+and downloads only `ouroboros-*` artifacts; intermediate uploads overwrite on a
+re-run.
 
-Owner setup, by role: the **repository owner** (the only admin) creates the
-Environment `windows-release-signing` with a `v*` tag rule and no required
-reviewer (owner decision 2026-10-07: tags sign without manual approval; the
-Environment confines the secrets to tag deployments). The **certificate
-holder** stores the four **environment-scoped** secrets `ESIGNER_USERNAME`,
-`ESIGNER_PASSWORD`, `ESIGNER_CREDENTIAL_ID` (the order's *SIGNING CREDENTIALS*
-section) and `ESIGNER_TOTP_SECRET` (the `secret code` beside the order's
-*eSigner.com QR Code*) with `gh secret set <NAME> --env
-windows-release-signing`, and sets `ESIGNER_CERT_SHA1`, a **nonsecret
-repository-level Actions variable** holding the certificate's 40-hex SHA-1
-thumbprint, which the secret-free proof job reads without joining the
-Environment.
+Setup, by role: the **repository owner** creates the Environment
+`windows-release-signing` with a `v*` tag rule and no required reviewer, so a
+tag signs without a manual approval. The **certificate holder** stores the
+four **environment-scoped** secrets `ESIGNER_USERNAME`, `ESIGNER_PASSWORD`,
+`ESIGNER_CREDENTIAL_ID` (the order's *SIGNING CREDENTIALS* section) and
+`ESIGNER_TOTP_SECRET` (the `secret code` beside the order's *eSigner.com QR
+Code*) with `gh secret set <NAME> --env windows-release-signing`, then sets
+`ESIGNER_CERT_SHA1`, a **nonsecret repository-level Actions variable** holding
+the certificate's 40-hex SHA-1 thumbprint; setting it turns signing on.
 Repository secrets would be readable from any branch push. Never paste values
 into an issue, chat, workflow or log; an exposed TOTP seed is regenerated at
-SSL.com. Every `v*` tag spends one eSigner signing (Tier 1 annual: 240 a year,
-pooled); an exhausted pool fails `windows-sign` and with it the whole
-seven-asset release, never an unsigned ZIP.
+SSL.com. Each `windows-sign` run spends one eSigner signing, a re-run of that
+job another. The plan's signing count is not a hard stop: SSL.com's service
+agreement invoices signings beyond the subscription tier, and this repository
+cannot see the holder's balance or order terms.
 
-Owner decision (2026-09-28): the first live run publishes the GitHub Release
-right after a green tag run, with no second pre-publication Environment; the
-colleague then downloads the Windows ZIP, checks `Get-AuthenticodeSignature`
-and `signtool verify /pa /tw /v` on `Ouroboros.exe`, compares signer
-thumbprint and ZIP hash with the proof, launches the app and reports run, tag,
-SHA and outcome. Until then live Windows signing is **unverified**: this
-static contract proves neither that the IV credential signs, nor that the
-timestamp is accepted on the runner, nor the publisher a downloaded app shows
-(an OV/IV signature names it while SmartScreen reputation still accrues).
+A green tag run publishes directly. Anyone can check a downloaded ZIP with
+`scripts/verify_windows_signature.ps1 -Executable Ouroboros\Ouroboros.exe
+-ExpectedThumbprint <signerThumbprint from release-evidence.json>` (Windows
+SDK `signtool` required). Until a published release has been checked and
+launched on Windows, live signing is **unverified**: these tests prove neither
+that the credential signs, nor that the runner accepts the timestamp, nor the
+publisher a downloaded app shows. Only `Ouroboros.exe` is signed, not the
+bundled runtimes or later Git updates of the code, and SmartScreen still
+weighs reputation.
 
 ### Release proof capsule
 
 The artifact pipeline — per-platform archive smokes, native Linux packages, the AppImage custody chain, SBOM and attestation binding, and the seven-required-desktop plus optional-Android release job — lives in ARCHITECTURE §8 and `.github/workflows/ci.yml`. The honesty invariants a change must preserve:
 
-- On a valid release tag, `release-preflight` records the tag/VERSION and prerelease state before checking its required job results. A failed test prerequisite makes the preflight red but permits the desktop build to run as a diagnostic rehearsal; macOS signing/notarization can still consume configured services and record attestations, but protected Windows signing requires a green preflight, so its signed ZIP is unavailable on a diagnostic red run; no GitHub Release is published; the release job still requires a successful preflight. Android publisher builds retain their Android proof dependencies because the signed source/APK pair is optional release content, so failed or skipped Android proofs exclude both optional assets; the diagnostic build itself never invokes the release job; if the required tests later pass on a rerun, that same-tag payload may be published with provenance bound to the same SHA.
+- On a valid release tag, `release-preflight` records the tag/VERSION and prerelease state before checking its required job results. A failed test prerequisite makes the preflight red but permits the desktop build to run as a diagnostic rehearsal; macOS signing/notarization can still consume configured services and record attestations, but configured Windows signing requires a green preflight, so a diagnostic red run has no signed ZIP; no GitHub Release is published; the release job still requires a successful preflight. Android publisher builds retain their Android proof dependencies because the signed source/APK pair is optional release content, so failed or skipped Android proofs exclude both optional assets; the diagnostic build itself never invokes the release job; if the required tests later pass on a rerun, that same-tag payload may be published with provenance bound to the same SHA.
 - Publication is draft-first with a per-tag concurrency group; the remote
   annotated tag is revalidated against the event SHA immediately before
   draft creation AND again before publication, and a published release is

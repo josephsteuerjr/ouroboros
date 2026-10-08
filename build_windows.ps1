@@ -189,12 +189,9 @@ if ($TooLong) {
 
 Write-Host ""
 Write-Host "=== Creating archive ==="
-if ($env:OUROBOROS_WINDOWS_DEFER_ARCHIVE -eq "1") {
-    # The separate protected signing job verifies the executable before packaging.
-    Write-Host "Archive deferred until the isolated signing job completes."
-    return
-}
-Compress-Archive -Path "dist\Ouroboros" -DestinationPath "dist\$ArchiveName" -Force
+# Always the unsigned ZIP; a release tag with a configured certificate signs
+# Ouroboros.exe and repacks it in the separate windows-sign job.
+& "$PSScriptRoot\scripts\pack_windows_archive.ps1" -PayloadRoot "dist\Ouroboros" -Archive "dist\$ArchiveName"
 
 Write-Host ""
 Write-Host "=== Done ==="
