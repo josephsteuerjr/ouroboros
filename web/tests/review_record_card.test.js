@@ -50,6 +50,12 @@ test('w3: seats is the assigned count and an added critic is said apart, never f
         'whole review pool · chosen by owner · seats=3 · distinct models=3 · distinct engines=3 · additional seats=1');
     assert.doesNotMatch(panelFactsText({ ...POOL_FACTS, additional_seats: 0 }), /additional/);
     assert.equal(panelFactsText({ ...POOL_FACTS, additional_seats: 0 }), panelFactsText(POOL_FACTS));
+    // The block review_change writes for one assigned seat beside one added critic (NEW-W3):
+    // the models are everyone's, the seat count is the assigned seat alone.
+    const oneAndCritic = { ...POOL_FACTS, seats: 1, additional_seats: 1, distinct_models: 2, distinct_engines: 2 };
+    assert.equal(panelFactsText(oneAndCritic),
+        'whole review pool · chosen by owner · seats=1 · distinct models=2 · distinct engines=2 · additional seats=1');
+    assert.doesNotMatch(panelFactsText(oneAndCritic), /repeated runs/);
 });
 
 test('three runs of one model are said to be repeats, not independent reviewers', () => {

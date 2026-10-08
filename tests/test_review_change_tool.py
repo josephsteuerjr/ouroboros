@@ -512,6 +512,15 @@ def test_coupling_only_critics_answer_outside_the_quorum(h: Harness) -> None:
     assert [f["seat_id"] for f in result["findings"]["additional_findings"]] == [critic]
     assert result["findings"]["critical_findings"] == [] and result["panel"]["additional"] == [critic]
     assert {row["seat_id"]: row["additional"] for row in result["rows"]} == {pool[0]: False, critic: True}
+    # NEW-W3: the FINAL record's panel block describes everyone who sat — one assigned seat,
+    # one added critic, two models — while the verdict and its quorum stay the assigned seat's.
+    record = h.written[result["record_id"]]
+    models = {row["seat_id"]: row["observed_model"] for row in record["rows"]}
+    assert len(set(models.values())) == 2, "the fixture seats two different models"
+    panel = record["panel"]
+    assert (panel["seats"], panel["additional_seats"], panel["assigned"], panel["additional"]) == (1, 1, [pool[0]], [critic])
+    assert (panel["distinct_models"], panel["distinct_engines"], panel["single_model_panel"]) == (2, 2, False)
+    assert record["verdict"]["quorum"]["assigned"] == 1 and record["verdict"]["quorum"]["required"] == 1
 
     _stage(h.project, "b.py", "b = 2\n")
     assigned = h.run(subject="index", reviewers=[pool[0], critic], reason="the critic decides")

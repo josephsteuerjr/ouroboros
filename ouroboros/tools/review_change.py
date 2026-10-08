@@ -638,12 +638,13 @@ def _finish_record(record: Any, wave: _Wave, outcome: Dict[str, Any], *, reuse_k
     for seat in record.rows:
         seat["additional"] = str(seat.get("seat_id") or "") in additional
     panel = dict(record.panel or {})
-    assigned_rows = [seat for seat in record.rows if not seat["additional"]]
     if additional and record.rows:
-        verdict = _assigned_verdict(record, assigned_rows, outcome)
+        # The verdict and its quorum are the ASSIGNED seats' alone; the panel block
+        # describes everyone who sat (``panel_facts`` counts the added seats apart).
+        verdict = _assigned_verdict(record, [seat for seat in record.rows if not seat["additional"]], outcome)
         record.verdict = {**dict(record.verdict or {}), **verdict}
         record.brief["parts"] = [part for part in PARTS if verdict["per_question"].get(part) != QUESTION_NOT_PERFORMED]
-        panel = panel_facts(assigned_rows, composition=str(wave.panel.facts.get("composition") or "full_pool"),
+        panel = panel_facts(record.rows, composition=str(wave.panel.facts.get("composition") or "full_pool"),
                             reason=str(wave.panel.facts.get("reason") or ""),
                             chosen_by=str(wave.panel.facts.get("chosen_by") or "owner"))
     record.panel = {**panel, **wave.panel.facts}
