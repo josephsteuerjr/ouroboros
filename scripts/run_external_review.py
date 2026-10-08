@@ -418,9 +418,9 @@ def _probe_model_for_key(token: str, model: str) -> tuple[bool, str]:
 
 def _review_probe_models() -> list[str]:
     try:
-        from ouroboros.config import get_review_models, get_scope_review_models
+        from ouroboros.reviewer_slot_config import review_pool_rows
 
-        ordered = [*get_review_models(), *get_scope_review_models()]
+        ordered = [row.target_id for row in review_pool_rows() if not row.is_session]
         return list(dict.fromkeys(str(model) for model in ordered if str(model).strip()))
     except Exception:
         return []
@@ -499,13 +499,10 @@ def _select_healthy_openrouter_key(
 
 
 def _assert_contributor_review_config(resolved_config: dict) -> None:
-    """Fail closed unless a complete typed slot plan will reach the review gate."""
-    slots = [
-        *list(resolved_config.get("triad_slots") or []),
-        *list(resolved_config.get("scope_slots") or []),
-    ]
-    if not resolved_config.get("triad_slots") or not resolved_config.get("scope_slots"):
-        raise RuntimeError("contributor review needs at least one triad and scope slot")
+    """Fail closed unless a complete typed pool plan will reach the review gate."""
+    slots = list(resolved_config.get("pool_slots") or [])
+    if not slots:
+        raise RuntimeError("contributor review needs at least one review pool seat")
     slot_ids = [str(row.get("slot_id") or "") for row in slots]
     if any(not slot_id for slot_id in slot_ids) or len(slot_ids) != len(set(slot_ids)):
         raise RuntimeError("contributor reviewer slot identities are empty or duplicated")
@@ -528,10 +525,7 @@ def _configured_openrouter_models(resolved_config: dict) -> list[str]:
     from ouroboros.provider_models import provider_for_model
 
     models: list[str] = []
-    for row in [
-        *list(resolved_config.get("triad_slots") or []),
-        *list(resolved_config.get("scope_slots") or []),
-    ]:
+    for row in list(resolved_config.get("pool_slots") or []):
         route = row.get("route") or {}
         model = str(route.get("target_id") or "")
         if route.get("kind") == "api_chat" and provider_for_model(model) == "openrouter":
@@ -580,14 +574,8 @@ def _review_record(ctx, result: dict) -> tuple[dict | None, str]:
 
 
 def _actor_records_with_surface(ctx: object) -> list[tuple[str, dict]]:
-    """``(surface, raw actor row)`` per triad and scope seat the cycle left on ``ctx``."""
-    scope_raw = getattr(ctx, "_last_scope_raw_result", {}) or {}
-    scope_rows = scope_raw.get("raw_results") if isinstance(scope_raw, dict) else None
-    if not isinstance(scope_rows, list):
-        scope_rows = [scope_raw] if isinstance(scope_raw, dict) and any(
-            key in scope_raw for key in ("slot", "slot_id", "prompt_ref", "response_ref")) else []
-    rows = [("triad", row) for row in (getattr(ctx, "_last_triad_raw_results", []) or [])]
-    return [(surface, dict(row)) for surface, row in rows + [("scope", row) for row in scope_rows]
+    """``("pool", raw actor row)`` per pool seat the cycle left on ``ctx``."""
+    return [("pool", dict(row)) for row in (getattr(ctx, "_last_triad_raw_results", []) or [])
             if isinstance(row, dict)]
 
 
@@ -696,9 +684,8 @@ def _record_actors(record: dict | None) -> list[tuple[str, dict]]:
             continue
         refs = {ref.get("role"): ref.get("ref") for ref in row.get("source_refs") or []
                 if isinstance(ref, dict)}
-        # One wave: a seat configured under the (transitional) scope role joins
-        # as a coupling-only seat; every triad seat answers at least the change.
-        actors.append(("scope" if list(row.get("parts") or []) == ["coupling"] else "triad", {
+        # One wave, one pool: every seat is a pool seat whatever parts it was asked.
+        actors.append(("pool", {
             "slot_id": str(row.get("seat_id") or ""), "status": str(row.get("status") or ""),
             "model_id": str((row.get("requested") or {}).get("model") or ""), "usd": row.get("usd"),
             "prompt_ref": refs.get("observability_prompt") or {},
@@ -806,9 +793,10 @@ def _record_link(record: dict | None, result: dict, drive_root: pathlib.Path) ->
 
 
 def _pinned_default_panel_view(profile: str):
-    """The pinned document's task view for a contributor default panel, else ``None``.
+    """The pinned document's task view for the contributor lane's pool, else ``None``.
 
-    Main, the model slots and provider routes (``review_model_routes``) come from the
+    The pool is the document's catalog; each row's lane (local or remote) is the
+    document's too. Main, the model slots and provider routes (``review_model_routes``) come from the
     verified document over the product and provider defaults, never from an inherited
     projection (whose keys still serve the calls); a credential the document leaves empty
     is the run's own (environment or keys file), merged as a host task merges it
@@ -816,12 +804,10 @@ def _pinned_default_panel_view(profile: str):
     """
     from ouroboros import config
     from ouroboros.provider_models import ALL_PROVIDER_CREDENTIAL_KEYS
-    from ouroboros.reviewer_slot_config import structured_reviewer_slots_present
     from ouroboros.server_runtime import apply_runtime_provider_defaults
     from ouroboros.settings_integrity import read_settings_json_verified, task_settings_snapshot
 
-    if profile != _CONTRIBUTOR_PROFILE or not os.environ.get(SETTINGS_INTEGRITY_ENV) \
-            or structured_reviewer_slots_present():
+    if profile != _CONTRIBUTOR_PROFILE or not os.environ.get(SETTINGS_INTEGRITY_ENV):
         return None  # the process environment, as before
     settings, document = config.defaults_for_settings_document(True), config.normalize_settings_raw(
         read_settings_json_verified(config.SETTINGS_PATH))
@@ -833,42 +819,36 @@ def _pinned_default_panel_view(profile: str):
 
 
 def _resolved_review_config(*, profile: str = "production_commit_gate") -> dict:
-    """Return resolved review slots and efforts after settings/env loading."""
+    """Return the resolved review pool (catalog rows marked review-eligible) and
+    efforts after settings/env loading."""
     from ouroboros.config import get_context_mode, get_review_enforcement, resolved_review_model_target
     from ouroboros.model_slots import local_lane_label
-    from ouroboros.reviewer_slot_config import load_reviewer_slot_config, row_effort
+    from ouroboros.reviewer_slot_config import review_pool_rows, row_effort
     from ouroboros.settings_integrity import task_settings_scope
 
     view = _pinned_default_panel_view(profile)
     with task_settings_scope(view):
-        config = load_reviewer_slot_config()
+        rows = review_pool_rows()
         # The view chose each row's lane; its frozen row says so, so probing and dispatch keep it.
-        local = {row.target_id for row in (*config.triad, *config.scope)
+        local = {row.target_id for row in rows
                  if view is not None and resolved_review_model_target(row.target_id).provider_route == "local"}
 
-    def _project(row, surface: str) -> dict:
+    def _project(row) -> dict:
         route = {"kind": row.kind, "target_id": local_lane_label(row.target_id, row.target_id in local),
                  **({"profile_id": row.profile_id} if row.profile_id else {})}
-        # A triad api row states its delivery explicitly (F8: the fact, never the
-        # actor id); the wire form of an actor-bound row drops it again.
-        delivery = row.delivery or ("native" if surface == "review" and row.native_retrieval else "")
-        return {"slot_id": row.slot_id, "route": route, "effort": row_effort(row, surface),
-                **({"subagent_id": row.subagent_id} if row.subagent_id else {}),
+        # An api row states its delivery explicitly (F8: the fact, never the actor id).
+        delivery = row.delivery or ("native" if row.native_retrieval else "")
+        return {"slot_id": row.slot_id, "route": route, "effort": row_effort(row, "review"),
                 **({"delivery": delivery} if delivery else {})}
 
-    triad_slots = [_project(row, "review") for row in config.triad]
-    scope_slots = [_project(row, "scope_review") for row in config.scope]
-
+    pool_slots = [_project(row) for row in rows]
     return {
         "profile": profile,
         "provider": "configured_per_slot",
-        "slot_config_source": config.source,
-        "triad_slots": triad_slots,
-        "scope_slots": scope_slots,
-        "triad_models": [row["route"]["target_id"] for row in triad_slots],
-        "triad_efforts": [row["effort"] for row in triad_slots],
-        "scope_models": [row["route"]["target_id"] for row in scope_slots],
-        "scope_efforts": [row["effort"] for row in scope_slots],
+        "slot_config_source": "review_pool",
+        "pool_slots": pool_slots,
+        "pool_models": [row["route"]["target_id"] for row in pool_slots],
+        "pool_efforts": [row["effort"] for row in pool_slots],
         "review_enforcement": get_review_enforcement(),
         "context_mode": get_context_mode(),
         "runtime_mode": os.environ.get("OUROBOROS_RUNTIME_MODE", ""),
@@ -876,40 +856,44 @@ def _resolved_review_config(*, profile: str = "production_commit_gate") -> dict:
 
 
 def _slot_plan_payload(resolved_config: dict) -> dict:
-    def wire_row(row):
-        # A stored reference and its resolved route are mutually exclusive.
-        return ({key: row[key] for key in ("slot_id", "subagent_id", "effort")}
-                if row.get("subagent_id") else dict(row))
-
-    return {
-        "triad": [wire_row(row) for row in resolved_config.get("triad_slots") or []],
-        "scope": [wire_row(row) for row in resolved_config.get("scope_slots") or []],
-        "advisory": {"enabled": False},
-    }
+    """The pool plan the wrapper pins: one row per pool seat (the wire form)."""
+    return {"pool": [dict(row) for row in resolved_config.get("pool_slots") or []]}
 
 
 def _slot_plan_sha256(resolved_config: dict) -> str:
-    plan = _slot_plan_payload(resolved_config)
-    for surface in ("triad", "scope"):
-        rows = list(resolved_config.get(f"{surface}_slots") or [])
-        if any(row.get("subagent_id") for row in rows):
-            plan[surface] = rows  # evidence binds the reference AND its resolved route
-    raw = json.dumps(plan, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    raw = json.dumps(_slot_plan_payload(resolved_config), sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()
 
 
+def _frozen_pool_catalog(resolved_config: dict) -> str:
+    """The resolved pool as an ``OUROBOROS_SUBAGENTS`` catalog: every seat an enabled,
+    review-eligible row under its own id with its route, effort and delivery."""
+    items = []
+    for row in resolved_config.get("pool_slots") or []:
+        route = dict(row.get("route") or {})
+        kind = "api_model" if str(route.get("kind") or "") == "api_chat" else str(route.get("kind") or "")
+        catalog_route = {"kind": kind, "target_id": str(route.get("target_id") or "")}
+        if route.get("profile_id"):
+            catalog_route["credential_profile_id"] = str(route["profile_id"])
+        item = {"subagent_id": str(row.get("slot_id") or ""), "name": str(row.get("slot_id") or ""),
+                "recommended_use": "Pinned review pool seat (contributor review wrapper).",
+                "route": catalog_route, "effort": str(row.get("effort") or ""), "review_eligible": True,
+                "enabled": True}
+        if kind == "api_model" and row.get("delivery"):
+            item["delivery"] = str(row["delivery"])
+        items.append(item)
+    return json.dumps({"enabled": True, "items": items}, sort_keys=True, separators=(",", ":"))
+
+
 def _freeze_contributor_slots(resolved_config: dict) -> dict:
-    """Pin the resolved rows so hot settings cannot change the executing panel."""
+    """Pin the resolved pool so hot settings cannot change the executing panel."""
     source = str(resolved_config.get("slot_config_source") or "")
-    raw = json.dumps(
-        _slot_plan_payload(resolved_config), sort_keys=True, separators=(",", ":")
-    )
-    os.environ["OUROBOROS_REVIEWER_SLOTS"] = raw
+    os.environ["OUROBOROS_SUBAGENTS"] = _frozen_pool_catalog(resolved_config)
     frozen = _resolved_review_config(profile=_CONTRIBUTOR_PROFILE)
-    if any(frozen.get(key) != resolved_config.get(key) for key in ("triad_slots", "scope_slots")):
-        raise RuntimeError("contributor reviewer slot freeze changed the resolved plan")
+    if frozen.get("pool_slots") != resolved_config.get("pool_slots"):
+        raise RuntimeError("contributor review pool freeze changed the resolved plan")
     frozen["slot_config_source"] = source
-    frozen["execution_slot_config_source"] = "frozen_structured"
+    frozen["execution_slot_config_source"] = "frozen_review_pool"
     frozen["slot_plan_sha256"] = _slot_plan_sha256(frozen)
     return frozen
 
@@ -986,7 +970,7 @@ def _diff_size_refusal(args, resolved_config: dict, reviewable_chars: int, cap: 
             "subagent_ids": [row.get("subagent_id")],
             **({"retrieves": [row["delivery"] == "native"]} if row.get("delivery") else {}),
         }, 0)
-        for row in resolved_config.get("triad_slots") or []
+        for row in resolved_config.get("pool_slots") or []
     )
 
 
@@ -1167,7 +1151,7 @@ def _prepare_review_configuration(args) -> tuple[dict | None, dict]:
         _assert_contributor_review_config(resolved_config)
         from ouroboros.provider_models import provider_for_model
 
-        engine_rows = [row["slot_id"] for row in [*resolved_config["triad_slots"], *resolved_config["scope_slots"]]
+        engine_rows = [row["slot_id"] for row in resolved_config["pool_slots"]
                        if row["route"]["kind"] == "agent_session"
                        or provider_for_model(row["route"]["target_id"]) == "claudexor"]
         if engine_rows and not args.attach_host_engine:
@@ -1447,10 +1431,8 @@ def _operator_lane(args, host_ctx, commit_message: str, *, goal: str, scope: str
     out = "\n".join([
         sep, "RESOLVED REVIEW CONFIG", sep,
         _json_text({**resolved_config, "drive_root": str(review_drive_root)}),
-        sep, "TRIAD RAW RESULTS (full, untruncated)", sep,
+        sep, "POOL RAW RESULTS (full, untruncated)", sep,
         _json_text(getattr(ctx, "_last_triad_raw_results", [])),
-        sep, "SCOPE RAW RESULT (full, untruncated)", sep,
-        _json_text(getattr(ctx, "_last_scope_raw_result", {})),
         sep, "REVIEW SEAT RECORDS (ledger rows with retained answers, full, untruncated)", sep,
         _json_text(_seat_records(record, review_drive_root)),
         sep, "AGGREGATE VERDICT", sep,

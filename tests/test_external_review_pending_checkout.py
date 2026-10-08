@@ -61,7 +61,7 @@ def test_review_change_records_the_retained_checkout(tmp_path, monkeypatch, pend
 
     fixture = shared.init_installed_body(tmp_path)
     repo, drive = Path(fixture["repo"]), tmp_path / "drive"
-    monkeypatch.setenv("OUROBOROS_REVIEWER_SLOTS", json.dumps(runner._slot_plan_payload(shared.GOLDEN_CONFIG)))
+    monkeypatch.setenv("OUROBOROS_SUBAGENTS", shared.golden_pool())  # the gate's panel is the review pool
     monkeypatch.setenv("OUROBOROS_REVIEW_ENFORCEMENT", "blocking")
     settled = shared.golden_substrate([])
 

@@ -25,8 +25,8 @@ from ouroboros.tools.git_review_cycle import _run_non_committing_review_cycle
 from ouroboros.tools.registry import ToolContext
 from ouroboros.tools.review_change import run_review_change
 from ouroboros.tools.review_subject import CHECKOUT_SUBDIR
-from scripts import run_external_review as runner
 from tests import _contributor_packet_shared as shared
+from tests.review_pool_rosters import set_review_pool
 
 GOAL = "Make the installed body's helper return the proposal's constant."
 SCOPE = "ouroboros/helper.py only; the checklist and tests stay as they are."
@@ -58,7 +58,7 @@ def staged_body(tmp_path, monkeypatch):
     shared.git(repo, "cherry-pick", "--no-commit", fixture["head_sha"])
     fixture["staged_tree_sha"] = shared.git(repo, "write-tree")
     assert fixture["staged_tree_sha"] != fixture["head_tree_sha"]
-    monkeypatch.setenv("OUROBOROS_REVIEWER_SLOTS", json.dumps(runner._slot_plan_payload(shared.GOLDEN_CONFIG)))
+    set_review_pool(monkeypatch, shared.golden_pool())
     monkeypatch.setenv("OUROBOROS_REVIEW_ENFORCEMENT", "blocking")
     monkeypatch.setenv("OUROBOROS_PRE_PUSH_TESTS", "1")
     monkeypatch.setenv("OUROBOROS_RUNTIME_MODE", "pro")  # the proposal touches a protected surface
@@ -175,7 +175,7 @@ def _foreign_project(tmp_path, monkeypatch) -> tuple:
     Ouroboros home, the reviewed project elsewhere under the user's files; the project
     has a remote, so its body fact is a recognized foreign root (the core layer)."""
     monkeypatch.setenv("OUROBOROS_USER_FILES_ROOT", str(tmp_path))
-    monkeypatch.setenv("OUROBOROS_REVIEWER_SLOTS", json.dumps(runner._slot_plan_payload(shared.GOLDEN_CONFIG)))
+    set_review_pool(monkeypatch, shared.golden_pool())
     system = Path(shared.init_installed_body(tmp_path / "ouroboros")["repo"])
     project = (tmp_path / "work" / "project").resolve()
     project.mkdir(parents=True)
@@ -372,7 +372,8 @@ def test_a_rerun_of_a_pending_round_rejoins_its_operation_and_passes_a_reached_c
     # retained checkout; the settled seats were not sent again.
     assert len(sends) == 4 and sends[3]["slot_id"] == "t2" and sends[3]["reconcile_only"] is True
     assert sends[3]["retry_state"] == {"pending_invocation_id": "invocation-t2-round-1"}
-    assert sends[3]["session_root"] == sends[1 if sends[1]["slot_id"] == "t2" else 2]["session_root"] == str(checkout)
+    first_t2 = next(send for send in sends[:3] if send["slot_id"] == "t2")
+    assert sends[3]["session_root"] == first_t2["session_root"] == str(checkout)
     assert sends[3]["retry_key"] == sends[0]["retry_key"]
     rows = _paid_rows(ctx.drive_root, project)
     assert len(rows) == 1 and not rows[0].late_result_pending and rows[0].review_record_id == rerun["record_id"]
@@ -413,7 +414,8 @@ def test_a_rerun_after_a_restart_rejoins_the_pending_round_from_durable_state(tm
     rows = _paid_rows(ctx.drive_root, project)
     assert len(rows) == 1 and not rows[0].late_result_pending
     assert {row["slot_id"]: (row["operation_state"], bool(row.get("late_result_pending")))
-            for row in rows[0].triad_raw_results} == {"t1": ("settled", False), "t2": ("settled", False)}
+            for row in rows[0].triad_raw_results} == {"t1": ("settled", False), "t2": ("settled", False),
+                                                        "s1": ("settled", False)}
     assert not checkout.exists()
 
 
@@ -542,7 +544,7 @@ def test_a_bound_body_candidate_is_the_subject_and_the_serving_body_is_the_gover
                                                         encoding="utf-8")
     shared.git(candidate, "add", "ouroboros/config.py")
 
-    monkeypatch.setenv("OUROBOROS_REVIEWER_SLOTS", json.dumps(runner._slot_plan_payload(shared.GOLDEN_CONFIG)))
+    set_review_pool(monkeypatch, shared.golden_pool())
     monkeypatch.setenv("OUROBOROS_REVIEW_ENFORCEMENT", "blocking")
     monkeypatch.setenv("OUROBOROS_PRE_PUSH_TESTS", "1")
     monkeypatch.setenv("OUROBOROS_RUNTIME_MODE", "pro")
@@ -573,9 +575,10 @@ def test_a_bound_body_candidate_is_the_subject_and_the_serving_body_is_the_gover
     # ... and the serving body is the governance, on the record and in every delivery.
     assert result["subject"]["governance_root"] == record["subject"]["governance_root"] == str(serving.resolve())
     assert sorted(brief["slot_id"] for brief in briefs) == ["s1", "t1", "t2"]
-    # The packet seat's constitutional head is the RUNNING body's by construction; the
-    # tiers it selects from (and the retrieving seat's inlined BIBLE) are the serving copy.
-    assert sorted(tiered) == [("packet", str(serving.resolve())), ("retrieving", str(serving.resolve()))]
+    # The packet seat's constitutional head is the RUNNING body's by construction: the
+    # tiers it selects from are the serving copy; the retrieving seats' briefs inline
+    # the serving copy's rules directly (checked below: no candidate rule reaches a seat).
+    assert sorted(tiered) == [("packet", str(serving.resolve()))]
     for brief in briefs:
         text = _brief_text(brief)
         assert CANDIDATE_RULE not in text, brief["slot_id"]

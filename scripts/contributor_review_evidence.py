@@ -337,9 +337,8 @@ def bind_execution_receipts(
 ) -> tuple[list[dict], list[str], list[dict]]:
     """Bind configured, dispatched and observed facts for every reviewer slot."""
     requested: dict[tuple[str, str], dict] = {}
-    for surface, key in (("triad", "triad_slots"), ("scope", "scope_slots")):
-        for row in resolved_config.get(key) or []:
-            requested[(surface, str(row.get("slot_id") or ""))] = dict(row)
+    for row in resolved_config.get("pool_slots") or []:
+        requested[("pool", str(row.get("slot_id") or ""))] = dict(row)
 
     keys = [(surface, str(actor.get("slot_id") or "")) for surface, actor in actors]
     key_set = set(keys)
@@ -633,7 +632,7 @@ def write_contributor_packet(
             ),
         },
         "review_completeness": {
-            "contract": "production_triad_quorum_plus_authoritative_scope",
+            "contract": "production_pool_quorum_plus_coupling",
             "degraded_reasons": list(degraded_reasons),
         },
         "advisory": {
@@ -677,10 +676,7 @@ def write_contributor_packet(
         "elapsed_sec": round(elapsed_sec, 1),
     }
     public_evidence = public_projection(evidence, replacements=replacements)
-    public_triad = public_projection(
-        [seat for seat in seats if "coupling" not in (seat.get("parts") or [])], replacements=replacements)
-    public_scope = public_projection(
-        [seat for seat in seats if "coupling" in (seat.get("parts") or [])], replacements=replacements)
+    public_seats = public_projection(list(seats), replacements=replacements)
 
     evidence_path = output_dir / "review-evidence.json"
     outcome_path = output_dir / "outcome.json"
@@ -692,10 +688,8 @@ def write_contributor_packet(
     full_output = "\n".join([
         sep, "CONTRIBUTOR REVIEW EVIDENCE", sep,
         _json_text(public_evidence),
-        sep, "TRIAD SEAT RECORDS (ledger rows with retained answers, full, redacted)", sep,
-        _json_text(public_triad),
-        sep, "SCOPE SEAT RECORDS (ledger rows with retained answers, full, redacted)", sep,
-        _json_text(public_scope),
+        sep, "REVIEW POOL SEAT RECORDS (ledger rows with retained answers, full, redacted)", sep,
+        _json_text(public_seats),
         sep, "AGENT SESSION TRANSCRIPTS (full, redacted)", sep,
         _json_text(public_transcripts),
     ])

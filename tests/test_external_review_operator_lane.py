@@ -28,7 +28,8 @@ def test_settings_land_before_the_lane_without_a_key_heuristic():
         assert 'os.environ.get("ANTHROPIC_API_KEY"' not in source
 
 
-def _operator_fixture(tmp_path: Path, monkeypatch, order: list | None = None) -> tuple[Path, list[dict]]:
+def _operator_fixture(tmp_path: Path, monkeypatch, order: list | None = None, *,
+                      scout_enabled: bool = True) -> tuple[Path, list[dict]]:
     """An installed body with a staged README edit; the operator lane's paid seam
     (the review substrate) and hermetic test runner are the golden stand-ins, and
     the gate reads the golden panel from the frozen slot plan. ``order`` records
@@ -47,7 +48,12 @@ def _operator_fixture(tmp_path: Path, monkeypatch, order: list | None = None) ->
     monkeypatch.setattr(module, "_resolved_review_config",
                         lambda *, profile="production_commit_gate": json.loads(json.dumps(shared.GOLDEN_CONFIG)))
     monkeypatch.setattr(module, "_select_healthy_openrouter_key", lambda **_kwargs: False)
-    monkeypatch.setenv("OUROBOROS_REVIEWER_SLOTS", json.dumps(module._slot_plan_payload(shared.GOLDEN_CONFIG)))
+    # The gate's panel is the review pool; ``api-scout`` is the unmarked row the
+    # ``--preflight-reviewer`` lane names (``tests.test_git_review_preflight_gate._roster``).
+    monkeypatch.setenv("OUROBOROS_SUBAGENTS", shared.golden_pool(
+        {"subagent_id": "api-scout", "name": "API scout", "recommended_use": "An early look.",
+         "route": {"kind": "api_model", "target_id": "openai/fake-reviewer"}, "effort": "high",
+         "enabled": scout_enabled}))
     monkeypatch.setenv("OUROBOROS_REVIEW_ENFORCEMENT", "blocking")
     monkeypatch.setenv("OUROBOROS_PRE_PUSH_TESTS", "1")
     briefs: list[dict] = []
@@ -177,7 +183,7 @@ def test_operator_lane_refuses_a_preflight_row_that_is_not_enabled(tmp_path, mon
 
     _roster(monkeypatch, enabled=False)
     order: list = []
-    _operator_fixture(tmp_path, monkeypatch, order)
+    _operator_fixture(tmp_path, monkeypatch, order, scout_enabled=False)
 
     exit_code, output = _run_operator_lane(module, monkeypatch, tmp_path, "--preflight-reviewer=api-scout")
 
