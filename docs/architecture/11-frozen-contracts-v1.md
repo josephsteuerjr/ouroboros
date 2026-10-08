@@ -67,15 +67,25 @@ Add the field to the active frozen owner — `ouroboros/contracts/` for the pack
     `RETIRED_COMMA_LIST_SETTING_KEYS` — the reviewer comma lists and route envs
     (`OUROBOROS_REVIEW_MODELS`, `OUROBOROS_SCOPE_REVIEW_MODELS`, `OUROBOROS_SCOPE_REVIEW_MODEL`,
     `OUROBOROS_REVIEW_ROUTES`, `OUROBOROS_SCOPE_REVIEW_ROUTES`, `OUROBOROS_ADVISORY_REVIEW_ROUTE`). Their
-    migration note: move the configuration into the structured `OUROBOROS_REVIEWER_SLOTS` BEFORE upgrading — an
-    install carrying only comma keys comes up on the shipped default panel. The owner is TOLD: the read seam
-    logs the dropped keys once per process, and the first supervisor boot with an owner chat bound posts one
-    system row there (`server_maintenance._startup_retired_settings_notice`, the same sentence —
-    `settings_defaults.retired_setting_keys_notice` — naming the keys as NOT honored and, from
-    `reviewer_slot_config.authored_reviewer_slots_state`, what runs now: the authored panel, the shipped default
-    while the structured key is absent, or NO panel with the parse error while it is malformed and the loader
-    rejects it), deduplicated durably per retired-key set in `state.json:retired_settings_notified`. A
-    comma-spelled ENV projection survives as the derived runtime plane, never as configuration.
+    migration note: mark the reviewers in the subagent catalog (Settings → Agents) — an install carrying only
+    comma keys runs the shipped default reviewer rows. The owner is TOLD: the read seam logs the dropped keys
+    once per process, and the first supervisor boot with an owner chat bound posts one system row there
+    (`server_maintenance._startup_retired_settings_notice`, the same sentence —
+    `settings_defaults.retired_setting_keys_notice` — naming the keys as NOT honored and their successor: the
+    review pool), deduplicated durably per retired-key set in `state.json:retired_settings_notified`; which
+    reviewers run is the review-pool migration's own report, below. A comma-spelled ENV projection survives as
+    the derived runtime plane, never as configuration.
+  - *Review lanes → review pool.* `REVIEW_POOL_MIGRATED_SETTING_KEYS` (inside `RETIRED_SETTING_KEYS`) names the
+    structured lane key `OUROBOROS_REVIEWER_SLOTS` and the four surface keys `OUROBOROS_EFFORT_REVIEW`,
+    `OUROBOROS_EFFORT_SCOPE_REVIEW`, `OUROBOROS_EFFORT_DEEP_SELF_REVIEW`, `OUROBOROS_MODEL_DEEP_SELF_REVIEW`.
+    They are MIGRATED, not dropped: `review_pool_migration.apply_at_read_seam` (in `config.normalize_settings_raw`,
+    before the purge) reads a stored document ONCE per read with frozen copies of the lane readers and marks or
+    mints reviewer rows of `OUROBOROS_SUBAGENTS` (`review_eligible: true`; effort and delivery as row properties;
+    no seat loses its effort) — nothing partial: an unreadable lane leaves the document untouched with the error
+    disclosed. The first boot with an owner chat posts one message naming the rows that run, and writes the
+    snapshot `state/review_migrations/<ts>-slots-to-pool.json` and `state.json:review_pool_migrations`
+    (`server_maintenance._startup_review_pool_notice`). Who reviews is thereafter one list: the Reviewer-marked
+    catalog rows (`GET /api/review-pool`).
   - *Plugin ABI.* `PLUGIN_API_VERSION` is `"2.0"` with manifest negotiation checked before plugin import or
     out-of-process cataloging; an absent field means legacy `1.3` by construction, and a hash-bound PASS is
     grandfathered.
