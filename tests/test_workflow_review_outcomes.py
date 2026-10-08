@@ -474,3 +474,43 @@ def test_a_critical_in_an_uncountable_matrix_stays_visible_under_an_aggregate_pa
     row = next(r for r in rl.rows_from_plan(_RETRIEVING_PANEL, _RETRIEVING_PANEL["routes"], ctx._last_triad_raw_results)
                if r["seat_id"] == "s1")
     assert row["answers"]["coupling"]["discarded"] == raw["discarded"] and row["critical_count"] == 0
+
+
+@pytest.mark.parametrize("unreadable", [False, True], ids=["parsed_but_uncountable", "unreadable_text_control"])
+def test_a_discarded_critical_reaches_the_author_when_the_whole_row_is_uncountable(candidate, monkeypatch,  # noqa: F811
+                                                                                     unreadable):
+    """The seat above also writes ``change: []`` with ``change_clean: false`` — a contradiction, so
+    Part 1 is unanswered too and NO part of the row is countable: the record is ``parse_failure``
+    (contract: the row stays whole, nothing of it is counted; quorum and the aggregate are the two
+    clean seats'). The author still sees everything the seat said: ``review_model_parse_failure``
+    for the row, the per-part ``review_<part>_unanswered`` errors, and the discarded critical FAIL
+    with its reason — the same diagnostics a responded seat's uncountable part gets. Control: a seat
+    whose text carries no object at all has no answers to diagnose and ends at the row-level entry."""
+    ctx = candidate
+    monkeypatch.setenv("OUROBOROS_REVIEW_ENFORCEMENT", "blocking")
+    broken = [{**_COUPLING_PASS[7], "verdict": "FAIL", "severity": "critical",
+               "reason": "the new helper bypasses the documented invariant on a live path"},
+              {**_COUPLING_PASS[0], "reason": "ok"}, *_COUPLING_PASS[1:7]]
+    s1_text = "I could not finish reading the diff in time." if unreadable else _two_part(coupling=broken, clean=False)
+    results = [_seat("s1", "openai/a", s1_text), _seat("s2", "anthropic/b", _two_part()), _seat("s3", "google/c", _two_part())]
+    error = _dispatch(ctx, monkeypatch, _RETRIEVING_PANEL, results)
+    verdict = ctx._last_review_verdict
+    assert error is None and verdict["aggregate"] == "PASS" and verdict["per_question"]["coupling"] == "PASS"
+    assert ctx._last_review_critical_findings == [], "nothing uncountable is counted"
+    raw = next(r for r in ctx._last_triad_raw_results if r["slot_id"] == "s1")
+    assert raw["status"] == "parse_failure"
+    typed = ctx._last_review_advisory_findings
+    by_item = {f["item"]: f for f in typed}
+    assert all(f["model"] == "openai/a" and f["severity"] == "advisory" for f in typed)
+    if unreadable:
+        assert set(by_item) == {"review_model_parse_failure"} and raw["answers"] == {}
+        return
+    assert set(by_item) == {"review_model_parse_failure", "review_change_unanswered", "review_coupling_unanswered",
+                            "implicit_contracts"}
+    assert raw["answers"]["change"]["status"] == raw["answers"]["coupling"]["status"] == "unanswered"
+    assert raw["answers"]["change"]["error"] in by_item["review_change_unanswered"]["reason"]
+    assert raw["answers"]["coupling"]["error"] in by_item["review_coupling_unanswered"]["reason"]
+    discarded = by_item["implicit_contracts"]
+    assert "not counted" in discarded["reason"] and "critical FAIL" in discarded["reason"]
+    assert "bypasses the documented invariant" in discarded["reason"]
+    assert discarded in ctx._review_advisory, "the author's commit result carries it"

@@ -793,8 +793,8 @@ def _collect_review_findings(ctx: ToolContext, model_results: list, row_plan: Op
                 ),
                 model=record.model_id,
             ))
-            continue
-        if record.status != "responded":
+            # A parsed object no part of which was countable falls through to the per-part diagnostics.
+        elif record.status != "responded":
             continue
         for part, answer in (record.answers or {}).items():
             if answer.get("status") != "responded":
