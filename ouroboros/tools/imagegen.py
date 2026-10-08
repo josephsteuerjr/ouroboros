@@ -49,14 +49,12 @@ from ouroboros.gateways.claudexor_images import (
 from ouroboros.tools.core_artifacts import _send_photo
 from ouroboros.tools.registry import ToolContext, ToolEntry
 from ouroboros.tools.tool_result import ToolResult, _publish_tool_result
-from ouroboros.usage_accounting import AttemptRequest, execute_physical_attempt
+from ouroboros.usage_accounting import AttemptRequest, UsageAccountingError, execute_physical_attempt
 
 log = logging.getLogger(__name__)
 
-# Result envelope caps mirrored from the prototype's validation (relay images.rs):
-# single image <= 32 MiB (also the per-edit-input cap), whole response <= 64 MiB.
+# Per-image and edit-input limit; the engine independently bounds its full response.
 _MAX_IMAGE_BYTES = 32 * 1024 * 1024
-_MAX_RESULT_BYTES = 64 * 1024 * 1024
 
 # Prompt contract mirrored from the upstream API (relay validation): 1..32000.
 _MAX_PROMPT_CHARS = 32000
@@ -82,7 +80,8 @@ def _sniff_mime(data: bytes) -> str:
 
 
 def _refuse(ctx: Any, message: str, code: str) -> str:
-    status = "unavailable" if code in ("CAPABILITY_UNAVAILABLE", "IMAGE_RATE_LIMITED") else "error"
+    status = ("blocked" if code == "ACCESS_BLOCKED" else "unavailable"
+              if code in ("CAPABILITY_UNAVAILABLE", "IMAGE_RATE_LIMITED") else "error")
     return _publish_tool_result(ctx, ToolResult(status=status, code=code, text=message))
 
 
@@ -178,6 +177,21 @@ def _generate_image(ctx: ToolContext, prompt: str, n: int = 1, quality: str = "a
             "CAPABILITY_UNAVAILABLE",
         )
 
+    request: Dict[str, Any] = {
+        "model": model or "gpt-image-2", "prompt": prompt, "n": n,
+        "quality": quality, "size": size, "background": background,
+    }
+    try:
+        return _generate_image_with_gateway(ctx, gateway, request, image_paths, caption, send)
+    finally:
+        try:
+            gateway.close()  # read_owned_gateway transfers client ownership to us
+        except Exception:
+            log.exception("imagegen: failed to close owned gateway")
+
+
+def _generate_image_with_gateway(ctx: ToolContext, gateway: Any, request: Dict[str, Any],
+                                 image_paths: Optional[List[str]], caption: str, send: bool) -> str:
     # Capability negotiation — typed refusal BEFORE any paid request.
     try:
         operations = gateway.operations()
@@ -192,23 +206,35 @@ def _generate_image(ctx: ToolContext, prompt: str, n: int = 1, quality: str = "a
             "CAPABILITY_UNAVAILABLE",
         )
 
-    request: Dict[str, Any] = {
-        "model": model or "gpt-image-2",
-        "prompt": prompt,
-        "n": n,
-        "quality": quality,
-        "size": size,
-        "background": background,
-    }
     edit_inputs: List[tuple] = []
     if image_paths:
         if len(image_paths) > 5:
             return _refuse(ctx, "⚠️ image_paths accepts at most 5 edit inputs.", "TOOL_ARG_ERROR")
+        from ouroboros.protected_artifacts import block_reason_for_path
+        from ouroboros.tools.registry import active_repo_dir_for
+        from ouroboros.tools.vision import _allowed_file_roots, _path_is_under, _read_file_parity_block
+
         for raw in image_paths:
             source = pathlib.Path(str(raw)).expanduser()
+            if not source.is_absolute():
+                source = pathlib.Path(active_repo_dir_for(ctx)) / source
+            source = source.resolve()
+            # An edit upload is a byte read, not an unrestricted file argument.
+            # Reuse the same readable roots, per-path rules and execute-only
+            # artifact guard as view_image before any byte reaches Claudexor.
+            if not any(_path_is_under(source, root) for root in _allowed_file_roots(ctx)):
+                return _refuse(ctx, "⚠️ Edit input is outside readable resource roots.", "ACCESS_BLOCKED")
+            block = _read_file_parity_block(ctx, source) or block_reason_for_path(ctx, source, "read_bytes")
+            if block:
+                return _refuse(ctx, f"⚠️ Edit input read blocked: {block}", "ACCESS_BLOCKED")
             if not source.is_file():
                 return _refuse(ctx, f"⚠️ Edit input not found: {raw}", "TOOL_ARG_ERROR")
-            data = source.read_bytes()
+            if source.stat().st_size > _MAX_IMAGE_BYTES:
+                return _refuse(ctx, f"⚠️ Edit input exceeds {_MAX_IMAGE_BYTES} bytes: {raw}", "TOOL_ARG_ERROR")
+            try:
+                data = source.read_bytes()
+            except OSError as exc:
+                return _refuse(ctx, f"⚠️ Edit input unreadable: {type(exc).__name__}", "TOOL_ARG_ERROR")
             if len(data) > _MAX_IMAGE_BYTES:
                 return _refuse(ctx, f"⚠️ Edit input exceeds {_MAX_IMAGE_BYTES} bytes: {raw}", "TOOL_ARG_ERROR")
             mime = _sniff_mime(data)
@@ -252,7 +278,7 @@ def _generate_image(ctx: ToolContext, prompt: str, n: int = 1, quality: str = "a
     attempt_request = AttemptRequest(
         model=request["model"],
         provider="claudexor",
-        prompt_tokens_estimate=max(1, len(prompt) // 4),
+        prompt_tokens_estimate=max(1, len(request["prompt"]) // 4),
         max_completion_tokens=0,
         force_unknown_reservation=True,
         drive_root=getattr(ctx, "budget_drive_root", None) or getattr(ctx, "drive_root", None),
@@ -299,6 +325,10 @@ def _generate_image(ctx: ToolContext, prompt: str, n: int = 1, quality: str = "a
             f"{engine_detail} — {exc.provider_message or 'no problem reported'}.",
             "IMAGE_ERROR",
         )
+    except UsageAccountingError:
+        # Reservation/fence/preparation can refuse before _send runs. The loop
+        # owns the budget-pause rail; do not fabricate a possibly billed image.
+        raise
     except Exception as exc:
         code = str(getattr(exc, "code", "") or "")
         status = getattr(exc, "status_code", None)

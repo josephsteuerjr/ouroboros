@@ -96,7 +96,7 @@
       {
         "inputId": "image-model",
         "label": "Image Model",
-        "note": "Image generation lane (gpt-image-2 through Claudexor). Empty uses the engine default.",
+        "note": "Bare Claudexor image model id (e.g. gpt-image-2); empty uses gpt-image-2. No chat-model source or window.",
         "settingKey": "OUROBOROS_MODEL_IMAGE",
         "settingsInputId": "s-model-image",
         "settingsToggleId": "",

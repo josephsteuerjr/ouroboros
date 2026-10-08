@@ -5,7 +5,10 @@ from __future__ import annotations
 import base64
 import json
 
+import pytest
+
 import ouroboros.tools.imagegen as ig
+from ouroboros.usage_accounting import BudgetExceeded
 from ouroboros.tools.imagegen import _generate_image, _sniff_mime
 from ouroboros.gateways import claudexor_images
 from ouroboros.gateways.claudexor_images import image_operation_supported
@@ -22,6 +25,10 @@ class _FakeGateway:
         self.fail_with = fail_with
         self.detail_sequence = list(detail_sequence or [])
         self.calls = []
+        self.closed = False
+
+    def close(self):
+        self.closed = True
 
     def operations(self):
         ops = []
@@ -111,6 +118,7 @@ class TestGenerateImageTool:
         out, code = _last_code(monkeypatch, ctx, lambda: _generate_image(ctx, "a castle"))
         assert code == "CAPABILITY_UNAVAILABLE"
         assert captured == []  # no paid attempt before the capability check
+        assert gw.closed  # attach-only gateway is ours to close even on refusal
 
     def test_typed_refusal_when_daemon_absent(self, monkeypatch, tmp_path):
         def _absent(ctx):
@@ -131,6 +139,43 @@ class TestGenerateImageTool:
         assert code == "TOOL_ARG_ERROR"
         out, code = _last_code(monkeypatch, ctx, lambda: _generate_image(ctx, "ok", quality="non"))
         assert code == "TOOL_ARG_ERROR"
+
+    def test_edit_inputs_keep_read_file_policy_and_preserve_in_root_edits(self, monkeypatch, tmp_path):
+        png = _png_bytes(30)
+        allowed = tmp_path / 'allowed.png'
+        denied = tmp_path / 'denied.png'
+        allowed.write_bytes(png)
+        denied.write_bytes(png)
+        gw = _FakeGateway(result_body={'data': [{'b64_json': base64.b64encode(png).decode()}]})
+        _patch_gateway(monkeypatch, gw)
+        captured = []
+        _patch_accounting(monkeypatch, captured)
+        ctx = _Ctx(tmp_path)
+        record = {'id': 'image_edit_black_box', 'role': 'black_box_reference',
+                  'paths': [str(denied)], 'allow': ['execute']}
+        ctx.task_contract = {'resource_policy': {'protected_artifacts': [record]}}
+        ctx.task_metadata = {'task_contract': ctx.task_contract}
+
+        _out, code = _last_code(monkeypatch, ctx,
+                                lambda: _generate_image(ctx, 'edit', image_paths=[str(denied)], send=False))
+        assert code == 'ACCESS_BLOCKED'
+        assert not captured and not gw.calls  # refuse before upload or paid dispatch
+
+        out = _generate_image(ctx, 'edit', image_paths=[str(allowed)], send=False)
+        assert out.startswith('OK:')
+        creates = [call for call in gw.calls if call[0] == 'POST' and call[1] == claudexor_images.IMAGE_OPERATION_PATH]
+        assert len(creates) == 1
+        assert creates[0][2]['images'][0]['dataUrl'] == 'data:image/png;base64,' + base64.b64encode(png).decode()
+
+    def test_budget_refusal_is_not_a_dispatched_unknown_image(self, monkeypatch, tmp_path):
+        _patch_gateway(monkeypatch, _FakeGateway())
+        ctx = _Ctx(tmp_path)
+        def refuse(_request, _send):
+            raise BudgetExceeded('root budget exhausted')
+        monkeypatch.setattr(ig, 'execute_physical_attempt', refuse)
+        with pytest.raises(BudgetExceeded):
+            _generate_image(ctx, 'castle', send=False)
+        assert not (tmp_path / 'logs' / 'events.jsonl').exists()
 
     def test_one_attempt_no_retry_and_no_base64_in_result(self, monkeypatch, tmp_path):
         png = _png_bytes(256)
@@ -308,6 +353,36 @@ class TestGenerateImageTool:
         assert len(creates) == 1  # never retried
         events = (tmp_path / "logs" / "events.jsonl").read_text(encoding="utf-8")
         assert "image_outcome_unknown" in events
+
+
+def test_registry_edit_upload_respects_execute_only_artifact_and_still_allows_plain_image(monkeypatch, tmp_path):
+    from ouroboros.contracts.task_contract import build_task_contract
+    from ouroboros.tools.registry import ToolContext, ToolRegistry
+
+    repo, data = tmp_path / 'workspace', tmp_path / 'data'
+    repo.mkdir()
+    data.mkdir()
+    protected, ordinary = repo / 'protected.png', repo / 'ordinary.png'
+    protected.write_bytes(_png_bytes(16))
+    ordinary.write_bytes(_png_bytes(16))
+    contract = build_task_contract({'resource_policy': {'protected_artifacts': [{
+        'id': 'black_box_image', 'role': 'black_box_reference',
+        'paths': [str(protected)], 'allow': ['execute'],
+    }]}})
+    registry = ToolRegistry(repo_dir=repo, drive_root=data)
+    registry.set_context(ToolContext(repo_dir=repo, drive_root=data, task_id='image-test',
+                                     task_contract=contract, task_metadata={'task_contract': contract}))
+    monkeypatch.setattr('ouroboros.safety.check_safety', lambda *a, **k: (True, ''))
+    png = _png_bytes(16)
+    gateway = _FakeGateway(result_body={'data': [{'b64_json': base64.b64encode(png).decode()}]})
+    _patch_gateway(monkeypatch, gateway)
+    _patch_accounting(monkeypatch, [])
+    forbidden = registry.execute_result('generate_image', {'prompt': 'edit', 'image_paths': [str(protected)], 'send': False})
+    assert forbidden.code == 'ACCESS_BLOCKED'
+    assert not gateway.calls
+    accepted = registry.execute_result('generate_image', {'prompt': 'edit', 'image_paths': [ordinary.name], 'send': False})
+    assert accepted.code == 'OK'
+    assert len([call for call in gateway.calls if call[0] == 'POST' and call[1] == claudexor_images.IMAGE_OPERATION_PATH]) == 1
 
 
 class TestClientFamily:

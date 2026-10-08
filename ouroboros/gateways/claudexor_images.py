@@ -1,8 +1,8 @@
 """Image-operation client family for the Claudexor engine.
 
-Split from ``gateways/claudexor.py`` (which sits at its module-size ceiling):
-the four image-operation verbs live here as free functions over the gateway's
-request seam, with thin delegates left on :class:`ClaudexorGateway`. The
+The four image-operation verbs live as free functions over
+:class:`ClaudexorGateway`'s request seam (no model-operation payload-ref
+protocol or duplicate client class). The
 engine-side ``/v2/image-operations`` family ships in a companion Claudexor PR;
 presence is negotiated structurally through the engine's own
 ``GET /v2/operations`` catalog (``image_operation_supported``), never by
