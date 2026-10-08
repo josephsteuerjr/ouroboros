@@ -566,6 +566,9 @@ def begin_evolution_transaction(task_id: str, *, cycle: int, campaign: Dict[str,
         "objective_fp": objective_fp,  # cycle-start truth, not a later campaign objective
         "created_at": utc_now_iso(), "updated_at": utc_now_iso(),
         "base_head": base_head, "base_branch": base_branch,
+        # Historical schema-2 aggregate: `advisory_status` names the retired advisory
+        # gate and is kept for receipt readers; `triad_scope_status` is the wave's
+        # actual aggregate (never inferred from a successful Git commit).
         "preflight_status": "pending", "advisory_status": "pending", "triad_scope_status": "pending",
         "commit_sha": "", "push_status": "pending",
         "restart_decision": "", "restart_required": False, "restart_verified": False, "restart_verified_at": "",
@@ -829,7 +832,7 @@ def record_evolution_commit(
             ))
             tx.update({
                 "preflight_status": "passed",
-                "advisory_status": "fresh_or_bypassed",
+                "advisory_status": "fresh_or_bypassed",  # historical aggregate of the retired advisory gate (schema 2)
                 "triad_scope_status": str(triad_scope_status or "unknown"),
                 **({"author_disposition": dict(author_disposition)} if author_disposition else {}),
                 "commit_sha": commit_sha,

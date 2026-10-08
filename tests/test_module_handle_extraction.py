@@ -397,7 +397,7 @@ LEAVES: dict[str, tuple[str, str, frozenset[str]]] = {
     "ouroboros/review_state_model.py": ("ouroboros/review_state.py", "_rs", frozenset({
         "CommitReadinessDebtItem", "ObligationItem", "_DEFAULT_TOOL_NAME",
         "_LEGACY_CURRENT_REPO_KEY", "_MAX_ATTEMPT_HISTORY", "_MAX_COMMIT_READINESS_DEBTS",
-        "_MAX_RUN_HISTORY", "_OPEN_COMMIT_READINESS_DEBT_STATUSES", "_allocate_prefixed_id",
+        "_OPEN_COMMIT_READINESS_DEBT_STATUSES", "_allocate_prefixed_id",
         "_attempt_has_active_review_custody", "_attempt_history_evictable",
         "_attempt_identity_tuple", "_attempt_review_roster_rows",
         "_commit_readiness_debts_view", "_dedupe_strings", "_filter_lifecycle_records",

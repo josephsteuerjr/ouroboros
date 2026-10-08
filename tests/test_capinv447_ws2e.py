@@ -112,29 +112,22 @@ def test_module_load_failure_recorded_and_survives_schema_rebuilds(tmp_path, mon
 
 
 # ---------------------------------------------------------------------------
-# H5 — repo_commit_ready SSOT: the advisory gate it mirrored is retired (3A)
+# H5 — the retired advisory gate (3A) projects no readiness axis anywhere
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("fresh", [False, True])
-@pytest.mark.parametrize("debt", [False, True])
-@pytest.mark.parametrize("enforcement", ["advisory", "blocking"])
-def test_advisory_commit_ready_no_longer_holds_a_commit(fresh, debt, enforcement):
-    """No advisory freshness, obligation or debt holds a commit any more: the panel,
-    tests, custody and binding are the gate, and none of them is projected here."""
-    from ouroboros.review_state import advisory_commit_ready
-
-    debts = [object()] if debt else []
-    assert advisory_commit_ready(fresh, [object()], debts, enforcement) is True
-
-
-def test_review_context_heading_no_longer_claims_full_gate():
+def test_the_retired_advisory_gate_has_no_readiness_projection_left():
+    """Decision 3A retired the advisory gate; its `repo_commit_ready` mirror said
+    "yes" on every surface and made the author chase a readiness that nothing
+    decides. Neither the function nor the context heading exists any more."""
     import inspect
 
-    from ouroboros import agent_task_pipeline
+    from ouroboros import agent_task_pipeline, review_state
 
+    assert not hasattr(review_state, "advisory_commit_ready")
     source = inspect.getsource(agent_task_pipeline)
     assert "Live repo gate" not in source
-    assert "Advisory readiness" in source
+    assert "Advisory readiness" not in source
+    assert "repo_commit_ready" not in source
 
 
 # ---------------------------------------------------------------------------

@@ -33,7 +33,6 @@ def build_review_projection(
     only identity the stale-marker attribution may be relative to.
     """
     from ouroboros.review_state import (
-        advisory_commit_ready,
         compute_snapshot_hash,
         load_state,
         make_repo_key,
@@ -131,11 +130,6 @@ def build_review_projection(
         "preflight": look,
         "open_obligations": open_obligations,
         "open_debts": open_debts,
-        "repo_commit_ready": advisory_commit_ready(
-            bool(effective_is_fresh), open_obligations, open_debts,
-            matching_run=(matching_run if repo_dir_path is not None
-                          and getattr(matching_run, "repo_key", None) == repo_filter == make_repo_key(repo_dir_path) else None),
-        ),
         "retry_anchor": "commit_readiness_debt" if open_debts else None,
         "advisory_overrides": advisory_overrides,
     }
@@ -204,7 +198,6 @@ def build_review_status_payload(projection: Dict[str, Any], *, next_step: str, i
         "open_obligations_count": len(open_obligations),
         "commit_readiness_debts": [_review_status_debt_to_dict(item) for item in open_debts],
         "commit_readiness_debts_count": len(open_debts),
-        "repo_commit_ready": projection["repo_commit_ready"],
         "retry_anchor": projection["retry_anchor"],
         "status_summary": _review_status_message(projection),
         "next_step": next_step,

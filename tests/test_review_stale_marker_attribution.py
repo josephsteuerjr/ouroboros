@@ -51,9 +51,10 @@ def _drive(tmp_path):
 
 
 def _fresh(drive, *repos, owner="task-a"):
+    """Rows a former install wrote (no writer remains): the coverage an edit invalidates."""
     state = AdvisoryReviewState()
     for repo in repos:
-        state.add_run(AdvisoryRunRecord(
+        state.advisory_runs.append(AdvisoryRunRecord(
             snapshot_hash=compute_snapshot_hash(repo), commit_message="ready", status="fresh",
             ts="2026-09-28T00:00:00+00:00", repo_key=make_repo_key(repo), task_id=owner,
         ))
@@ -171,7 +172,7 @@ def test_review_status_attributes_relative_to_the_caller_not_the_task_filter(tmp
     assert caller_a["stale_attribution"] == "this_task"
     assert caller_b["stale_from_edit"] is True and caller_a["stale_from_edit"] is True
     assert caller_b["stale_reason"] == caller_a["stale_reason"]
-    assert caller_b["repo_commit_ready"] == caller_a["repo_commit_ready"]
+    assert caller_b["latest_advisory_status"] == caller_a["latest_advisory_status"]
 
 
 def test_text_surfaces_without_a_reader_identity_state_only_the_recorded_writer(tmp_path):
@@ -188,7 +189,7 @@ def test_text_surfaces_without_a_reader_identity_state_only_the_recorded_writer(
     assert "this task" not in context and "another task" not in context
 
 
-def test_the_writer_round_trips_names_the_invalidation_and_clears_with_the_marker(tmp_path):
+def test_the_writer_round_trips_names_the_invalidation_and_clears_with_a_commit(tmp_path):
     drive, shared = _drive(tmp_path), _checkout(tmp_path, "shared")
     repo_key = make_repo_key(shared)
     _fresh(drive, shared)
@@ -199,17 +200,15 @@ def test_the_writer_round_trips_names_the_invalidation_and_clears_with_the_marke
     state = load_state(drive)
     assert state.last_stale_task_id == "task-a"
 
-    state.add_run(AdvisoryRunRecord(snapshot_hash="re-reviewed", commit_message="m", status="fresh",
-                                    ts="2026-09-28T01:00:00+00:00", repo_key=repo_key, task_id="task-b"))
-    assert (state.last_stale_from_edit_ts, state.last_stale_task_id) == ("", "")
     for commit_scope in (repo_key, None):
+        # mark_repo_stale only writes the marker while a row is still invalidatable.
+        state.advisory_runs.append(AdvisoryRunRecord(snapshot_hash=f"before-{commit_scope}", commit_message="m",
+                                                     status="fresh", ts="2026-09-28T01:00:00+00:00", repo_key=repo_key))
         state.mark_repo_stale(repo_key=repo_key, reason_ts="2026-09-28T02:00:00+00:00", reason="r",
                               stale_repo_key=repo_key, stale_task_id="task-a")
         assert state.last_stale_task_id == "task-a"
         state.on_successful_commit(repo_key=commit_scope)
-        assert state.last_stale_task_id == ""
-        state.add_run(AdvisoryRunRecord(snapshot_hash=f"after-{commit_scope}", commit_message="m",
-                                        status="fresh", ts="2026-09-28T03:00:00+00:00", repo_key=repo_key))
+        assert (state.last_stale_from_edit_ts, state.last_stale_task_id) == ("", "")
 
 
 def test_attribution_never_changes_freshness_obligations_or_debt(tmp_path):
@@ -242,8 +241,7 @@ def test_attribution_never_changes_freshness_obligations_or_debt(tmp_path):
             [(d.category, d.title, d.summary, list(d.evidence), d.fingerprint, d.status)
              for d in state.get_open_commit_readiness_debts(repo_key=repo_key)],
             [(o.item, o.status) for o in state.get_open_obligations(repo_key=repo_key)],
-            {key: projection[key] for key in ("stale_from_edit", "effective_status", "effective_is_fresh",
-                                              "repo_commit_ready")},
+            {key: projection[key] for key in ("stale_from_edit", "effective_status", "effective_is_fresh")},
         )
     assert observed["task-a"] == observed["task-b"] == observed[""]
     assert observed[""][0] == ["stale"] and observed[""][2], "the stale debt is still owed"
@@ -313,22 +311,21 @@ def test_registered_writer_persists_identity_without_changing_shared_freshness(t
     assert state.advisory_runs[0].status == "stale"
     panel = _panel(drive, shared, "task-b")
     assert panel["stale_attribution"] == "other_task" and panel["stale_reason"]
-    # The marker is disclosed, never a hold: no advisory freshness gates a commit (3A).
-    assert panel["repo_commit_ready"]
+    # The marker is disclosed, never a hold: no advisory freshness gates a commit (3A),
+    # and no readiness verdict is projected next to the marker.
+    assert "repo_commit_ready" not in panel
     prompt = format_review_evidence_for_prompt(
         collect_review_evidence(drive, task_id="task-b", repo_dir=shared))
     assert '"stale_task_id": "task-a"' in prompt and '"stale_attribution": "other_task"' in prompt
     other_checkout = _panel(drive, separate, "task-b")
-    assert other_checkout["repo_commit_ready"] and not other_checkout["stale_reason"]
+    assert not other_checkout["stale_reason"]
     assert all(other_checkout[key] == "" for key in _ATTRIBUTION_KEYS)
 
-    # A fresh review of the changed bytes clears the marker for either task.
-    update_state(drive, lambda current: current.add_run(AdvisoryRunRecord(
-        snapshot_hash=compute_snapshot_hash(shared), commit_message="ready", status="fresh",
-        ts="2026-10-01T00:00:00+00:00", repo_key=make_repo_key(shared), task_id="task-b")))
+    # A successful commit of the checkout clears the marker for either task.
+    update_state(drive, lambda current: current.on_successful_commit(repo_key=make_repo_key(shared)))
     for task_id in ("task-a", "task-b"):
         panel = _panel(drive, shared, task_id)
-        assert panel["repo_commit_ready"] and not panel["stale_reason"]
+        assert not panel["stale_reason"]
         assert all(panel[key] == "" for key in _ATTRIBUTION_KEYS)
 
 

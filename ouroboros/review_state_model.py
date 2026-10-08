@@ -1,9 +1,9 @@
 """The in-memory review ledger and every transition it permits.
 
 ``AdvisoryReviewState`` is the whole mutable state of one drive's review history:
-advisory runs, commit attempts, open obligations and commit-readiness debts,
-their lifecycle transitions, freshness and expiry rules, and the projections the
-review surfaces read. It owns no persistence — loading, saving, locking and
+legacy advisory runs (read-only history: nothing writes a new row), commit attempts,
+open obligations and commit-readiness debts, their lifecycle transitions, freshness
+and expiry rules, and the projections the review surfaces read. It owns no persistence — loading, saving, locking and
 repo identity stay with ``review_state``. Extracted from
 ouroboros/review_state.py (v7 D06 split, re-cut on the v7next tip);
 review_state.py re-exports the class at its historical binding. The class-level
@@ -17,7 +17,6 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from ouroboros.review_state_records import (
-    _DEFAULT_ADVISORY_TOOL_NAME,
     _REVIEW_ATTEMPT_GRACE_SEC,
     _REVIEW_ATTEMPT_TTL_SEC,
     _STATE_SCHEMA_VERSION,
@@ -129,20 +128,6 @@ class AdvisoryReviewState:
         latest = max((int(item.attempt or 0) for item in candidates), default=0)
         return latest + 1
 
-    def next_advisory_attempt_number(
-        self,
-        repo_key: str,
-        task_id: str = "",
-        tool_name: str = _DEFAULT_ADVISORY_TOOL_NAME,
-    ) -> int:
-        candidates = self.filter_advisory_runs(
-            repo_key=repo_key,
-            tool_name=tool_name,
-            task_id=task_id,
-        )
-        latest = max((int(run.attempt or 0) for run in candidates), default=0)
-        return latest + 1
-
     def find_by_hash(
         self,
         snapshot_hash: str,
@@ -158,65 +143,9 @@ class AdvisoryReviewState:
         run = self.find_by_hash(snapshot_hash, repo_key=repo_key)
         return run is not None and run.status in ("fresh", "bypassed", "skipped")
 
-    def add_run(self, run: AdvisoryRunRecord) -> None:
-        invocation = str(run.execution.get("invocation_id") or run.execution.get("operation_id") or "")
-        for index, existing in enumerate(self.advisory_runs):
-            if (run.status == "bypassed" and run.bypass_reason
-                    and existing.blocks_preflight and existing.repo_key == run.repo_key):
-                # Both existing bypass writers converge here under the state lock.
-                # Preserve the old task, exact request token, result and custody.
-                existing.bypass_reason = run.bypass_reason
-                existing.bypassed_by_task = run.bypassed_by_task
-                existing.updated_ts = _rs()._utc_now()
-            if (existing.blocks_preflight and existing.repo_key == run.repo_key
-                    and (not invocation or invocation != (existing.execution.get("invocation_id") or existing.execution.get("operation_id")))):
-                raise ValueError("an unresolved preflight already owns this repository")
-            if (invocation and (existing.execution.get("invocation_id") or existing.execution.get("operation_id")) == invocation
-                    and (existing.repo_key, existing.task_id) == (run.repo_key, run.task_id)):
-                run.attempt, run.created_ts = existing.attempt, existing.created_ts
-                if existing.bypass_reason:
-                    # A late result updates its own historical row in place; it
-                    # cannot revoke the newer bypass or reclaim its admission.
-                    run.bypass_reason, run.bypassed_by_task = existing.bypass_reason, existing.bypassed_by_task
-                    self.advisory_runs[index] = run
-                    return
-                self.advisory_runs.pop(index)
-                break
-        if not run.attempt:
-            run.attempt = self.next_advisory_attempt_number(
-                str(run.repo_key or _rs()._LEGACY_CURRENT_REPO_KEY),
-                str(run.task_id or ""),
-                str(run.tool_name or _DEFAULT_ADVISORY_TOOL_NAME),
-            )
-        if not run.created_ts:
-            run.created_ts = run.ts or _rs()._utc_now()
-        if not run.updated_ts:
-            run.updated_ts = run.created_ts
-        self.mark_all_stale_except(run.snapshot_hash, repo_key=run.repo_key)
-        self.advisory_runs.append(run)
-        if len(self.advisory_runs) > _rs()._MAX_RUN_HISTORY:
-            cutoff = len(self.advisory_runs) - _rs()._MAX_RUN_HISTORY
-            self.advisory_runs = [
-                row for index, row in enumerate(self.advisory_runs)
-                if index >= cutoff or row.execution_pending
-            ]
-        if run.status in ("fresh", "bypassed", "skipped", "parse_failure"):
-            self.last_stale_from_edit_ts = ""
-            self.last_stale_reason = ""
-            self.last_stale_repo_key = ""
-            self.last_stale_task_id = ""
-        self._sync_commit_readiness_debts(repo_key=run.repo_key or None)
-
     def mark_stale(self, snapshot_hash: str) -> None:
         for run in self.advisory_runs:
             if run.snapshot_hash == snapshot_hash:
-                run.status = "stale"
-                run.updated_ts = _rs()._utc_now()
-
-    def mark_all_stale_except(self, snapshot_hash: str, repo_key: str = "") -> None:
-        for run in self.advisory_runs:
-            same_repo = not repo_key or run.repo_key == repo_key
-            if same_repo and run.snapshot_hash != snapshot_hash and run.status in ("fresh", "bypassed", "skipped"):
                 run.status = "stale"
                 run.updated_ts = _rs()._utc_now()
 

@@ -109,7 +109,6 @@ class TestAdvisoryOverrideVisibility:
             "selected_attempt": None,
             "open_obligations": [],
             "open_debts": [],
-            "repo_commit_ready": False,
             "retry_anchor": None,
             "advisory_overrides": {"count": 3, "recent": [{"ts": "t", "block_reason": "x"}]},
             "guidance_run": None,

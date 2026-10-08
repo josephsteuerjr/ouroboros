@@ -69,7 +69,8 @@ def test_review_status_readiness_matches_the_actual_gate(candidate, access):  # 
     from ouroboros.review_state import load_state
 
     projection = json.loads(_handle_review_status(candidate))
-    assert projection["repo_commit_ready"] is True, "no preflight is owed under either authority"
+    assert "repo_commit_ready" not in projection, "no readiness axis is projected under either authority"
+    assert not projection["open_obligations"] and not projection["commit_readiness_debts"]
     assert not projection["advisory_runs"]
     assert not load_state(candidate.drive_root).advisory_runs
 

@@ -228,25 +228,6 @@ class TestPathAwareFreshness:
         h_b = rs.compute_snapshot_hash(tmp_path, paths=["b.py"])
         assert h_a != h_b
 
-    def test_stale_lifecycle(self):
-        """add_run marks previous non-matching fresh runs as stale."""
-        rs = _get_module("ouroboros.review_state")
-        state = rs.AdvisoryReviewState()
-        run1 = rs.AdvisoryRunRecord(
-            snapshot_hash="hash1", commit_message="m1",
-            status="fresh", ts="2026-01-01T00:00:00",
-        )
-        state.add_run(run1)
-        assert state.advisory_runs[0].status == "fresh"
-
-        run2 = rs.AdvisoryRunRecord(
-            snapshot_hash="hash2", commit_message="m2",
-            status="fresh", ts="2026-01-01T01:00:00",
-        )
-        state.add_run(run2)
-        assert state.advisory_runs[0].status == "stale"  # hash1 became stale
-        assert state.advisory_runs[1].status == "fresh"   # hash2 is fresh
-
 
 # ---------------------------------------------------------------------------
 # Triad review enrichment

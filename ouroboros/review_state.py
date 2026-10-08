@@ -432,24 +432,6 @@ def make_repo_key(repo_dir: pathlib.Path) -> str:
     return str(discover_repo_root(repo_dir))
 
 
-def advisory_commit_ready(
-    effectively_fresh: bool,
-    open_obligations: Any,
-    open_debts: Any,
-    enforcement: str | None = None,
-    *, matching_run: AdvisoryRunRecord | None = None,
-) -> bool:
-    """SSOT for every ``repo_commit_ready`` projection (H5, capinv-447).
-
-    It mirrored the advisory gate, which decision 3A retired: no advisory freshness,
-    obligation or commit-readiness debt holds a commit any more (open obligations ride
-    into the panel's brief; the debt stays a disclosed diagnostic), so this axis is
-    always ready. The panel, tests, custody, fingerprint revalidation and binding are
-    the commit gate and are not projected here.
-    """
-    return True
-
-
 def compute_snapshot_hash(
     repo_dir: pathlib.Path,
     commit_message: str = "",
