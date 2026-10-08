@@ -364,7 +364,8 @@ def test_phase4_ui_copy_matches_shipped_runtime():
     assert "land in Phase 3" not in settings_ui
     assert "data/skills/" in settings_ui
     assert "Pick both review enforcement and the initial runtime mode" in onboarding_html
-    assert "normal triad + scope review" in onboarding_html
+    assert "normal review gate" in onboarding_html
+    assert "triad + scope" not in onboarding_html
     assert "Phase 6+:" not in onboarding_html
 
 

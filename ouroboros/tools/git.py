@@ -392,7 +392,7 @@ def _tests_preflight_block_message(managed_needs_proof: bool, test_err: str) -> 
             f"{test_err}"
         )
     return (
-        "⚠️ TESTS_PREFLIGHT_BLOCKED: Tests must pass before triad + scope review.\n"
+        "⚠️ TESTS_PREFLIGHT_BLOCKED: Tests must pass before the review panel runs.\n"
         "Fix the failures below, then re-run commit_reviewed "
         "(skip_tests=True for intentionally incomplete work).\n"
         "Set OUROBOROS_PRE_PUSH_TESTS=0 to skip tests entirely.\n\n"
@@ -514,7 +514,7 @@ def _preflight_and_tests_gate(
     if not message and ((not skip_tests and (named or not _doc_only)) or _managed_needs_proof):
         ctx.emit_progress_fn(
             "Managed candidate lacks a pre-commit test proof — running the mandatory hermetic suite before review..."
-            if _managed_needs_proof else "Running the tests preflight before triad + scope review...")
+            if _managed_needs_proof else "Running the tests preflight before the review panel...")
         test_err = run_tests_preflight_with_proof(
             ctx, runner=lambda c, **kw: _run_review_preflight_tests(c, **kw))
         if test_err:
@@ -1413,7 +1413,7 @@ def _run_git_network_cmd(cmd: List[str], cwd: pathlib.Path) -> str:
 def get_tools() -> List[ToolEntry]:
     reviewed_commit_description = (
         "Commit already-changed files through the unified reviewed commit workflow: free deterministic checks, "
-        "the tests preflight, then the triad + scope panel, which is the gate. preflight_reviewer optionally buys "
+        "the tests preflight, then the review panel (both questions), which is the gate. preflight_reviewer optionally buys "
         "ONE named row's early look at the worktree first (review_change surface=preflight): it informs, never "
         "gates, and its record never answers the panel. Without it the commit records preflight not_performed, "
         "a fact rather than a bypass."
@@ -1430,7 +1430,7 @@ def get_tools() -> List[ToolEntry]:
         "review_rebuttal": {"type": "string", "default": "", "description": "A NEW content-hashed counter-argument buys one paid re-review within capacity; repeating it is free-refused."},
         "preflight_reviewer": {"type": "string", "default": "", "description": "One ENABLED catalog row (id or handle; a review-pool member or not) for an early informational look at the worktree before the panel; unknown or disabled is TOOL_ARG_ERROR."},
         "skip_advisory_review": {"type": "boolean", "default": False, "description": skip_advisory_description},
-        "goal": {"type": "string", "default": "", "description": "High-level goal of this change. Used by scope reviewer to judge completeness."}, "scope": {"type": "string", "default": "", "description": "Declared scope boundary. Issues outside scope are advisory-only for scope reviewer."},
+        "goal": {"type": "string", "default": "", "description": "High-level goal of this change. Used by the panel's coupling questions to judge completeness."}, "scope": {"type": "string", "default": "", "description": "Declared scope boundary. Issues outside scope are advisory-only for scope reviewer."},
         "review_reference": {"type": "object", "description": "Exact reference returned by this task's prior commit review, for free informed Advisory continuation."},
         "author_disposition": {"type": "object", "additionalProperties": False,
             "properties": {"disposition": {"type": "string", "enum": ["accepted", "rejected", "partial", "deferred"]}, "rationale": {"type": "string"}},

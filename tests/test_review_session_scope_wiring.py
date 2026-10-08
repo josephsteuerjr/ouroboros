@@ -152,7 +152,7 @@ def test_delegated_seat_goes_out_as_the_brief_and_never_builds_the_pack(tmp_path
     # Measured across `ouroboros/` and `web/` this key has exactly one writer and
     # no reader: the policy is disclosed, not defended by machinery.
     assert manifest["excluded_sensitive"] == {"policy": "preserved", "host_enforced": False}
-    assert "Intent / Scope Review Checklist" in brief
+    assert "Coupling questions" in brief
     assert "intent_alignment" in brief and "implicit_contracts" in brief
     assert "git diff --cached" in brief         # the disclosed retrieval pointer
     assert "Governance navigation (read on demand)" in brief   # the map, never whole
@@ -171,7 +171,7 @@ def test_delegated_seat_goes_out_as_the_brief_and_never_builds_the_pack(tmp_path
     assert record.answers["change"]["verdict"] == "PASS" and record.answers["coupling"]["verdict"] == "PASS"
     start = fake_route.instances[0].start_requests[0]
     assert brief in start["prompt"]       # the brief (under the seat header), not a pack
-    assert "Intent / Scope Review Checklist" in start["prompt"]
+    assert "Coupling questions" in start["prompt"]
     assert start["outputSchema"]["properties"]["coupling"]["minItems"] == 1
 
 
@@ -976,12 +976,12 @@ def test_the_brief_of_a_three_file_change_on_the_real_tree_is_measured(tmp_path)
           f"({without_diff:,} without the diff slot)")
     for name, chars in sorted(sections.items(), key=lambda item: -item[1]):
         print(f"  {name:32s} {chars:>9,}")
-    # Re-measured on the one-brief tree (PR-3 packet B, 2026-10-08): 187,095
-    # without the diff slot (the retired scope brief measured 209,106 on its
-    # own; the two-part brief adds Part 1's change checklist and contract B but
-    # drops the scope packet's duplicated governance). The ceiling keeps the
-    # old headroom for the next index growth, not a rounding.
-    assert without_diff < 210_000, without_diff
+    # Measured without the diff slot (2026-10-08): 207,462 on packet B's tree,
+    # 210,553 on the integrated PR-3 tree, whose canon adds the BIBLE review
+    # paragraph and the Coupling questions section (the retired scope brief
+    # alone measured 209,106). The ceiling keeps about the same headroom for the
+    # next index growth (~23K), not a rounding of the measurement.
+    assert without_diff < 234_000, without_diff
     assert sections["repository_index"] > 20_000          # the index really ran
     assert sections["governance_stable_inline"] > 40_000  # BIBLE really inline
     assert sections["change_checklist"] > 0 and sections["coupling_checklist"] > 0

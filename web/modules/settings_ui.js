@@ -624,7 +624,7 @@ export function renderSettingsPage() {
                             Separate axis from Review Enforcement. Controls how far Ouroboros is allowed to self-modify.
                             <code>Light</code> blocks repo self-modification but allows reviewed + enabled skills to run.
                             <code>Advanced</code> is the default &mdash; self-modify the evolutionary layer; protected core/contract/release files stay guarded by the shared runtime-mode policy.
-                            <code>Pro</code> can edit protected core/contract/release surfaces, but commits still go through the normal triad + scope review gate; Advanced remains limited to the evolutionary layer.
+                            <code>Pro</code> can edit protected core/contract/release surfaces, but commits still go through the normal review gate; Advanced remains limited to the evolutionary layer.
                             <code>Cyber Pro</code> grants the full host and configuration authority, including credentials, models, Supervisor configuration and protected rewrites. Review scope and enforcement stay owner-controlled. Review Enforcement remains independent, so <code>Blocking</code> stays available in Cyber Pro.
                             <br><strong>Human controlled:</strong> desktop builds ask the launcher for native confirmation before saving a mode change.
                             Web/Docker sessions save mode changes through the owner endpoint; the new mode takes effect after restart.

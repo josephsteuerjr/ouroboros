@@ -352,7 +352,7 @@ def _brief(tmp_path, parts=("change", "coupling")):
     repo = _staged_repo(tmp_path / "repo")
     (repo / "docs").mkdir(exist_ok=True)
     (repo / "docs" / "CHECKLISTS.md").write_text(
-        "## Intent / Scope Review Checklist\n\nplaceholder\n", encoding="utf-8", newline="\n")
+        "## Coupling questions\n\nplaceholder\n", encoding="utf-8", newline="\n")
     (repo / "docs" / "DEVELOPMENT.md").write_text("dev guide\n", encoding="utf-8", newline="\n")
     _git(repo, "add", "-A")
     text, _manifest = build_retrieving_brief(repo, BriefInputs(commit_message="test", parts=tuple(parts)))
@@ -380,7 +380,8 @@ class TestCouplingPromptMatrixContract:
 
     def test_one_anti_pattern_lock_guard_per_brief(self, tmp_path):
         prompt = _brief(tmp_path)
-        assert prompt.count("Anti pattern-lock guard") == 1
+        # The guard's own text, not a heading: Part 1 carries it once, and no doc pointer stands in for it.
+        assert prompt.count("deliberate SECOND pass") == 1
         assert "exactly one FAIL" not in prompt
         flat = re.sub(r"\s+", " ", prompt)
         assert "zero or one FAIL is valid" in flat
@@ -388,7 +389,7 @@ class TestCouplingPromptMatrixContract:
         assert "SECOND pass" in flat
         assert "DIFFERENT concern class" in flat
         # Still one guard when the seat is asked Part 2 alone.
-        assert _brief(tmp_path / "only", ("coupling",)).count("Anti pattern-lock guard") == 1
+        assert _brief(tmp_path / "only", ("coupling",)).count("deliberate SECOND pass") == 1
 
     def test_anti_pattern_lock_pairings_cover_coupling_items(self, tmp_path):
         prompt = _brief(tmp_path)
@@ -400,7 +401,7 @@ class TestCouplingPromptMatrixContract:
 
         from ouroboros.tools import review_brief_coupling as rbc
 
-        assert rbc.COUPLING_CHECKLIST_SECTION == "Intent / Scope Review Checklist"
+        assert rbc.COUPLING_CHECKLIST_SECTION == "Coupling questions"
         assert "load_checklist_section(COUPLING_CHECKLIST_SECTION)" in inspect.getsource(rbc.build_retrieving_brief)
 
 

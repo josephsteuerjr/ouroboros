@@ -47,7 +47,7 @@ def brief_env(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     (repo / "docs").mkdir(parents=True)
     (repo / "docs" / "CHECKLISTS.md").write_text(
-        "## Intent / Scope Review Checklist\n\nplaceholder\n", encoding="utf-8")
+        "## Coupling questions\n\nplaceholder\n", encoding="utf-8")
     (repo / "docs" / "DEVELOPMENT.md").write_text("development\n", encoding="utf-8")
     (repo / "BIBLE.md").write_text("constitution\n", encoding="utf-8")
     (repo / ".gitignore").write_text(".review-drive/\n", encoding="utf-8")
@@ -112,7 +112,7 @@ def test_context_failure_persists_and_forwards_one_row(brief_env, monkeypatch, r
         "slot_id": "seat-1", "model": "test/model", "parts": ["change", "coupling"], "status": "error",
         "failure_phase": "context", "failure_code": "context_unavailable",
         "reason": (
-            "Intent / Scope Review Checklist could not be loaded from docs/CHECKLISTS.md — "
+            "Coupling questions could not be loaded from docs/CHECKLISTS.md — "
             "the coupling question cannot be asked without its checklist (fail-closed)."
         ),
     }

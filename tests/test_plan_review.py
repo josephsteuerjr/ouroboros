@@ -363,7 +363,7 @@ def test_malformed_reviewer_slots_block_plan_review_before_any_dispatch(tmp_path
     # The pointer names a place that EXISTS: D-10 moved these rows out of the
     # Models tab and renamed the section, so the old wording sent the owner
     # looking for a heading no tab carries any more.
-    assert "Fix Review lanes on the Agents tab in Settings" in result
+    assert "Fix the Reviewer rows on the Agents tab in Settings" in result
     from ouroboros.task_results import load_plan_review_state
 
     assert load_plan_review_state(tmp_path, "plan-slot-config")["current_attempt"]["status"] == "unavailable"

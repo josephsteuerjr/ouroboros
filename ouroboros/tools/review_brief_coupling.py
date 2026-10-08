@@ -65,7 +65,7 @@ AGENTIC_RETRIEVAL_DELIVERY = "agentic_retrieval"
 
 # The checklist section Part 2 delivers; the brief fails closed without it (a
 # reviewer with no checklist cannot answer the required coupling matrix).
-COUPLING_CHECKLIST_SECTION = "Intent / Scope Review Checklist"
+COUPLING_CHECKLIST_SECTION = "Coupling questions"
 
 # A delegated harness owns its own context selection and evidences no window, so
 # the host states one conservative ceiling for what it INLINES into a session

@@ -219,7 +219,7 @@ def test_frozen_foreign_base_head_wave_runs_the_core_layer_on_every_delivery(tmp
         # The packet carries the frozen diff; a retrieving seat's brief reads the checkout.
         assert name != "prompt" or ("+two" in text and "-one" in text), name
         # The universal rule set and the subject's own navigation are delivered …
-        assert "## Change Review Checklist" in text or "## Intent / Scope Review Checklist" in text, name
+        assert "## Change Review Checklist" in text or "## Coupling questions" in text, name
         assert "## Governance navigation (core layer)" in text and "### Subject documents" in text, name
         assert "README.md" in text and "Usage" in text and checkout in text, name
         # … the body's governance is not: no constitution text, no standing

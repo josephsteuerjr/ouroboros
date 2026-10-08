@@ -108,7 +108,7 @@ def test_git_catalog_schema_bytes_and_handler_owners_are_stable():
     ).encode()
     # Informed Advisory commit aliases plus explicit local vcs_diff base/head.
     assert hashlib.sha256(schema_bytes).hexdigest() == (
-        "f2a0902a5fdc4104dd60a2203f6016df24ff0418d350663a74b7dbb7c314c897"  # commit_reviewed gained preflight_reviewer (decision 3A: the advisory gate retired)
+        "f344cca50840de21c7347c350c1dcb295c2a6e842056073a3e7819453384ae18"  # commit_reviewed gained preflight_reviewer (decision 3A); its text names the review panel, not triad + scope
     )
     assert {
         entry.name: (entry.handler.__module__, entry.handler.__name__)

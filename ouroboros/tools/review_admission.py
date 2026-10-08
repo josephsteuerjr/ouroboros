@@ -62,7 +62,7 @@ MANAGED_SPLIT_IMPOSSIBLE = (
 )
 MANAGED_OVERSIZE_GUIDANCE = (
     "Switch or add agent-route reviewer rows in "
-    "Settings → Agents → Review lanes (packet limits do not apply to them), "
+    "Settings → Agents, Reviewer rows (packet limits do not apply to them), "
     "or configure larger-window models."
 )
 

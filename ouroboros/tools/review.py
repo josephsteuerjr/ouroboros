@@ -126,7 +126,7 @@ def get_tools():
                         },
                         "reviewer_slot_id": {
                             "type": "string",
-                            "description": "Child task only: the one configured triad row (its slot_id) to review with, required when more than one is configured; the host checks membership. Pick by what the claim needs; each row keeps its own delivery.",
+                            "description": "Child task only: the one review-pool row (its subagent id) to review with, required when the pool has more than one; the host checks membership. Pick by what the claim needs; each row keeps its own delivery.",
                         },
                         "late_review": {
                             "type": "object",
@@ -1466,7 +1466,7 @@ def _dispatch_unified_review(ctx: ToolContext, commit_message: str, prepared: di
         blocked_msg = (
             f"⚠️ REVIEW_BLOCKED: review NOT_PERFORMED — {what}.\n"
             "The commit gate counts only a PASS/FAIL answer; retry the commit or configure a "
-            "retrieving reviewer seat (Settings → Agents → Review lanes)." + errored_note
+            "retrieving reviewer seat (Settings → Agents, a Reviewer row that reads the work itself)." + errored_note
         )
         return _handle_review_block_or_warning(
             ctx, blocking_review, blocked_msg,

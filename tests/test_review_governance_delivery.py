@@ -44,7 +44,7 @@ def candidate(tmp_path):
     (repo / "ouroboros").mkdir()
     checklists = (REPO / "docs" / "CHECKLISTS.md").read_text(encoding="utf-8")
     for name in (SHARED_CHECKLIST_SECTION, "Change Review Checklist", "Ouroboros Body Layer",
-                 "Intent / Scope Review Checklist"):
+                 "Coupling questions"):
         section = load_checklist_section(name)
         assert checklists.count(section) == 1
         checklists = checklists.replace(section, f"## {name}\n\n{PROPOSAL_RULE}\n")

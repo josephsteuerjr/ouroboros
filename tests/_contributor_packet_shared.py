@@ -63,7 +63,7 @@ GOLDEN_CONFIG = {
 
 
 def _coupling_matrix(reason: str) -> list:
-    """The whole Intent / Scope Review Checklist answered PASS: a retrieving seat's
+    """The whole Coupling questions answered PASS: a retrieving seat's
     ``coupling`` block must cover every required item or the gate records it as
     unanswered."""
     return [{"item": item, "verdict": "PASS", "severity": "advisory", "reason": reason}

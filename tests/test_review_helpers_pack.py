@@ -52,12 +52,12 @@ class TestChecklistSectionLoader:
         body = mod.load_checklist_section("Ouroboros Body Layer")
         assert "bible_compliance" in body
         # Must NOT contain scope checklist
-        assert "Intent / Scope Review Checklist" not in core + body
+        assert "Coupling questions" not in core + body
 
     def test_loads_scope_section(self):
         mod = _get_module("ouroboros.tools.review_helpers")
-        section = mod.load_checklist_section("Intent / Scope Review Checklist")
-        assert "## Intent / Scope Review Checklist" in section
+        section = mod.load_checklist_section("Coupling questions")
+        assert "## Coupling questions" in section
         assert "intent_alignment" in section
         # Must NOT contain change-review checklist items
         assert "## Change Review Checklist" not in section

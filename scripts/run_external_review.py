@@ -3,7 +3,7 @@
 ``review_change`` operation (``ouroboros.tools.review_change``).
 
 The operator lane reviews this checkout's staged index. The ``--contributor``
-lane reviews a committed base..head proposal with the configured triad + scope,
+lane reviews a committed base..head proposal with the configured review pool,
 blocking semantics, and a redacted shareable packet bound to base/head/tree/diff.
 The runtime freezes the subject and reads it; the review flow and rules that run
 are the installed body's — the checkout this wrapper runs from — never the
@@ -248,7 +248,7 @@ def _apply_contributor_review_env() -> None:
     """Pin readiness policy while preserving the contributor's reviewer slots."""
     os.environ["OUROBOROS_REVIEW_ENFORCEMENT"] = "blocking"
     # Scope-review applicability follows the context mode (v6.80.0): pin max so the
-    # operator review line always runs the blocking whole-repo scope reviewer, even
+    # operator review line always asks the blocking whole-repo coupling questions, even
     # when the host happens to sit in the owner's low mode.
     os.environ["OUROBOROS_CONTEXT_MODE"] = "max"
     os.environ["OUROBOROS_OBSERVABILITY_KEEP_RAW"] = "0"
@@ -1260,7 +1260,7 @@ def _contributor_lane(args, host_ctx, proposal: dict, *, resolved_config: dict, 
     print(
         "Contributor profile: Claude advisory excluded; the proposal's hermetic test "
         "preflight runs first, then the installed review flow and rules read the frozen "
-        "base..head subject through the configured triad + scope routes.",
+        "base..head subject through the configured review pool.",
         file=sys.stderr,
     )
     t0 = time.time()
@@ -1362,7 +1362,7 @@ def _reviewed_tree_drift(checkout: pathlib.Path, staged: str, output_dir: pathli
 def _operator_lane(args, host_ctx, commit_message: str, *, goal: str, scope: str, staged: str,
                    resolved_config: dict, output_dir: pathlib.Path, review_drive_root: pathlib.Path) -> int:
     """The commit gate's own non-committing cycle (deterministic checks, hermetic tests
-    preflight, the author's optional ``surface=preflight`` look, triad + scope, ledger record)
+    preflight, the author's optional ``surface=preflight`` look, the review panel, ledger record)
     over the staged index, run in an isolated checkout of the staged patch that the runtime
     materializes (``review_subject.isolated_checkout``): edits in this worktree during the run
     cannot reach the reviewers, and the checkout is retained when review custody is still

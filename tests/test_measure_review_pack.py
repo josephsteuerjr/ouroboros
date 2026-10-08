@@ -53,7 +53,7 @@ def synthetic_repo(tmp_path):
     (repo / "docs" / "CHECKLISTS.md").write_text(
         "# Checklists\n\n## Change Review Checklist\n\n- synthetic item 7f3a\n\n"
         "## Ouroboros Body Layer\n\n- synthetic body item 7f3b\n\n"
-        "## Intent / Scope Review Checklist\n\n- synthetic scope item 9c1e\n\n## Other\n\nnot inlined\n",
+        "## Coupling questions\n\n- synthetic scope item 9c1e\n\n## Other\n\nnot inlined\n",
         encoding="utf-8")
     (repo / "docs" / "CHECKLISTS_ARCHIVE.md").write_text("archive row 7f3a\n", encoding="utf-8")
     for rel in ("DEVELOPMENT.md", "DESIGN.md", "ARCHITECTURE.md"):
