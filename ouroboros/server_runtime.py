@@ -10,15 +10,16 @@ from ouroboros.provider_models import (
     compute_direct_review_models_fallback,
     migrate_model_value,
 )
-from ouroboros.config import OPENROUTER_DEFAULTS, SETTINGS_DEFAULTS, _DIRECT_PROVIDER_REVIEW_RUNS, _parse_model_list
+from ouroboros.config import SETTINGS_DEFAULTS, _DIRECT_PROVIDER_REVIEW_RUNS, _parse_model_list
 from ouroboros.utils import utc_now_iso
 
 
+# The deep-review model key is a RETIRED setting (PR-3): the read seam migrates a
+# stored value into a catalog row, so no provider default is applied to it here.
 _MODEL_ROLE_SETTING_KEYS = {
     "main": "OUROBOROS_MODEL",
     "light": "OUROBOROS_MODEL_LIGHT",
     "fallback": "OUROBOROS_MODEL_FALLBACKS",
-    "deep_self_review": "OUROBOROS_MODEL_DEEP_SELF_REVIEW",
 }
 _DIRECT_PROVIDER_AUTO_DEFAULTS = {
     provider: {
@@ -56,13 +57,6 @@ _DIRECT_PROVIDER_LEGACY_DEFAULTS = {
         },
         "OUROBOROS_MODEL_FALLBACKS": {
             "anthropic/claude-sonnet-4.6", "openai/gpt-5.4-mini", "openai::gpt-5.4-mini",
-        },
-        # Prior shipped OpenRouter deep defaults and their migrated direct spellings
-        # all name router slugs that do not exist on api.openai.com (404) — a direct
-        # install must land on the real model, not on a -pro id.
-        "OUROBOROS_MODEL_DEEP_SELF_REVIEW": {
-            "openai/gpt-5.6-sol-pro", "openai::gpt-5.6-sol-pro",
-            "openai/gpt-5.5-pro", "openai::gpt-5.5-pro",
         },
     },
     "anthropic": {
@@ -111,14 +105,6 @@ _PRIOR_SHIPPED_SLOT_DEFAULTS = {
         "google/gemini-3.6-flash",
     },
     "OUROBOROS_MODEL_FALLBACKS": {"anthropic/claude-sonnet-4.6"},
-    # Prior shipped deep-review values (v6.81's gpt-5.5-pro, then the gpt-5.6-sol-pro
-    # routing slug): an upgraded direct-provider install still carries one, and each
-    # is just as unreachable without an OpenRouter credential.
-    "OUROBOROS_MODEL_DEEP_SELF_REVIEW": {
-        OPENROUTER_DEFAULTS["deep_self_review"],
-        "openai/gpt-5.5-pro", "openai::gpt-5.5-pro",
-        "openai/gpt-5.6-sol-pro", "openai::gpt-5.6-sol-pro",
-    },
 }
 # Heavy is no longer an active role, but its bounded migration reader still
 # needs to distinguish an owner's custom value from values Ouroboros itself
@@ -500,21 +486,6 @@ def apply_runtime_provider_defaults(settings: dict) -> tuple[dict, bool, list[st
     provider_defaults = _DIRECT_PROVIDER_AUTO_DEFAULTS[provider]
     main_shipped_default = _setting_text(SETTINGS_DEFAULTS, "OUROBOROS_MODEL")
     for key in _ALL_MODEL_SLOT_KEYS:
-        if key not in provider_defaults:
-            # This provider has NO reachable value for that slot (deep review needs
-            # the >=1M window Cloud.ru/GigaChat/MiniMax do not guarantee). Leaving a
-            # SHIPPED default in place would keep an unreachable OpenRouter-form
-            # route, so clear it — the review is then honestly unavailable. An
-            # explicit owner value is never touched.
-            current_shipped = _setting_text(normalized, key)
-            shipped_values = {
-                _setting_text(SETTINGS_DEFAULTS, key),
-                *_PRIOR_SHIPPED_SLOT_DEFAULTS.get(key, set()),
-            }
-            if current_shipped and current_shipped in shipped_values:
-                normalized[key] = ""
-                changed_keys.append(key)
-            continue
         raw_current = _setting_text(normalized, key)
         current = migrate_model_value(provider, raw_current)
         default = _setting_text(SETTINGS_DEFAULTS, key)
