@@ -14,7 +14,9 @@ controls at the end show the assertions bite.
 
 Classes: the N-1 fixture (6.113.4), the structural copy of Anton's install (contract
 §2), the factory OpenRouter install, local-only, compatible-only, one direct provider,
-and the subscription wizard's preset (a pool document already).
+the subscription wizard's preset (a pool document already), and the Colab launches
+(the kernel's Drive document: first run with one direct provider, re-run over the N-1
+document, the OpenRouter control).
 """
 
 from __future__ import annotations
@@ -223,6 +225,45 @@ def test_the_subscription_wizards_preset_is_a_pool_that_reviews_in_one_wave(stag
     assert all(PART_COUPLING in row["parts"] and _responded(row) == {PART_CHANGE, PART_COUPLING}
                for row in record["rows"])
     assert record["verdict"]["per_question"][PART_COUPLING] == "PASS"
+
+
+# Colab: the kernel builds the Drive document from the collected secrets and writes it
+# (``build_colab_settings`` -> ``write_colab_settings``), the server reads it back. The
+# pool that write pins must run on the provider the install holds a credential for
+# (VD3-02): on the first run (the seed is the channel alone) and on a re-run over a
+# lane-era Drive document alike. The OpenRouter launch is the control: the default
+# aggregator keeps its shipped rows.
+COLAB_LAUNCHES = {
+    "colab_first_run_openai": ({"OPENAI_API_KEY": "present"}, {}),
+    "colab_rerun_over_nminus1_openai": ({"OPENAI_API_KEY": "present"}, N1_DOC),
+    "colab_first_run_openrouter": ({"OPENROUTER_API_KEY": "present"}, {}),
+}
+
+
+@pytest.mark.parametrize("launch", sorted(COLAB_LAUNCHES))
+def test_a_colab_launch_pins_the_pool_its_own_provider_can_run(launch, staged_body, tmp_path, monkeypatch):
+    from ouroboros.colab_bootstrap import build_colab_settings, write_colab_settings
+    from ouroboros.provider_models import model_has_credentials_in_settings
+    from ouroboros.subscription_install_presets import factory_review_rows
+
+    secret, drive_document = COLAB_LAUNCHES[launch]
+    seed = {**drive_document, "OUROBOROS_UPDATE_CHANNEL": "stable"}  # the notebook's seed
+    settings = build_colab_settings({"TELEGRAM_BOT_TOKEN": "present", **secret}, runtime_mode="pro",
+                                    existing=seed, drive_document_present=bool(drive_document))
+    path = write_colab_settings(tmp_path / "colab_drive", settings)
+    document = json.loads(path.read_text(encoding="utf-8"))
+    assert SLOTS not in document and SUBAGENTS in document, "the Drive document is a pool document"
+    loaded = _install(monkeypatch, document)  # the server's read of the Drive document
+    pool = review_pool_slots()
+    assert pool and adaptive_quorum(len(pool)) == _lane_era_quorum({SLOTS: "", **secret}), launch
+    # The rows are the shipped panel of the provider whose key the document holds — every
+    # one runnable with the install's own credentials, none pinned for a provider it lacks.
+    assert [slot.model for slot in pool] == [row["route"]["target_id"] for row in factory_review_rows(secret)], launch
+    assert all(model_has_credentials_in_settings(slot.model, loaded) for slot in pool), [s.model for s in pool]
+    result, record, _served = _one_wave(tmp_path, monkeypatch, Path(staged_body["repo"]))
+    assert (result["aggregate"], result["state"]) == ("PASS", "settled"), (launch, result)
+    assert [row["seat_id"] for row in record["rows"]] == [slot.slot_id for slot in pool]
+    assert record["verdict"]["per_question"] == {PART_CHANGE: "PASS", PART_COUPLING: "PASS"}, launch
 
 
 # --- the controls: the assertions above bite -------------------------------------------

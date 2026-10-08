@@ -1356,7 +1356,7 @@ def test_a_document_migrated_and_saved_by_another_process_still_gets_its_receipt
     root, sent = boot  # the kernel's own process state is bound to ``root``, not to the Drive root
     drive = _other_root(root, "drive")
     kernel_view = build_colab_settings({"OPENROUTER_API_KEY": "present"}, existing=dict(N1_DOC))
-    kernel_document = dict(N1_DOC)
+    kernel_document = {**N1_DOC, "OPENROUTER_API_KEY": "present"}  # the Drive document plus the fresh secret
     assert [o.trigger for o in cfg.review_pool_migrations_seen()] == [m.TRIGGER_LANES_KEY]
     write_colab_settings(drive, kernel_view)
     (snapshot_file,) = _snapshots(drive)
