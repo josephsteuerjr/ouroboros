@@ -723,50 +723,29 @@ def _start_assisted_merge_fenced(plan: dict, tx: dict) -> JSONResponse:
              **({"stash_note": note} if note else {})},
             status_code=409,
         )
-    # Affordability floor: a resolution that cannot buy even ONE commit-gate
-    # review wave would mutate the live tree into a conflicted merge and then
-    # stall mid-review. The wave is priced on the panel's paid seats by the one
-    # explicit estimator (``review_admission.managed_update_wave_floor``); its
-    # estimator errors fail open with a typed event, a broken import does not.
-    from ouroboros.tools.review_admission import managed_update_wave_floor
+    # Money admission is the known-spend rule every reviewer seat's reservation
+    # applies (#1487), checked just above: known spend below TOTAL_BUDGET admits
+    # the update, and a review that later reaches the limit pauses on its own
+    # fences. One commit-gate wave over the review pool's paid seats is still
+    # priced at the review packs' own worst-case caps by the one explicit
+    # estimator (``review_admission.managed_update_wave_estimate``), but as
+    # DISCLOSURE, never a second, earlier refusal: a prospective wave larger
+    # than the remainder used to refuse an update the owner's limit still
+    # allowed. Agent-session rows ride subscriptions, not USD budget; an
+    # estimator error is recorded, never a zero, and a broken import is not
+    # swallowed.
+    from ouroboros.tools.review_admission import managed_update_wave_estimate
 
-    admission, floor_events = managed_update_wave_floor(float(remaining))
-    for event in floor_events:
-        try:
-            from supervisor.git_ops import DRIVE_ROOT as _dr
-            from ouroboros.utils import append_jsonl as _aj, utc_now_iso as _n
+    estimate_event = managed_update_wave_estimate(float(remaining))
+    try:
+        from supervisor.git_ops import DRIVE_ROOT as _dr
+        from ouroboros.utils import append_jsonl as _aj, utc_now_iso as _n
 
-            _aj(_dr / "logs" / "supervisor.jsonl", {"ts": _n(), **event})
-        except Exception:
-            log.debug("wave-floor event write failed", exc_info=True)
-    if not admission.get("fits", True):
-        note = _unwind_stashed_update(tx, "assisted_admission_failed")
-        _respawn_workers_after_failed_update()
-        estimated = admission.get("estimated_wave_usd")
-        try:
-            from supervisor.git_ops import DRIVE_ROOT
-            from ouroboros.utils import append_jsonl, utc_now_iso as _now
-
-            append_jsonl(DRIVE_ROOT / "logs" / "supervisor.jsonl", {
-                "ts": _now(), "type": "managed_update_wave_floor_refused",
-                "estimated_wave_usd": estimated, "remaining_usd": admission.get("remaining_usd"),
-            })
-        except Exception:
-            log.debug("wave-floor refusal event write failed", exc_info=True)
-        return JSONResponse(
-            {"error": (
-                "Assisted update needs enough model budget for at least one full "
-                f"review wave ({'at least ' if admission.get('unpriced_slots') else ''}≈${estimated} "
-                "estimated at the review packs' worst-case caps for the configured reviewer panel"
-                + (f"; {admission['unpriced_slots']} slot(s) unpriced" if admission.get("unpriced_slots") else "")
-                + f", ${round(float(remaining), 2)} remaining); nothing was changed."
-            ),
-             "estimated_wave_usd": estimated,
-             "remaining_usd": admission.get("remaining_usd"),
-             "unpriced_slots": admission.get("unpriced_slots", 0),
-             **({"stash_note": note} if note else {})},
-            status_code=409,
-        )
+        # One durable disclosure of the wave estimate beside the known room;
+        # unknowable parts are counted, never filled in (P1).
+        _aj(_dr / "logs" / "supervisor.jsonl", {"ts": _n(), **estimate_event})
+    except Exception:
+        log.debug("wave estimate event write failed", exc_info=True)
 
     _create_rescue_snapshot(
         branch, "ui_update_assisted_merge", _collect_repo_sync_state(),

@@ -757,13 +757,15 @@ def commit_gate_paid_seats(prepared, exited) -> list:
 
 
 def admit_commit_gate_wave(ctx, seats) -> str | None:
-    """All-or-nothing money admission of one commit-gate wave (owner decision
-    2026-09-05): every paid seat's reservation upper bound must fit TOGETHER,
-    against every fence ``reserve_attempt`` enforces (the global TOTAL_BUDGET
-    remainder, root and original group fences), before ANY seat is dispatched. Returns the
-    typed refusal text ($0, nothing dispatched) naming the binding axis, or
-    None; fail-open on unknowns like the task-level surfaces that already ride
-    ``review_wave_budget_gate``."""
+    """Money admission of one commit-gate wave (owner decision 2026-09-05, on
+    the known-spend rule of #1487): before ANY seat is dispatched, KNOWN spend
+    must be below every fence ``reserve_attempt`` enforces (the global
+    TOTAL_BUDGET, root and original group fences). The seats' summed reservation
+    bounds are disclosed, not an earlier refusal; a fence reached mid-wave
+    refuses the remaining seats at their own reservation with truthful custody.
+    Returns the typed refusal text ($0, nothing dispatched) naming the binding
+    axis, or None; fail-open on unknowns like the task-level surfaces that
+    already ride ``review_wave_budget_gate``."""
     if not seats:
         return None
     from ouroboros.review_substrate import review_usage_category
@@ -786,47 +788,46 @@ def admit_commit_gate_wave(ctx, seats) -> str | None:
     usd = lambda value: "unknown" if value is None else f"${float(value):.6f}"  # noqa: E731
     bounds = list(admission.get("slot_bounds") or []) + [None] * len(seats)
     wave, remaining = admission.get("estimated_wave_usd"), admission.get("remaining_usd")
-    shortfall = None if wave is None or remaining is None else max(0.0, float(wave) - float(remaining))
-    limit, accounted = admission.get("limit_usd"), admission.get("accounted_usd")
-    root_remaining = None if limit is None or accounted is None else max(0.0, float(limit) - float(accounted))
+    limit, known = admission.get("limit_usd"), admission.get("known_usd")
+    root_remaining = None if limit is None or known is None else max(0.0, float(limit) - float(known))
     if admission.get("binding_axis") == "global":
         # The refusal names the fence that binds and the knob that moves it — never
         # a per-task fence the wave would have fit.
         fence = (
             f"the global budget TOTAL_BUDGET {usd(admission.get('global_limit_usd'))}: "
-            f"accounted={usd(admission.get('global_accounted_usd'))} across every task (of which "
-            f"{usd(admission.get('global_reserved_usd'))} is reserved by other in-flight attempts), "
-            f"remaining={usd(remaining)}, shortfall={usd(shortfall)}; the per-task budget fence "
+            f"known spend={usd(admission.get('global_known_usd'))} across every task (plus "
+            f"{usd(admission.get('global_reserved_usd'))} of open holds, not counted), "
+            f"remaining={usd(remaining)}; the per-task budget fence "
             f"{usd(limit)} alone would leave {usd(root_remaining)}"
         )
     else:
         label = "whole-work billing-group budget fence" if admission.get("binding_axis") == "group" else "per-task budget fence"
         fence = (
-            f"the {label} {usd(limit)}: accounted={usd(accounted)} (of which "
-            f"{usd(admission.get('reserved_usd'))} is reserved by other in-flight attempts), "
-            f"remaining={usd(remaining)}, shortfall={usd(shortfall)}; the global budget "
+            f"the {label} {usd(limit)}: known spend={usd(known)} (plus "
+            f"{usd(admission.get('reserved_usd'))} of open holds, not counted), "
+            f"remaining={usd(remaining)}; the global budget "
             f"{usd(admission.get('global_limit_usd'))} alone would leave {usd(admission.get('global_remaining_usd'))}"
         )
     remedy = review_wave_binding_fence(admission)[1]
     return (
         "⚠️ REVIEW_BLOCKED: commit-gate review wave declined before dispatch ($0 spent). "
-        f"The wave's reservation upper bound {usd(wave)} ("
+        f"Known spend has reached {fence}. The wave's reservation upper bound would have been {usd(wave)} ("
         + "; ".join(f"{s['surface']}:{s['slot_id']} {s['model']} {usd(bounds[i])}" for i, s in enumerate(seats))
-        + f") does not fit {fence}. No reviewer seat was dispatched (scope and triad alike): wait for "
-        f"in-flight attempts to settle or {remedy}, then retry the same commit."
+        + f"). No reviewer seat was dispatched (scope and triad alike): {remedy}, then retry the same commit."
     )
 
 
-def managed_update_wave_floor(remaining_usd: float) -> Tuple[dict, list]:
-    """Affordability floor of ONE commit-gate wave for the managed-update resolver:
-    ``(admission, events)``. The pool is the one wave's paid seats — every
-    api-route row of the panel (packet or native, both parts of the brief ride
-    one seat) — priced at the packs' own worst-case caps (the shared
-    920K-token input SSOT per API row, the review output reserve) with the
-    shared reservation math; agent-session rows ride subscriptions and are
-    counted, not priced. Estimator errors fail open INSIDE the estimate (one
-    typed event), never by swallowing a missing symbol: this function is called
-    explicitly and a broken import propagates to the caller."""
+def managed_update_wave_estimate(remaining_usd: float) -> dict:
+    """Disclosure of ONE commit-gate wave for the managed-update resolver: the
+    supervisor event to record. Money admission is the known-spend rule the
+    caller checked first (#1487), so this estimate never refuses. The pool is
+    the one wave's paid seats — every api-route row of the panel (packet or
+    native, both parts of the brief ride one seat) — priced at the packs' own
+    worst-case caps (the shared 920K-token input SSOT per API row, the review
+    output reserve) with the shared reservation math; agent-session rows ride
+    subscriptions and are counted, not priced. An estimator error is recorded
+    inside the event, never a zero; this function is called explicitly, so a
+    broken import propagates to the caller."""
     from ouroboros.reviewer_slot_config import review_pool_slots
     from ouroboros.tools.review_helpers import REVIEW_PROMPT_TOKEN_BUDGET
     from ouroboros.tools.review_multi_model import _review_output_budget
@@ -834,11 +835,12 @@ def managed_update_wave_floor(remaining_usd: float) -> Tuple[dict, list]:
 
     rows = review_pool_slots()
     models = [row.model for row in rows if not row.is_session and row.model]
-    session_slots = sum(1 for row in rows if row.is_session)
-    admission: dict = {"fits": True}
-    events: list = []
+    event: dict = {"type": "managed_update_wave_estimate", "estimated_wave_usd": None,
+                   "exceeds_known_remaining": False, "unpriced_slots": 0,
+                   "session_slots": sum(1 for row in rows if row.is_session),
+                   "remaining_usd": float(remaining_usd)}
     if not models:
-        return admission, events
+        return event
     try:
         estimate = review_wave_admission(
             root_task_id="managed-update-admission", models=models,
@@ -846,21 +848,12 @@ def managed_update_wave_floor(remaining_usd: float) -> Tuple[dict, list]:
             max_completion_tokens=int(_review_output_budget()),
             remaining_usd_override=float(remaining_usd))
     except Exception as exc:
-        log.debug("assisted admission wave estimate failed open", exc_info=True)
-        events.append({"type": "managed_update_wave_floor_estimator_failed", "remaining_usd": float(remaining_usd),
-                       "error": f"{type(exc).__name__}: {exc}"})
-        return admission, events
-    unpriced = int(estimate.get("unpriced_slots") or 0)
+        log.debug("assisted admission wave estimate failed", exc_info=True)
+        return {"type": "managed_update_wave_estimate_failed", "remaining_usd": float(remaining_usd),
+                "error": f"{type(exc).__name__}: {exc}"}
     total = estimate.get("estimated_wave_usd")
-    if total is None:
-        unpriced += len(models)
-    else:
-        admission = {"fits": float(total) <= float(remaining_usd) + 1e-9, "estimated_wave_usd": round(float(total), 6),
-                     "remaining_usd": float(remaining_usd), "unpriced_slots": unpriced, "session_slots": session_slots}
-    if admission.get("fits", True) and (unpriced or (session_slots and total is None)):
-        # An ADMITTED wave with unknowable parts must not read as a fully priced
-        # estimate later (P1: represent the gap) — one durable line.
-        events.append({"type": "managed_update_wave_floor_partial_unknown",
-                       "estimated_wave_usd": admission.get("estimated_wave_usd"), "unpriced_slots": unpriced,
-                       "session_slots": session_slots, "remaining_usd": float(remaining_usd)})
-    return admission, events
+    event["unpriced_slots"] = int(estimate.get("unpriced_slots") or 0) + (len(models) if total is None else 0)
+    if total is not None:
+        event["estimated_wave_usd"] = round(float(total), 6)
+        event["exceeds_known_remaining"] = float(total) > float(remaining_usd) + 1e-9
+    return event

@@ -151,14 +151,14 @@ def test_missing_authority_reports_once_and_later_projects_same_debt(env, monkey
     assert dirty(env) == before
     assert task_results.task_result_path(env.root, "root").read_bytes() == original
     warnings = [r for r in caplog.records if r.name == duty.__name__ and r.levelno >= logging.WARNING]
-    assert len(warnings) == 1 and warnings[0].exc_info is None
+    assert len(warnings) == 1 and warnings[0].exc_info is not None
 
     path = env.root / "logs" / "supervisor.jsonl"
     rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
-    observations = [r for r in rows if r.get("duty") == "terminal-cost-projection"]
+    observations = [r for r in rows if r.get("subject") == duty.COST_PROJECTIONS]
     assert len(observations) == 1
     assert observations[0]["task_ids"] == ["root"]
-    assert observations[0]["by_basis"] == {basis: 1}
+    assert observations[0]["by_basis"] == {f"ValueError:{basis}": 1}
     assert "attempt_ids" not in observations[0]
     # The same text in an attempt id is a different obligation namespace.
     duty._publish_unresolved(env.root, {"root": basis})
@@ -167,7 +167,7 @@ def test_missing_authority_reports_once_and_later_projects_same_debt(env, monkey
     stored = task_results.load_task_result(env.root, "root")
     assert stored["cost_final"] and stored["accounted_upper_bound_usd"] == 0.4
     rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
-    assert rows[-1]["duty"] == "terminal-cost-projection" and rows[-1]["count"] == 0
+    assert rows[-1]["subject"] == duty.COST_PROJECTIONS and rows[-1]["count"] == 0
     assert any(r.get("attempt_ids") == ["root"] for r in rows)
 
 

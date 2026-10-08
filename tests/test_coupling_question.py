@@ -289,10 +289,10 @@ def test_the_wave_prices_packet_and_native_seats_and_skips_sessions(tmp_path):
     assert all(s["surface"] == "multi_model_review" and s["max_completion_tokens"] > 0 for s in seats)
 
 
-def test_the_managed_update_floor_is_called_explicitly_with_no_import_trap():
+def test_the_managed_update_estimate_is_called_explicitly_with_no_import_trap():
     """``gateway/control.py`` prices the assisted update's wave through ONE explicit
     call; the import of the estimator is not wrapped in a ``try`` that could swallow
-    a missing symbol into a silent fail-open."""
+    a missing symbol into a silently missing disclosure."""
     source = (REPO_ROOT / "ouroboros" / "gateway" / "control.py").read_text(encoding="utf-8")
     tree = ast.parse(source)
     parents = {}
@@ -300,21 +300,21 @@ def test_the_managed_update_floor_is_called_explicitly_with_no_import_trap():
         for child in ast.iter_child_nodes(node):
             parents[child] = node
     imports = [n for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)
-               and any(a.name == "managed_update_wave_floor" for a in n.names)]
+               and any(a.name == "managed_update_wave_estimate" for a in n.names)]
     assert len(imports) == 1, "one explicit import of the one estimator"
     node = imports[0]
     while node in parents:
         node = parents[node]
         assert not isinstance(node, ast.Try), "the estimator import must not sit inside a try block"
-    assert "except ImportError" not in source.split("managed_update_wave_floor")[0].rsplit("def ", 1)[-1]
+    assert "except ImportError" not in source.split("managed_update_wave_estimate")[0].rsplit("def ", 1)[-1]
 
 
-def test_the_managed_update_floor_prices_the_whole_wave(monkeypatch):
+def test_the_managed_update_estimate_prices_the_whole_wave_and_never_refuses(monkeypatch):
     from types import SimpleNamespace
 
     import ouroboros.reviewer_slot_config as slot_cfg
     import ouroboros.usage_admission as admission_mod
-    from ouroboros.tools.review_admission import managed_update_wave_floor
+    from ouroboros.tools.review_admission import managed_update_wave_estimate
 
     rows = [SimpleNamespace(model="api/a", is_session=False), SimpleNamespace(model="api/b", is_session=False),
             SimpleNamespace(model="harness=c", is_session=True)]
@@ -326,19 +326,18 @@ def test_the_managed_update_floor_prices_the_whole_wave(monkeypatch):
         return {"estimated_wave_usd": 3.5, "unpriced_slots": 0}
 
     monkeypatch.setattr(admission_mod, "review_wave_admission", _estimate)
-    admission, events = managed_update_wave_floor(10.0)
+    event = managed_update_wave_estimate(10.0)
     assert seen["models"] == ["api/a", "api/b"], "the session row is counted, not priced"
-    assert admission == {"fits": True, "estimated_wave_usd": 3.5, "remaining_usd": 10.0, "unpriced_slots": 0,
-                         "session_slots": 1}
-    assert events == []
-    admission, _events = managed_update_wave_floor(2.0)
-    assert admission["fits"] is False
+    assert event == {"type": "managed_update_wave_estimate", "estimated_wave_usd": 3.5,
+                     "exceeds_known_remaining": False, "unpriced_slots": 0, "session_slots": 1,
+                     "remaining_usd": 10.0}
+    event = managed_update_wave_estimate(2.0)
+    assert event["exceeds_known_remaining"] is True and "fits" not in event, "a disclosure, never a verdict"
 
     def _broken(_root=None, **_kwargs):
         raise RuntimeError("pricing unavailable")
 
     monkeypatch.setattr(admission_mod, "review_wave_admission", _broken)
-    admission, events = managed_update_wave_floor(1.0)
-    assert admission == {"fits": True}, "an estimator error fails open INSIDE the estimate"
-    assert [e["type"] for e in events] == ["managed_update_wave_floor_estimator_failed"]
-    assert "pricing unavailable" in events[0]["error"]
+    event = managed_update_wave_estimate(1.0)
+    assert event["type"] == "managed_update_wave_estimate_failed", "an estimator error is recorded, never a zero"
+    assert "pricing unavailable" in event["error"] and event["remaining_usd"] == 1.0
