@@ -181,9 +181,9 @@ def test_stage_cycle_free_gate_runs_before_preflight_gate():
     gate, which precedes the paid dispatch."""
     import inspect
 
-    import ouroboros.tools.git as git_mod
+    from ouroboros.tools import git_review_cycle
 
-    source = inspect.getsource(git_mod._run_reviewed_stage_cycle)
+    source = inspect.getsource(git_review_cycle._reviewed_stage_cycle)  # the cycle body under the panel
     assert source.index("_free_cycle_gate(") < source.index("_preflight_and_tests_gate(")
     assert source.index("_preflight_and_tests_gate(") < source.index("_run_parallel_review(")
 

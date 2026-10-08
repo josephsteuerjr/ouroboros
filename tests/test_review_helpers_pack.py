@@ -297,7 +297,9 @@ class TestGitWiring:
         runs ONE wave (Q25-A two-phase contract: assembly, then dispatch) — the
         former second scope dispatch is gone with the scope role."""
         git = _get_module("ouroboros.tools.git")
-        source = inspect.getsource(git._run_reviewed_stage_cycle)
+        # `_run_reviewed_stage_cycle` runs the one cycle body under the commit's panel.
+        assert "_reviewed_stage_cycle(" in inspect.getsource(git._run_reviewed_stage_cycle)
+        source = inspect.getsource(_get_module("ouroboros.tools.git_review_cycle")._reviewed_stage_cycle)
         assert "_run_parallel_review" in source
         parallel_source = inspect.getsource(git._run_parallel_review)
         assert "_prepare_unified_review" in parallel_source
@@ -311,7 +313,8 @@ class TestGitWiring:
         git = _get_module("ouroboros.tools.git")
         source = inspect.getsource(git._repo_commit_push)
         assert "_run_reviewed_stage_cycle" in source
-        shared_source = inspect.getsource(git._run_reviewed_stage_cycle)
+        assert "_reviewed_stage_cycle(" in inspect.getsource(git._run_reviewed_stage_cycle)
+        shared_source = inspect.getsource(_get_module("ouroboros.tools.git_review_cycle")._reviewed_stage_cycle)
         # The free checks, the tests and the author's optional one-row look live in
         # the extracted gate helper the stage cycle calls before any paid dispatch.
         assert "_preflight_and_tests_gate" in shared_source
