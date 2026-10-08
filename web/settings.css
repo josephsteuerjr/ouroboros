@@ -607,6 +607,14 @@
     overflow-wrap: anywhere;
 }
 
+/* Why a row will not run, in words: the status title needs a hover a phone lacks. */
+.available-subagent-status-reason {
+    color: var(--status-warn-fg);
+    font-size: var(--type-meta);
+    line-height: var(--line-body);
+    overflow-wrap: anywhere;
+}
+
 .available-subagent-actions .btn-default {
     min-height: 34px;
     padding: 0 11px;

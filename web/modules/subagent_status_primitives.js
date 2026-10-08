@@ -219,6 +219,13 @@ export function rowStatus(row, state) {
     };
 }
 
+// A row that will not run (Unavailable, No account, Limit reached) also says
+// why in a visible line under the card head: the title is the desktop's
+// tooltip, and a phone, the Telegram mini app or a touch screen has no hover.
+export function rowStatusReason(status) {
+    return status?.tone === 'warn' || status?.tone === 'error' ? String(status.text || '') : '';
+}
+
 const ROUTE_HINT = 'Choose how this subagent runs: an API model or an agent session.';
 
 // Two rows on one engine are a repeated review when both are marked, or a review

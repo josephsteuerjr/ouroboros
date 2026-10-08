@@ -17,7 +17,9 @@ import {
 } from './route_editor_primitives.js';
 import { modelChooserHtml, bindModelChoosers } from './model_chooser.js';
 import { mergeModelCatalog, catalogReadNote, mergeHarnessModelCatalog } from './settings_catalog.js';
-import { harnessMap, reviewTwinAllowed, rowIdentity, rowMeta, rowStatus, sessionRouteVerdict } from './subagent_status_primitives.js';
+import {
+    harnessMap, reviewTwinAllowed, rowIdentity, rowMeta, rowStatus, rowStatusReason, sessionRouteVerdict,
+} from './subagent_status_primitives.js';
 import { revealNewRow } from './ui_helpers.js';
 import { escapeHtmlAttr as escapeHtml } from './utils.js';
 
@@ -441,6 +443,7 @@ export function availableSubagentRowMarkup(row, state, index = 0) {
         { accountsKnown: state.accountsKnown && Boolean(split.harness) },
     );
     const status = rowStatus(row, state);
+    const reason = rowStatusReason(status);
     const notes = reviewNotes(row, state, index);
     const errors = rowErrors(row, index, new Set());
     const meta = rowMeta(row, state, errors);
@@ -463,6 +466,7 @@ export function availableSubagentRowMarkup(row, state, index = 0) {
                     <button type="button" class="btn btn-default" data-subagent-remove aria-label="Remove Subagent ${ordinal}">Remove</button>
                 </div>
             </div>
+            <div class="available-subagent-status-reason" data-subagent-status-reason${reason ? '' : ' hidden'}>${escapeHtml(reason)}</div>
             <label class="available-subagent-purpose ui-field">Description
                 <textarea class="ui-control" data-subagent-field="recommended_use" rows="1" aria-label="Description for Subagent ${ordinal}" placeholder="When should Ouroboros choose this subagent?">${escapeHtml(row.recommended_use)}</textarea>
             </label>
@@ -641,6 +645,11 @@ export function createAvailableSubagentsEditor({
             if (statusEl) {
                 Object.assign(statusEl, { textContent: status.label, title: status.text });
                 statusEl.dataset.tone = status.tone;
+            }
+            const reasonEl = el.querySelector('[data-subagent-status-reason]');
+            if (reasonEl) {
+                const reason = rowStatusReason(status);
+                Object.assign(reasonEl, { textContent: reason, hidden: !reason });
             }
             const facts = el.querySelector('[data-subagent-review-facts]');
             if (facts) facts.textContent = reviewFacts(row, state);

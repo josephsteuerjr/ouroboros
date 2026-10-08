@@ -845,6 +845,52 @@ test('the verdict reads a reviewer row pin, spelled profile_id, not only the ros
     assert.match(live.text, /pinned account koshak currently unavailable/);
 });
 
+function pinnedAccountState(verification) {
+    return {
+        ...QUIET_STATE, catalogKnown: true, accountsKnown: true, quotaKnown: true, statusError: '',
+        snapshot: {
+            harnesses: [{ id: 'codex', status: 'ok', enabled: true, models: [{ id: 'gpt-5.6-sol-high' }] }],
+            profiles: { harnessAccounts: [], profiles: [{
+                profile: { harness_id: 'codex', profile_id: 'koshak', enabled: true }, status: { verification },
+            }] },
+            quota: [{ subject: { harness: 'codex', subject_id: 'koshak' }, freshness: 'fresh', constraints: [] }],
+        },
+    };
+}
+const PINNED_UNAVAILABLE = 'Saved intent · codex · pinned account koshak currently unavailable';
+
+test('a row that will not run says why in a visible line and keeps its title', () => {
+    // A phone, the Telegram mini app or a touch screen has no hover: the title alone hid the reason.
+    const blocked = availableSubagentRowMarkup(sessionRow(), pinnedAccountState('failed'), 0);
+    assert.match(blocked, new RegExp(`data-subagent-status data-tone="warn" title="${PINNED_UNAVAILABLE}">Saved · Unavailable<`));
+    assert.match(blocked, new RegExp(
+        `<div class="available-subagent-status-reason" data-subagent-status-reason>${PINNED_UNAVAILABLE}</div>`));
+    // A row that runs, one not checked yet and an API row checked when a child starts carry no reason line.
+    for (const html of [
+        availableSubagentRowMarkup(sessionRow(), pinnedAccountState('passed'), 0),
+        availableSubagentRowMarkup(sessionRow(), QUIET_STATE, 0),
+        availableSubagentRowMarkup(apiRow(), pinnedAccountState('failed'), 0),
+    ]) assert.match(html, /<div class="available-subagent-status-reason" data-subagent-status-reason hidden><\/div>/);
+});
+
+test('the status reason line follows a live status change in place', async () => {
+    const store = {
+        error: '', snapshot: pinnedAccountState('failed').snapshot,
+        facet: () => 'ok', subscribe: () => () => {}, refresh: async () => {},
+    };
+    const dom = accessEditorDom();
+    const editor = createAvailableSubagentsEditor({ store, doc: dom.doc, win: null });
+    editor.load(setting([sessionRow()]));
+    await editor.reloadStatus();
+    assert.equal(dom.row(0).status.textContent, 'Saved · Unavailable');
+    assert.deepEqual({ ...dom.row(0).reason }, { textContent: PINNED_UNAVAILABLE, hidden: false });
+
+    store.snapshot = pinnedAccountState('passed').snapshot;
+    await editor.reloadStatus();
+    assert.equal(dom.row(0).status.textContent, 'Saved · Available');
+    assert.deepEqual({ ...dom.row(0).reason }, { textContent: '', hidden: true });
+});
+
 test('an unpinned verdict intersects the usable accounts with the accounts carrying the model', () => {
     // The live defect this pins: `gpt-5.4` was listed only by `gptopro6`, whose
     // login is not verified, while a sibling account passed — "some account
@@ -976,13 +1022,17 @@ function accessEditorDom() {
                 const meta = { dataset: {}, toggleAttribute() {}, textContent: '' };
                 const facts = { textContent: '' };
                 const notes = { textContent: '', hidden: true };
+                const status = { dataset: {}, textContent: '', title: '' };
+                const reason = { textContent: '', hidden: true };
                 return {
-                    dataset: { subagentRow: match[1] }, toggleAttribute() {}, meta, facts, notes, html: match[2],
+                    dataset: { subagentRow: match[1] }, toggleAttribute() {}, meta, facts, notes, status, reason, html: match[2],
                     querySelector(selector) {
                         if (selector === '[data-subagent-duplicate]') return duplicate;
                         if (selector === '[data-subagent-meta]') return meta;
                         if (selector === '[data-subagent-review-facts]') return facts;
                         if (selector === '[data-subagent-review-notes]') return notes;
+                        if (selector === '[data-subagent-status]') return status;
+                        if (selector === '[data-subagent-status-reason]') return reason;
                         return fields.get(selector.match(/data-subagent-field="([^"]+)"/)?.[1]) || null;
                     },
                     querySelectorAll: (selector) => selector === '[data-subagent-field]' ? [...fields.values()] : [],
