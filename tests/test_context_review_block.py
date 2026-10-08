@@ -270,20 +270,93 @@ def test_a_fourteen_seat_pool_shrinks_its_rows_and_stays_within_four_kilobytes(t
     assert block["full_source"]["pool"] == "GET /api/review-pool"
 
 
-def test_a_refused_migration_is_the_blocks_error_with_its_snapshot(monkeypatch):
-    """The A↔C seam: package C reports the slots→pool migration through
-    ``config.review_pool_migrations_seen()``; a refusal is an error here even
-    over a readable catalog, and the snapshot path is disclosed."""
-    from ouroboros import config as cfg
+_LANES_KEY = "OUROBOROS_REVIEWER_SLOTS"
+_HELPERS_ONLY = _roster(_row("helper-key", "openai/gpt-5.6-luna", marked=False))  # not a pool yet: a migration subject
+_SNAPSHOT = "state/review_migrations/20261008T101010Z-slots-to-pool.json"
 
+
+def _migration_outcomes():
+    """Real ``MigrationOutcome`` records, computed by the migration itself — the shape
+    ``config.review_pool_migrations_seen()`` returns (a tuple, oldest first)."""
+    from ouroboros import review_pool_migration as m
+
+    finished = m.migrate_review_lanes({_LANES_KEY: json.dumps({
+        "triad": [{"slot_id": "t1", "route": {"kind": "api_chat", "target_id": "x/one"}, "effort": "high"}],
+        "scope": [{"slot_id": "s1", "route": {"kind": "api_chat", "target_id": "x/one"}, "effort": "high"}]}),
+        SUBAGENTS_SETTING: _HELPERS_ONLY})
+    refused = m.migrate_review_lanes({_LANES_KEY: '{"triad": [{"model": "x/y"}]}', SUBAGENTS_SETTING: _HELPERS_ONLY})
+    noop = m.migrate_review_lanes({_LANES_KEY: "", SUBAGENTS_SETTING: _POOL})
+    assert finished.error == "" and not finished.noop and finished.consumed_keys == (_LANES_KEY,)
+    assert refused.error and refused.retained_keys == (_LANES_KEY,) and refused.catalog_after is None
+    assert noop.noop and noop.error == ""
+    return finished, refused, noop
+
+
+def test_w4_a_refused_migration_is_the_blocks_error_with_its_snapshot(monkeypatch):
+    """The A↔C seam, in the shape package C really has: ``config.review_pool_migrations_seen()``
+    returns the tuple of ``MigrationOutcome`` records this process computed, and the supervisor
+    boot's record (``server_maintenance.review_pool_migration_records``) holds the snapshot path.
+    The newest outcome that did something is the block's: a refusal is an error here even over
+    a readable catalog (the lane keys stayed; the pool the owner expects is not there yet), and
+    the snapshot path is disclosed."""
+    from ouroboros import config as cfg
+    from ouroboros import server_maintenance
+
+    finished, refused, _noop = _migration_outcomes()
     monkeypatch.setenv(SUBAGENTS_SETTING, _POOL)
-    monkeypatch.setattr(cfg, "review_pool_migrations_seen", lambda: {
-        "error": "slots-to-pool migration refused: lane row t2 names no catalog row",
-        "snapshot": "state/review_migrations/20261007-slots-to-pool.json"}, raising=False)
+    monkeypatch.setattr(cfg, "review_pool_migrations_seen", lambda: (finished, refused))
+    monkeypatch.setattr(server_maintenance, "review_pool_migration_records", lambda state=None: {
+        refused.input_sha256: {"ts": "20261008T101010Z", "snapshot": _SNAPSHOT, "error": refused.error, "reported": None}})
     block, _ = _block()
-    assert block["source"] == "error" and block["error"].startswith("slots-to-pool migration refused")
-    assert block["migration_snapshot"] == "state/review_migrations/20261007-slots-to-pool.json"
+    assert block["source"] == "error" and block["error"] == refused.error
+    assert "triad[0] has unknown keys" in block["error"], "the refusal's own sentence, not a paraphrase"
+    assert block["migration_snapshot"] == _SNAPSHOT
     assert [row["seat_id"] for row in block["pool"]] == ["critic-key", "packet-key", "session-key"]
+
+
+def test_w4_a_finished_migration_is_no_error_and_a_noop_leaves_no_fact(monkeypatch):
+    """The other direction: a migration that finished is not an error (the block reads the
+    migrated pool as ``structured``) and still points at its snapshot; a no-op outcome — the
+    catalog was already a pool — is skipped, so a process that saw only no-ops shows no
+    migration fact at all."""
+    from ouroboros import config as cfg
+    from ouroboros import server_maintenance
+
+    finished, _refused, noop = _migration_outcomes()
+    monkeypatch.setenv(SUBAGENTS_SETTING, finished.catalog_after)
+    monkeypatch.setattr(server_maintenance, "review_pool_migration_records", lambda state=None: {
+        finished.input_sha256: {"ts": "20261008T101010Z", "snapshot": _SNAPSHOT, "error": "", "reported": None}})
+
+    monkeypatch.setattr(cfg, "review_pool_migrations_seen", lambda: (finished, noop))
+    block, _ = _block()
+    assert (block["source"], block["error"]) == ("structured", "")
+    assert block["migration_snapshot"] == _SNAPSHOT
+    assert block["pool"] and {row["model"] for row in block["pool"]} == {"x/one"}, "the migrated pool is what runs"
+
+    monkeypatch.setattr(cfg, "review_pool_migrations_seen", lambda: (noop,))
+    block, _ = _block()
+    assert (block["source"], block["error"]) == ("structured", "") and "migration_snapshot" not in block
+
+    monkeypatch.setattr(cfg, "review_pool_migrations_seen", lambda: ())
+    block, _ = _block()
+    assert "migration_snapshot" not in block and block["source"] == "structured"
+
+
+def test_w4_the_read_seam_itself_puts_a_refused_migration_in_front_of_the_model(monkeypatch):
+    """End to end, nothing patched between the two packages: the settings read seam refuses a
+    migration (``review_pool_migration.apply_at_read_seam`` records the outcome), and the block
+    the model reads carries that refusal. The boot has not written a snapshot in this process,
+    so no path is claimed."""
+    from ouroboros import review_pool_migration as m
+
+    monkeypatch.setattr(m, "_MIGRATIONS_SEEN", {})
+    loaded = {_LANES_KEY: '{"triad": [{"model": "x/y"}]}', SUBAGENTS_SETTING: _HELPERS_ONLY}
+    assert m.apply_at_read_seam(loaded) == (_LANES_KEY,), "a refusal keeps the lane key for the owner's save"
+    monkeypatch.setenv(SUBAGENTS_SETTING, _HELPERS_ONLY)
+    block, _ = _block()
+    assert block["source"] == "error" and block["error"] == m.migrations_seen()[-1].error
+    assert "triad[0] has unknown keys" in block["error"] and "migration_snapshot" not in block
+    assert block["pool"] == []
 
 
 def test_recent_records_are_the_readers_newest_five_of_this_task_from_a_bounded_hot_read(tmp_path, monkeypatch):

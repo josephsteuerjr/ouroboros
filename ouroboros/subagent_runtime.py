@@ -200,16 +200,33 @@ def _api_review_cost_hint(slot: Any) -> str:
 
 
 def _review_migration_facts() -> dict[str, str]:
-    """The A↔C seam: package C's ``config.review_pool_migrations_seen()`` reports
-    the slots→pool migration as ``{"error": str, "snapshot": str}`` (an empty
-    mapping, or no function at all, means no migration fact to show)."""
+    """The A↔C seam: ``config.review_pool_migrations_seen()`` is the tuple of
+    ``review_pool_migration.MigrationOutcome`` records this process's settings reads
+    computed, oldest first (a no-op — the catalog was already a pool — leaves no fact).
+    The block shows the NEWEST one that did something: its ``error`` (a refused
+    migration keeps the lane keys in the document, so the pool the owner expects does
+    not exist until the catalog is saved) and the ``snapshot`` path the supervisor boot
+    recorded for that document (``server_maintenance.review_pool_migration_records``),
+    when it has written one. Either key is present only when it has a value."""
     from ouroboros import config as cfg
 
     seen = getattr(cfg, "review_pool_migrations_seen", None)
-    facts = seen() if callable(seen) else {}
-    if not isinstance(facts, Mapping):
+    outcomes = [outcome for outcome in (seen() if callable(seen) else ()) if not getattr(outcome, "noop", False)]
+    if not outcomes:
         return {}
-    return {key: str(facts.get(key) or "") for key in ("error", "snapshot") if facts.get(key)}
+    latest = outcomes[-1]
+    facts = {"error": str(getattr(latest, "error", "") or ""), "snapshot": ""}
+    try:
+        from ouroboros.server_maintenance import review_pool_migration_records
+
+        record = review_pool_migration_records().get(str(getattr(latest, "input_sha256", "") or ""))
+        facts["snapshot"] = str((record or {}).get("snapshot") or "") if isinstance(record, Mapping) else ""
+    except Exception:  # the boot's receipt is a pointer; the block never fails on it
+        import logging
+
+        logging.getLogger(__name__).debug("review pool migration records unavailable for the ## Review block",
+                                          exc_info=True)
+    return {key: value for key, value in facts.items() if value}
 
 
 def review_facts_block(snapshot: Optional[TaskSettingsSnapshot] = None) -> str:
