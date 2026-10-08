@@ -231,23 +231,40 @@ def commit_refusal_facts(ledger: dict, tools_rows: list, stored: dict) -> dict:
     }
 
 
+WAVE_ANSWERS = {"PASS", "FAIL"}   # review_ledger.VERDICT_PASS / VERDICT_FAIL: a substantive answer to a question
+
+
+def _seat_dispatched(row: dict) -> bool:
+    """A seat that was really sent: the ledger reserves a row per planned seat BEFORE dispatch
+    (``status`` and ``operation_state`` ``not_dispatched``), so a reserved row is no evidence."""
+    return "not_dispatched" not in (str(row.get("status") or ""), str(row.get("operation_state") or ""))
+
+
 def commit_wave_fact(records: list, task_id: str) -> dict:
     """SM1's durable fact of the review WAVE: the commit gate's review-ledger record of this task
-    (``state/review_ledger/<record_id>.json``, ``surface=commit_gate``) whose seats were dispatched
-    and answered both questions of the brief (``verdict.per_question``: ``change`` and ``coupling``).
-    The retired ``scope_review_complete`` event is gone with the scope reviewer; the one record the
-    wave writes is what proves it ran. ``{}`` when no such record exists; otherwise the newest one's
-    ``record_id``, ``aggregate``, ``per_question`` and ``seats`` (never a verdict judgement: under
-    blocking enforcement the landing itself required PASS, and that is ``commit_landed``'s check)."""
+    (``state/review_ledger/<record_id>.json``, ``surface=commit_gate``) that is SETTLED, had at least
+    one seat dispatched and carries a substantive answer — PASS or FAIL — to BOTH questions of the
+    brief (``verdict.per_question``: ``change`` and ``coupling``). FAIL is wave evidence too (the
+    wave ran and spoke); ``unanswered`` and ``not_performed`` are not answers, and a NOT_DISPATCHED
+    record keeps its reserved rows, so neither a row count nor a non-empty verdict string proves a
+    wave (NEW-T2). The retired ``scope_review_complete`` event is gone with the scope reviewer; the
+    one record the wave writes is what proves it ran. ``{}`` when no such record exists; otherwise
+    the newest one's ``record_id``, ``aggregate``, ``per_question``, ``seats`` and ``dispatched_seats``
+    (never a verdict judgement: under blocking enforcement the landing itself required PASS, and
+    that is ``commit_landed``'s check)."""
     waves = sorted((r for r in records if isinstance(r, dict) and r.get("surface") == "commit_gate"
                     and str(r.get("task_id") or "") == str(task_id)), key=lambda r: str(r.get("ts") or ""))
     for record in reversed(waves):
         verdict = record.get("verdict") if isinstance(record.get("verdict"), dict) else {}
         answers = verdict.get("per_question") if isinstance(verdict.get("per_question"), dict) else {}
         rows = [row for row in (record.get("rows") or []) if isinstance(row, dict)]
-        if rows and answers.get("change") and answers.get("coupling"):
+        dispatched = [row for row in rows if _seat_dispatched(row)]
+        substantive = all(str(answers.get(part) or "").upper() in WAVE_ANSWERS for part in ("change", "coupling"))
+        if (dispatched and substantive and str(record.get("state") or "") == "settled"
+                and str(verdict.get("aggregate") or "") != "NOT_DISPATCHED"):
             return {"record_id": str(record.get("record_id") or ""), "aggregate": str(verdict.get("aggregate") or ""),
-                    "per_question": {k: str(v) for k, v in answers.items()}, "seats": len(rows)}
+                    "per_question": {k: str(v) for k, v in answers.items()}, "seats": len(rows),
+                    "dispatched_seats": len(dispatched)}
     return {}
 
 

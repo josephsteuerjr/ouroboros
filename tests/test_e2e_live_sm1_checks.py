@@ -77,7 +77,7 @@ def test_t2_the_wave_fact_is_the_commit_gates_record_of_this_task_with_both_ques
 
     fact = scenarios.commit_wave_fact([refused, other_task, other_surface, landed], "sm1-task")
     assert fact == {"record_id": landed["record_id"], "aggregate": "PASS",
-                    "per_question": {"change": "PASS", "coupling": "PASS"}, "seats": 3}
+                    "per_question": {"change": "PASS", "coupling": "PASS"}, "seats": 3, "dispatched_seats": 3}
     assert scenarios.commit_wave_fact([refused, other_task, other_surface], "sm1-task") == {}, (
         "a record that dispatched nothing, another task's or another surface's is not the wave")
     assert scenarios.commit_wave_fact([], "sm1-task") == {} and scenarios.commit_wave_fact([None, 3], "sm1-task") == {}
@@ -86,6 +86,61 @@ def test_t2_the_wave_fact_is_the_commit_gates_record_of_this_task_with_both_ques
     newer_fail = {**landed, "record_id": "rv-newer", "ts": "2099-01-01T00:00:00+00:00",
                   "verdict": {**landed["verdict"], "aggregate": "FAIL", "per_question": {"change": "FAIL", "coupling": "PASS"}}}
     assert scenarios.commit_wave_fact([landed, newer_fail], "sm1-task")["record_id"] == "rv-newer"
+
+
+def _gate_record(raws, **over):
+    from ouroboros import review_ledger as rl
+    from tests.test_review_ledger import _facts
+
+    return rl.build_commit_gate_record(_facts(raws, task_id="sm1-task", **over)).to_dict()
+
+
+def test_new_t2_the_wave_fact_needs_a_settled_record_with_dispatched_seats_and_pass_or_fail_on_both_questions():
+    """NEW-T2 (Fable): the oracle accepted any non-empty ``per_question`` strings over any rows —
+    ``unanswered``, ``not_performed`` and the reserved rows of a NOT_DISPATCHED record all passed
+    as a wave. Each record below is built by the ledger itself. Positive: a PASS wave and a FAIL
+    wave (the panel ran and found a critical: evidence, not a judgement). Negative: a budget
+    refusal that reserved three rows and dispatched none; a wave without quorum (``change``
+    ``unanswered``); an all-packet panel nobody asked the coupling (``not_performed``); the
+    coupling block missing from the one retrieving seat (``unanswered``); an open-custody wave
+    (``pending``) whose answered seats already read PASS."""
+    from tests.test_review_ledger import BOTH, CRITICAL, _answer, _panel, _raw, _three
+
+    withheld = _panel(status="not_dispatched")
+    for row in withheld:
+        row["operation_state"] = "not_dispatched"
+    reserved = _gate_record(withheld, blocked=True, block_reason="review_wave_budget_insufficient")
+    assert reserved["verdict"]["aggregate"] == "NOT_DISPATCHED" and len(reserved["rows"]) == 3, "rows reserved, none sent"
+    short = _panel(status="error")
+    short[1] = _raw("s2", "anthropic/claude-x")
+    no_quorum = _gate_record(short, blocked=True, block_reason="review_quorum")
+    assert no_quorum["verdict"]["per_question"]["change"] == "unanswered"
+    packets_only = _gate_record(_three())
+    assert packets_only["verdict"]["per_question"] == {"change": "PASS", "coupling": "not_performed"}
+    missing_rows = _panel()
+    missing_rows[0]["answers"]["coupling"] = _answer("coupling", "", status="unanswered", error="coupling_block_missing")
+    coupling_missing = _gate_record(missing_rows)
+    assert coupling_missing["verdict"]["per_question"] == {"change": "PASS", "coupling": "unanswered"}
+    pending_rows = [_raw("s1", "openai/gpt-5", parts=BOTH, raw_text="two-part answer"), _raw("s2", "anthropic/claude-x"),
+                    _raw("s3", "google/gemini", "pending", operation_state="in_flight", late_result_pending=True)]
+    pending = _gate_record(pending_rows)
+    assert pending["state"] == "pending" and pending["verdict"]["per_question"] == {"change": "PASS", "coupling": "PASS"}
+    for name, record in (("reserved", reserved), ("no_quorum", no_quorum), ("packets_only", packets_only),
+                         ("coupling_missing", coupling_missing), ("pending", pending)):
+        assert scenarios.commit_wave_fact([record], "sm1-task") == {}, name
+
+    passed = _gate_record(_panel())
+    failing_rows = _panel()
+    failing_rows[1]["answers"] = {"change": _answer("change", "FAIL", [CRITICAL])}
+    failed = _gate_record(failing_rows, blocked=True, block_reason="critical_findings", critical_findings=[CRITICAL])
+    assert (passed["verdict"]["aggregate"], failed["verdict"]["aggregate"]) == ("PASS", "FAIL")
+    for record in (passed, failed):
+        fact = scenarios.commit_wave_fact([record], "sm1-task")
+        assert fact["record_id"] == record["record_id"] and fact["aggregate"] == record["verdict"]["aggregate"]
+        assert set(fact["per_question"].values()) <= {"PASS", "FAIL"} and fact["dispatched_seats"] == fact["seats"] == 3
+    # Beside a real wave the non-answers are skipped, not mistaken for a newer wave.
+    later = {"ts": "2099-01-01T00:00:00+00:00"}
+    assert scenarios.commit_wave_fact([passed, {**reserved, **later}, {**no_quorum, **later}], "sm1-task")["record_id"] == passed["record_id"]
 
 
 def test_ui_probe_waits_for_the_requested_document():
