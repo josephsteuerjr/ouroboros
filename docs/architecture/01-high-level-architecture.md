@@ -591,7 +591,7 @@ Birth identity is separate from PID presence. Linux mints boot-qualified ticks, 
 │   │   ├── state.json             ← runtime state and cost projection; never the monetary authority
 │   │   ├── queue_snapshot.json    ← PENDING/RUNNING recovery projection, `worker_pool_disabled_reason` (§5)
 │   │   ├── usage.sqlite           ← the monetary authority (docs/USAGE_STORE.md)
-│   │   ├── usage_attempts.jsonl   ← imported journal; read only by the history audit
+│   │   ├── usage_attempts.jsonl   ← imported journal; historical audit and older-seed input
 │   │   ├── usage_attempts.quarantine.jsonl ← the journal's proven-corrupt rows
 │   │   ├── usage_import_watermark.json ← import watermark
 │   │   ├── skill_review_root_tasks.jsonl ← derived skill-review index; warns at `SKILL_REVIEW_ROOT_TASKS_WARN_BYTES`

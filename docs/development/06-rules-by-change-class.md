@@ -75,7 +75,7 @@ One admitted, clean, detached seed; settings from the tree's defaults plus expli
 
 #### Budget admission and ordering
 
-Admit an attempt only while settled spend, in-flight reservations and its own reservation fit the run cap, FIFO by dispatch index; `state/usage_attempts.jsonl` is the only money source (`devtools/e2e_live/README.md#budget-admission-and-ordering`).
+Admit an attempt only while settled spend, in-flight reservations and its own reservation fit the run cap, FIFO by dispatch index; `run_live_lanes.lane_spend` reads `state/usage.sqlite` (the journal only for an older seed) (`devtools/e2e_live/README.md#budget-admission-and-ordering`).
 
 #### Self-modification and browser lifetime
 
