@@ -780,6 +780,12 @@ keeps Open and Download as well.
 
 ### History edges
 
+An initial read shows one disabled `Loading saved history…` pill at the feed edge,
+not a second loading sentence in the header. Task activity remains separate.
+Persistent history notices are wrapping text on the Project status bar, without
+an opaque strip. Only Main's floating header needs a content-sized, padded and
+rounded backing to keep that text readable above scrolling messages.
+
 A room always opens at its newest message: Main and every Project, however long
 ago its last message was and however much other rooms wrote since. Returning to
 a room in the same app session opens it at its newest message too, Main after a

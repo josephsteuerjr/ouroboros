@@ -1308,6 +1308,13 @@ body.resizing-panels { user-select: none; }
     max-width: none;
     text-align: left;
     overflow-wrap: anywhere;
+}
+/* Main's header floats over messages; Project's status bar is in normal flow.
+   Keep the reading backing local to the overlay, never a filled Project row. */
+.chat-page-header > .chat-history-status {
+    justify-self: start;
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
     background: var(--bg-primary);
 }
 
