@@ -30,7 +30,7 @@ _REF_FIELDS = frozenset({
     'required_sources_ref', 'native_required_sources_ref', 'native_history_source',
     'exact_source_ref', 'producer_source_ref', 'request_ref', 'full_log_ref',
     'manifest_ref', 'full_payload_ref', 'redacted_projection_ref', 'trace_ref',
-    'prompt_ref', 'response_ref', 'round_sources', 'attachment_manifest_ref',
+    'prompt_ref', 'response_ref', 'round_sources', 'attachment_manifest_ref', 'knowledge_previous_source',
 })
 _METADATA_FIELDS = frozenset({
     'trace_refs', 'llm_call_refs', 'tool_call_refs', 'entries', 'services', 'log_finalization',
@@ -48,6 +48,18 @@ _METADATA_FIELDS = frozenset({
 
 def source_carrier(value: dict, key: str, carrier: str) -> str:
     """Select host-owned edges at a trusted entry point; data cannot opt in."""
+    if carrier == 'tool_result_metadata':
+        return 'metadata' if key == 'knowledge_previous_source' else ''
+    if carrier == 'tool_execution_metadata':
+        return 'tool_result_metadata' if key == 'tool_result_meta' else ''
+    if key == 'result_meta' and carrier == 'metadata':
+        return 'tool_execution_metadata'
+    if key == 'tool_result_meta' and carrier == 'metadata':
+        return 'tool_result_metadata'
+    if carrier == 'historical_inputs':
+        return 'historical_anchor' if key == 'anchors' else ''
+    if carrier == 'historical_anchor':
+        return 'metadata' if key == 'source_ref' else ''
     if carrier == 'request':
         return {'evidence': 'evidence', 'policy': 'metadata'}.get(key, '')
     if carrier == 'contract':
@@ -91,6 +103,8 @@ def source_carrier(value: dict, key: str, carrier: str) -> str:
         provenance = value.get('__provenance__') or {}
         if key == 'agent_supplied' or (isinstance(provenance, dict) and provenance.get(key) == 'agent_supplied'):
             return ''
+        if key == 'historical_author_inputs':
+            return 'historical_inputs'
     if key == 'task_contract' and carrier in {'evidence', 'task_result'}:
         return 'contract'
     if key == 'request' and carrier == 'metadata':

@@ -799,17 +799,16 @@ def emit_task_results(
     review_evidence["task_inputs"] = capture_task_inputs(
         ctx, task, task.get("budget_drive_root") or receipt_root, verification_receipts,
     )
+    from ouroboros.context_input_selection import historical_inputs_exhibit
+    review_evidence["historical_author_inputs"] = historical_inputs_exhibit(
+        ctx, task.get("budget_drive_root") or receipt_root, str(task.get("id") or ""),
+    )
 
-    # GR2-5 (§8-A2, ONE outbox for EVERY root) + GR3-5 (ordering closes the
-    # persist→register crash window): the final answer enters the durable
-    # outbox — the owed row embeds the full payload — immediately BEFORE
-    # the durable result write, regardless of the blocking/nonblocking
-    # post-task split below. Registered-then-crashed leaves an owed row
-    # boot replay delivers (projection-over-replay: no boot scan of
-    # task_results is ever needed); the old stored-then-crashed order left
-    # a terminal result nobody would ever deliver. The nonblocking lane
-    # used to buffer the send with no delivery_id and no owed registration
-    # at all. Seam + dedup: ouroboros/task_finalization.py.
+    # Every root registers its full answer payload in the durable outbox BEFORE
+    # the result write, including the nonblocking post-task lane. After a crash,
+    # boot replays the owed row without scanning task_results; reversing these
+    # writes could strand a terminal result with no delivery. Registration and
+    # deduplication share ouroboros/task_finalization.py.
     if _root_outbox and not _presence:
         send_event.setdefault("progress_meta", {}).update(outcome_axes=outcome_axes, reason_code=reason_code)
         stamp_root_final_phase(  # the stamp names the SAME word the durable row below settles to

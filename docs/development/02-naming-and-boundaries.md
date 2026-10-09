@@ -87,7 +87,9 @@ proof.
 `prompts/SYSTEM.md` is tier-0 for every Main and task profile in both context modes and
 competes with the task for context. It carries identity and tone, the decision loop,
 cross-tool policy, prohibitions and safety invariants stated once, and the memory
-contract's resident rule; load-bearing floor rules stay in its preamble, the part
+contract's resident rule: active summaries stay in the index, archived sources remain
+addressable and explicitly listable (ARCHITECTURE §6 "Durable memory and project focus").
+A missing carrier stays a visible gap. Load-bearing floor rules stay in its preamble, the part
 overflow compaction keeps (ARCHITECTURE §6 "Context fitting, retry, and compaction").
 It never carries how a tool works: parameters, recipes, typed outcomes and "when to
 choose it" belong to the `get_tools()` schemas selected for the acting profile, so a prompt sentence

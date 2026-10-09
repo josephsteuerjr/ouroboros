@@ -593,12 +593,14 @@ def generate_reflection(
         knowledge_context = ToolContext(repo_dir=root, drive_root=root,
             project_id=str(task.get("project_id") or ""),
             task_id=str(task.get("id") or task.get("task_id") or "reflection"))
+    from ouroboros.context_input_selection import historical_inputs_prompt_section
+
     prompt = prompt_template.format(
         goal=str(task.get("text") or "(no goal text)"),
         # The listing arrives whole: this call's prompt is fitted by the consolidation seam,
         # so a literal cut here only hid the calls the lesson is about.
         trace_summary=trace_summary + _verbatim_trace_pointer(knowledge_context, llm_trace),
-        task_inputs=task_inputs_prompt_section(review_evidence),
+        task_inputs=task_inputs_prompt_section(review_evidence) + historical_inputs_prompt_section(review_evidence),
         tool_usage=_tool_usage_profile(llm_trace),
         error_details=error_details,
         review_evidence=review_evidence_text,
