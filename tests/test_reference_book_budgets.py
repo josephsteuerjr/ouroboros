@@ -7,9 +7,10 @@ book is paid by shortening the same book in the same change.
 
 Official-CI ``size_ratchet`` lane only: local runs exclude the marker and every local surface
 reports the same balance as a fact (BIBLE P3 c5). The workflow sets ``OURO_BOOK_GROWTH_MODE``:
-``block`` for the official repository's owner/member/collaborator pull requests, ``warn``
-for outside contributors, pushes and any fork's own CI, ``approved`` when the repository
-owner applied the ``book-growth`` label (``scripts/book_growth_mode.py``). Unset means ``block``, so an
+``block`` for the official repository's owner/member/collaborator pull requests and pushes to
+``ouroboros``, ``warn`` for outside contributors and any fork's own CI. ``approved`` requires
+the owner's ``book-growth`` label; pushes bind it to the exact landed PR
+(``scripts/book_growth_mode.py``). Unset means ``block``, so an
 operator's explicit local run of the lane gets the hard answer.
 """
 from __future__ import annotations
@@ -72,8 +73,8 @@ def book_growth_verdict(book_id: str, base: int | None, tip: int, mode: str) -> 
     if mode == "approved":
         return True, f"{name} grows by {tip - base} bytes; the repository owner approved it (book-growth label)."
     if mode == "warn":
-        return True, (f"this PR grows {name} by {tip - base} bytes; maintainers will make room at "
-                      "integration, nothing is required from you.")
+        return True, (f"{name} grows by {tip - base} bytes; advisory for outside contributors and forks. "
+                      "Official maintainers will make room at integration.")
     return False, (f"{name} grew by {tip - base} bytes ({base} -> {tip}); a change ends each book no larger "
                    "than at its base, so shorten the same book in this change (the owner's book-growth "
                    "label on the PR is the only exception).")
@@ -176,7 +177,7 @@ OWNER_ADDS = _label("labeled", "razzant")
     ("razzant/ouroboros", "pull_request", "CONTRIBUTOR", [], "warn"),
     ("razzant/ouroboros", "pull_request", "FIRST_TIME_CONTRIBUTOR", [], "warn"),
     ("someone/fork", "pull_request", "OWNER", [OWNER_ADDS], "warn"),  # a fork's own CI never blocks
-    ("razzant/ouroboros", "push", "", [], "warn"),  # a merge push reports; its pull request decided
+    ("razzant/ouroboros", "push", "", [], "warn"),  # without a target ref this is not an official-line push
     ("razzant/ouroboros", "pull_request", "COLLABORATOR", [OWNER_ADDS], "approved"),
     # Ouroboros's own token can apply the label, but only the repository owner's approves.
     ("razzant/ouroboros", "pull_request", "COLLABORATOR", [_label("labeled", "ouroboros-agent")], "block"),
@@ -223,6 +224,210 @@ def test_both_ci_jobs_feed_the_size_lane_the_decided_mode(job):
     mode = next(step for step in steps if step.get("id") == "book_mode")
     size = next(step for step in steps if step.get("id") == "tests_size")
     assert mode["run"] == "python scripts/book_growth_mode.py"
+    assert mode["env"]["SHA"] == "${{ github.sha }}"
+    assert mode["env"]["REF"] == "${{ github.ref }}"
     assert steps.index(mode) < steps.index(size)
     assert size["env"][MODE_ENV] == "${{ steps.book_mode.outputs.mode }}"
     assert workflow["jobs"][job]["permissions"] == {"contents": "read", "pull-requests": "read"}
+
+
+PUSH_SHA = "a" * 40
+PUSH_ENV = {"REPO": "razzant/ouroboros", "OWNER": "razzant", "EVENT": "push",
+            "SHA": PUSH_SHA, "REF": "refs/heads/ouroboros"}
+API_ROOT = "https://api.github.com/repos/razzant/ouroboros/"
+PULLS_URL = f"{API_ROOT}commits/{PUSH_SHA}/pulls?per_page=100"
+
+
+def _pull(number, *, repo="razzant/ouroboros", target="ouroboros", sha=PUSH_SHA, merged=True):
+    return {"number": number, "state": "closed" if merged else "open",
+            "merged_at": "2026-10-09T09:00:00Z" if merged else None, "merge_commit_sha": sha,
+            "base": {"ref": target, "repo": {"full_name": repo}}}
+
+
+def _events_url(number):
+    return f"{API_ROOT}issues/{number}/events?per_page=100"
+
+
+def _github_pages(monkeypatch, pages):
+    """Serve raw API JSON through the real reader, including any pagination links."""
+    import io
+    import json
+    from scripts import book_growth_mode
+
+    calls = []
+
+    def urlopen(request, timeout):
+        calls.append(request.full_url)
+        assert timeout == 30
+        body, link = pages[request.full_url]
+        response = io.BytesIO(json.dumps(body).encode("utf-8"))
+        response.headers = {"Link": link} if link else {}
+        return response
+
+    monkeypatch.setattr(book_growth_mode.urllib.request, "urlopen", urlopen)
+    return calls
+
+
+@pytest.mark.parametrize("reverse", [False, True], ids=["open-first", "merged-first"])
+@pytest.mark.parametrize("merged_approved", [False, True], ids=["unapproved-merge", "approved-merge"])
+def test_push_approval_belongs_to_the_exact_merged_pr(monkeypatch, reverse, merged_approved):
+    from scripts.book_growth_mode import main
+
+    pulls = [_pull(7, merged=False), _pull(8)]
+    if reverse:
+        pulls.reverse()
+    calls = _github_pages(monkeypatch, {
+        PULLS_URL: (pulls, ""),
+        _events_url(7): ([OWNER_ADDS], ""),
+        _events_url(8): ([OWNER_ADDS] if merged_approved else [], ""),
+    })
+    assert main(PUSH_ENV) == ("approved" if merged_approved else "block")
+    assert calls == [PULLS_URL, _events_url(8)]
+
+
+@pytest.mark.parametrize("pulls", [
+    [],  # a direct push has no PR exception
+    [_pull(7, merged=False)],
+    [_pull(7, repo="someone/fork")],
+    [_pull(7, target="main")],
+    [_pull(7, sha="b" * 40)],
+    [{**_pull(7), "state": "closed", "merged_at": None}],  # closed without merging
+], ids=["absent", "open", "foreign-repo", "wrong-target", "wrong-sha", "closed-unmerged"])
+def test_push_rejects_unrelated_approval(monkeypatch, pulls):
+    from scripts.book_growth_mode import main
+
+    calls = _github_pages(monkeypatch, {
+        PULLS_URL: (pulls, ""), _events_url(7): ([OWNER_ADDS], ""),
+    })
+    assert main(PUSH_ENV) == "block"
+    assert calls == [PULLS_URL]
+
+
+@pytest.mark.parametrize("events,expected", [
+    ([OWNER_ADDS], "approved"),
+    ([_label("labeled", "razzant", "other")], "block"),
+    ([_label("labeled", "ouroboros-agent")], "block"),
+    ([OWNER_ADDS, _label("unlabeled", "razzant")], "block"),
+    ([OWNER_ADDS, _label("unlabeled", "someone"), _label("labeled", "someone")], "block"),
+    ([_label("labeled", "someone"), _label("unlabeled", "someone"), OWNER_ADDS], "approved"),
+    ([OWNER_ADDS, _label("unlabeled", "someone", "other")], "approved"),
+], ids=["owner", "unrelated-label", "non-owner", "removed", "non-owner-reapplied", "owner-reapplied", "unrelated-removal"])
+@pytest.mark.parametrize("event", ["pull_request", "push"])
+def test_raw_label_history_controls_the_exception(monkeypatch, event, events, expected):
+    from scripts.book_growth_mode import main
+
+    pages = {PULLS_URL: ([_pull(7)], ""), _events_url(7): (events, "")}
+    _github_pages(monkeypatch, pages)
+    env = {**PUSH_ENV, "EVENT": event, "PR_NUMBER": "7", "ASSOCIATION": "COLLABORATOR"}
+    assert main(env) == expected
+
+
+def test_rerunning_the_same_push_uses_current_label_history(monkeypatch):
+    from scripts.book_growth_mode import main
+
+    events = [OWNER_ADDS]
+    calls = _github_pages(monkeypatch, {
+        PULLS_URL: ([_pull(7)], ""), _events_url(7): (events, ""),
+    })
+    assert main(PUSH_ENV) == "approved"
+    events.append(_label("unlabeled", "someone"))
+    assert main(PUSH_ENV) == "block"
+    events.append(_label("labeled", "someone"))
+    assert main(PUSH_ENV) == "block"
+    events.extend([_label("unlabeled", "razzant"), OWNER_ADDS])
+    assert main(PUSH_ENV) == "approved"
+    assert calls == [PULLS_URL, _events_url(7)] * 4
+
+
+@pytest.mark.parametrize("last_event,expected", [
+    (_label("unlabeled", "someone"), "block"),
+    (OWNER_ADDS, "approved"),
+])
+def test_push_reads_all_associated_pr_and_label_event_pages(monkeypatch, last_event, expected):
+    from scripts.book_growth_mode import main
+
+    next_pulls = PULLS_URL + "&page=2"
+    next_events = _events_url(8) + "&page=2"
+    calls = _github_pages(monkeypatch, {
+        PULLS_URL: ([_pull(7, merged=False)], f'<{next_pulls}>; rel="next"'),
+        next_pulls: ([_pull(8)], ""),
+        _events_url(8): ([OWNER_ADDS, _label("unlabeled", "someone")], f'<{next_events}>; rel="next"'),
+        next_events: ([last_event], ""),
+    })
+    assert main(PUSH_ENV) == expected
+    assert calls == [PULLS_URL, next_pulls, _events_url(8), next_events]
+
+
+def test_push_checks_every_matching_pr_instead_of_taking_the_first(monkeypatch):
+    from scripts.book_growth_mode import main
+
+    calls = _github_pages(monkeypatch, {
+        PULLS_URL: ([_pull(7), _pull(8)], ""),
+        _events_url(7): ([], ""), _events_url(8): ([OWNER_ADDS], ""),
+    })
+    assert main(PUSH_ENV) == "approved"
+    assert calls == [PULLS_URL, _events_url(7), _events_url(8)]
+
+
+@pytest.mark.parametrize("failed_endpoint", [PULLS_URL, _events_url(7)])
+def test_unreadable_push_evidence_leaves_growth_strict(monkeypatch, failed_endpoint, capsys):
+    from scripts import book_growth_mode
+
+    pages = {PULLS_URL: ([_pull(7)], ""), _events_url(7): ([OWNER_ADDS], "")}
+    _github_pages(monkeypatch, pages)
+    read = book_growth_mode.urllib.request.urlopen
+
+    def unavailable(request, timeout):
+        if request.full_url == failed_endpoint:
+            raise OSError("unavailable")
+        return read(request, timeout)
+
+    monkeypatch.setattr(book_growth_mode.urllib.request, "urlopen", unavailable)
+    assert book_growth_mode.main(PUSH_ENV) == "block"
+    assert "no exception applied" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("env,expected", [
+    (PUSH_ENV, "block"),
+    ({**PUSH_ENV, "SHA": "", "PR_NUMBER": "7"}, "block"),  # no arbitrary PR-number fallback
+    ({**PUSH_ENV, "REPO": "someone/fork"}, "warn"),
+    ({**PUSH_ENV, "REF": "refs/heads/main"}, "warn"),
+    ({**PUSH_ENV, "REF": "refs/heads/ouroboros-stable"}, "warn"),
+    ({**PUSH_ENV, "REF": "refs/tags/v7.6.0"}, "warn"),
+    ({**PUSH_ENV, "EVENT": "workflow_dispatch"}, "warn"),
+    ({}, "warn"),
+])
+def test_only_official_development_pushes_are_strict(monkeypatch, env, expected):
+    from scripts.book_growth_mode import main
+
+    calls = _github_pages(monkeypatch, {PULLS_URL: ([], "")})
+    assert main(env) == expected
+    assert calls == ([PULLS_URL] if env == PUSH_ENV else [])
+
+
+@pytest.mark.parametrize("approved,tip,passes", [
+    (False, 101, False), (True, 101, True), (False, 100, True), (False, 99, True),
+])
+def test_push_mode_reaches_the_size_lane_and_only_growth_fails(monkeypatch, capsys, tmp_path, approved, tip, passes):
+    import sys
+    from scripts.book_growth_mode import main
+
+    _github_pages(monkeypatch, {
+        PULLS_URL: ([_pull(7)], ""), _events_url(7): ([OWNER_ADDS] if approved else [], ""),
+    })
+    output = tmp_path / "step-output"
+    main({**PUSH_ENV, "GITHUB_OUTPUT": str(output)})
+    monkeypatch.setenv(MODE_ENV, output.read_text(encoding="utf-8").strip().removeprefix("mode="))
+    capsys.readouterr()
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "push")
+    monkeypatch.setenv("GITHUB_REF", PUSH_ENV["REF"])
+    consumer = sys.modules[__name__]
+    monkeypatch.setattr(consumer, "growth_base", lambda repo, ref: "base")
+    monkeypatch.setattr(consumer, "composed_bytes", lambda repo, book_id, ref="": 100 if ref else tip)
+    if passes:
+        test_a_change_does_not_grow_a_reference_book(capsys)
+        if tip <= 100:
+            assert capsys.readouterr().out == ""
+    else:
+        with pytest.raises(AssertionError, match="grew by 1 bytes"):
+            test_a_change_does_not_grow_a_reference_book(capsys)

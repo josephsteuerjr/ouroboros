@@ -17,6 +17,8 @@ from typing import Callable, Iterable
 from urllib.parse import unquote, urlsplit
 
 from ouroboros.markdown_source import MarkdownSource, SourceRange, parse_markdown_source
+from ouroboros.repo_remotes import OFFICIAL_REPO
+from ouroboros.update_channels import UPDATE_CHANNEL_BRANCHES
 
 
 BOOK_ENTRYPOINTS = {
@@ -306,13 +308,14 @@ class BookBalance:
     book_id: str
     size: int                              # composed UTF-8 bytes in the working tree
     vs_head: int | None                    # net change against HEAD; None when HEAD has no such book
-    vs_upstream: int | None                # net change against merge-base(HEAD, @{upstream})
-    upstream: str                          # the upstream ref name, "" when the branch has none
+    vs_upstream: int | None                # contribution delta against the official target's merge-base
+    upstream: str                          # local official development ref, "" when unavailable
     changed: tuple[tuple[str, int], ...]   # sources whose bytes differ from HEAD, with their delta
+    merge_base: str = ""                   # exact measured commit, never the feature's tracking tip
 
     @property
     def owed(self) -> int:
-        """Net growth the official line would refuse: against upstream when known, else HEAD."""
+        """Known growth for warning consumers: contribution when measured, else HEAD only."""
         delta = self.vs_upstream if self.vs_upstream is not None else self.vs_head
         return max(0, delta or 0)
 
@@ -325,6 +328,37 @@ def _git_bytes(root: Path, *args: str) -> bytes | None:
     except (OSError, subprocess.SubprocessError):
         return None
     return done.stdout if done.returncode == 0 else None
+
+
+def _official_fetch_url(url: str) -> bool:
+    """Recognize the official GitHub repository, not a remote's conventional name."""
+    if "://" not in url:  # Git's scp-like SSH spelling.
+        host, colon, path = url.partition(":")
+        url = f"ssh://{host}/{path}" if colon else ""
+    try:
+        parsed = urlsplit(url)
+        ports = {"https": 443, "http": 80, "ssh": 22, "git": 9418}
+        return (parsed.scheme in ports and parsed.hostname == "github.com"
+                and parsed.port in (None, ports[parsed.scheme]) and not parsed.query and not parsed.fragment
+                and parsed.path.lower().rstrip("/").removesuffix(".git") == f"/{OFFICIAL_REPO.lower()}")
+    except ValueError:
+        return False
+
+
+def _official_contribution_target(root: Path) -> str:
+    """Use a cached official development ref; no fetch, tracking-branch or settings fallback.
+
+    Git supplies shared remotes/refs for linked worktrees too. If multiple official
+    remotes have this ref, the first by name wins and is shown in every measurement.
+    """
+    remotes = (_git_bytes(root, "remote", "-v") or b"").decode("utf-8", errors="replace")
+    for row in sorted(remotes.splitlines()):
+        name, _, location = row.partition("\t")
+        if location.endswith(" (fetch)") and _official_fetch_url(location[:-8]):
+            ref = f"refs/remotes/{name}/{UPDATE_CHANNEL_BRANCHES['development']}"
+            if _git_bytes(root, "rev-parse", "--verify", f"{ref}^{{commit}}"):
+                return ref
+    return ""
 
 
 def book_source_sizes(root: Path, book_id: str, ref: str = "") -> dict[str, int] | None:
@@ -367,8 +401,8 @@ def book_balances(root: Path, paths: Iterable[str] | None = None) -> list[BookBa
          for path in paths if book_entrypoint_for(path) == entry})
     if not wanted:
         return []
-    upstream = (_git_bytes(root, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}") or b"").decode().strip()
-    base = (_git_bytes(root, "merge-base", "HEAD", "@{upstream}") or b"").decode().strip() if upstream else ""
+    upstream = _official_contribution_target(root)
+    base = (_git_bytes(root, "merge-base", "HEAD", upstream) or b"").decode().strip() if upstream else ""
     balances: list[BookBalance] = []
     for book_id in wanted:
         now = book_source_sizes(root, book_id)
@@ -383,7 +417,7 @@ def book_balances(root: Path, paths: Iterable[str] | None = None) -> list[BookBa
             book_id, composed_size(now),
             composed_size(now) - composed_size(head) if head is not None else None,
             composed_size(now) - composed_size(at_base) if at_base is not None else None,
-            upstream if at_base is not None else "", changed))
+            upstream, changed, base))
     return balances
 
 
@@ -392,10 +426,12 @@ def _signed(value: int | None) -> str:
 
 
 def render_book_balance(balance: BookBalance) -> str:
-    """One line: the book's size, its net change against HEAD and upstream, changed chapters."""
+    """One line: worktree size, HEAD delta, contribution delta and its actual cached base."""
     line = f"{balance.book_id.title()} book {balance.size:,} B: {_signed(balance.vs_head)} vs HEAD"
     if balance.upstream:
-        line += f", {_signed(balance.vs_upstream)} vs {balance.upstream} (merge-base)"
+        line += f", {_signed(balance.vs_upstream)} vs {balance.upstream} (merge-base {balance.merge_base or 'unavailable'})"
+    if balance.vs_upstream is None:
+        line += "; contribution unknown"
     if balance.changed:
         line += " (" + ", ".join(f"{Path(path).stem} {delta:+,}" for path, delta in balance.changed) + ")"
     return line
@@ -416,7 +452,7 @@ def book_balance_note(root: Path, paths: Iterable[str]) -> str:
     lines = [render_book_balance(balance) for balance in balances]
     if any(balance.owed for balance in balances):
         return "ℹ️ Reference books:\n" + "\n".join(lines) + "\n" + BOOK_GROWTH_RULE
-    measured = all(balance.vs_head is not None or balance.vs_upstream is not None for balance in balances)
+    measured = all(balance.vs_upstream is not None for balance in balances)
     return "ℹ️ Reference book: " + "; ".join(lines) + ("; nothing owed." if measured else ".")
 
 

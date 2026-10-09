@@ -450,7 +450,7 @@ ouroboros/ — agent core and shared runtime (§6)
     extension_dispatch.py — Extension tool dispatch; discovery stays in registry.py
     release_sync.py — `sync_release_metadata` (version carriers) for commit-admission preflight; the carrier-span SSOT `VERSION_CARRIER_SPANS` shared by the managed-update resolver and the commit packet's carrier cut (§10 invariant 2)
     review_synthesis.py — Shared synthesis helpers; the parser/aggregator lives in plan_spec.py
-    preflight_review.py — `preflight_review` (`advisory_review` alias): the author's one-row early look, a thin wrapper over `review_change(subject=worktree, surface=preflight)`; `deterministic_only` keeps the free release-metadata diagnostics; `review_status` reads attempts, obligations and readiness debt (§6 Commit preflight)
+    preflight_review.py — `preflight_review` (`advisory_review` alias): the author's one-row early look, a thin wrapper over `review_change(subject=worktree, surface=preflight)`; `deterministic_only` returns free release metadata and labelled worktree book balance; `review_status` reads attempts, obligations and readiness debt (§6 Commit preflight)
     recent_tasks.py — Read-only context recovery
     commit_gate.py — Commit gate: LLM claim synthesis, block classification, the free identical-verdict refusal, paid review-cycle counting and ceiling, the review-contract fingerprint
     git_rollback.py — Wraps `git_ops.rollback_to_version`

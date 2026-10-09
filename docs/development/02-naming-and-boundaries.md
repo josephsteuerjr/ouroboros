@@ -173,11 +173,15 @@ Size is pairwise: a change ends each composed book, entrypoint included, no
 larger than at its event base, so text it adds is paid by shortening the same
 book. A stored budget only moved up and per-change grants made every growth a
 cheap self-raise; comparing tip with base leaves no number to raise. The
-official-CI `size_ratchet` lane blocks owner and collaborator pull requests,
-warns outside contributors and forks, and passes a pull request that carries
-the repository owner's `book-growth` label. Local surfaces never block: the edit
-tools, `plan_task`, readiness and `codebase_health` report the running balance
-as a fact.
+official-CI `size_ratchet` lane blocks growth on owner, member and collaborator
+pull requests and on pushes to `ouroboros`; outside contributors and forks receive
+warnings. The repository owner's `book-growth` label exempts its PR and the exact
+commit that lands it. Local surfaces never block: the edit
+tools, `plan_task`, the free `preflight_review(deterministic_only=True)` diagnostic
+and `codebase_health` report the running balance as a fact. Contribution is measured
+against the displayed merge-base of the cached official development ref; an unknown
+base stays unknown, and no network refresh is implied. Free diagnostics label book
+bytes as worktree separately from the selected release-metadata source.
 Equivalent historical prose stays review-only under CHECKLISTS item 5.
 
 ### Current state first (ARCHITECTURE invariant 10)

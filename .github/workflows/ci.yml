@@ -157,6 +157,8 @@ jobs:
           EVENT: ${{ github.event_name }}
           ASSOCIATION: ${{ github.event.pull_request.author_association }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.sha }}
+          REF: ${{ github.ref }}
         run: python scripts/book_growth_mode.py
       # OFFICIAL-CI-ONLY enforcement of the repository size gates: manifest
       # exactness against this tree plus the pairwise base-vs-tip shrink-only
@@ -318,6 +320,8 @@ jobs:
           EVENT: ${{ github.event_name }}
           ASSOCIATION: ${{ github.event.pull_request.author_association }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.sha }}
+          REF: ${{ github.ref }}
         run: python scripts/book_growth_mode.py
       # Same size-ratchet enforcement contract as quick-test (see its comment).
       # PRs carry their base SHA; branch pushes carry event.before; dispatch runs leave
