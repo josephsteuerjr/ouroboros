@@ -179,9 +179,7 @@ whole-or-pointer against a per-field serialized budget (a preview carries `full_
 bodies stay the untouched SSOT, and no hop cap exists: depth belongs to the mind, the
 floor only keeps bodies off the wire. Children and external work orders receive the
 pure, idempotent brief `main_context_authority.project_helper_predecessor_authority`;
-a brief never stands in for the omitted evidence. Provider context overflow after the
-reclaim and one strictly smaller same-route retry is the typed `context_overflow`
-infra failure, never a provider outage. Enforcement:
+a brief never stands in for the omitted evidence. Enforcement:
 `tests/test_continuation_context_authority.py`.
 
 ### Invariant: notifications ring for live events only

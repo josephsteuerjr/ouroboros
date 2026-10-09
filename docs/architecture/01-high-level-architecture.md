@@ -171,7 +171,7 @@ ouroboros/ — agent core and shared runtime (§6)
   merge_receipts.py — task-owned PR merge intent, GitHub readback, durable receipt (§6)
   upgrade_notices.py, notice_receipts.py — once-only owner notices with chat receipts (§7)
   mcp_client.py — MCP client: server identity normalization, token masking, `mcp_<server>__<tool>` names, per-server launch admission; descriptions and results stay untrusted data (§6 MCP and browser-facing external tools)
-  safety.py — Safety Supervisor call: a typed non-verdict `⚠️ SAFETY_UNAVAILABLE` (a 429 is infrastructure, not a verdict) and a fail-closed `⚠️ SAFETY_SUBJECT_TOO_LARGE_BLOCKED` over the subject budget, never truncation, because anything past a cut would run unreviewed (§6 Safety Supervisor outcomes)
+  safety.py — Safety Supervisor call (typed outcomes: §6 Safety Supervisor outcomes)
   consciousness.py, consciousness_wake.py — the background alarm admitting an ordinary Main turn through the supervisor tick (`handle_wake_direct`); the complete wake user input and `wake_task_metadata` envelope (§6 Background consciousness)
   consciousness_authority.py, consciousness_allowance.py — the three autonomy levels (observe/act/full) as `disabled_tools` bound at dispatch, so the prompt prefix matches an owner turn's; rolling-24h spend off the usage ledger, `allowance_unknown` on a read failure (§6 Background consciousness)
   chat_chain.py — the chat generation chain (archives, then live), index-free row addresses, `retain_memory_source` (§6)
@@ -399,7 +399,7 @@ ouroboros/ — agent core and shared runtime (§6)
     skill_publish.py — Read-only publish preflight with scan cache; one five-state response; no task or GitHub effect (§6 Skill publication)
     marketplace.py — ClawHub and OuroborosHub HTTP surface
     mcp.py — MCP HTTP surface over the shared MCPManager
-    claudexor_accounts.py — Agent accounts HTTP surface: six thin proxies over the owned daemon (GET /api/claudexor/status, POST /api/claudexor/wake, POST /api/claudexor/login and its job actions, /api/claudexor/credential-profiles); no auth logic, vendor recipes or browser exposure of the daemon token (§3 Agent accounts; routes: §4)
+    claudexor_accounts.py — Agent accounts HTTP surface: six thin proxies over the owned daemon (GET /api/claudexor/status, POST /api/claudexor/wake, POST /api/claudexor/login and its job actions, /api/claudexor/credential-profiles); no auth logic, vendor recipes or browser exposure of the daemon token; `reads` classifies catalog/accounts/quota as `ok|not_read|failed`, and only `ok` makes even an empty collection authoritative, so an unread collection never proves no account is connected (§3 Agent accounts; routes: §4)
     claudexor_quota.py — POST /api/claudexor/quota/refresh: one explicit owner refresh delegated exactly once to the engine's quota POST; no lifecycle start, retry or daemon token crosses this boundary; GET /api/claudexor/status stays passive
     host_service.py — Loopback-only Host Service API (§12)
     host_notify.py — POST /notify beside the Host Service: a granted skill's sentence becomes one signed `skill_notice` System row in the owner's chat (§12)
@@ -536,7 +536,7 @@ Workspace tasks default to `memory_mode=forked`; `shared` is refused for an exte
 
 `--detach` returns after durable admission; `--no-stream` polls to completion. `ouroboros run` exits 0 only for a completed lifecycle with a clean execution axis, no failed or degraded objective and a finished artifact bundle (`_is_terminal_success`), so shell automation cannot read "the model answered" as "the deliverable exists"; `--patch`/`--patch-out` are stricter and trust `workspace_patch.json`, which distinguishes an omitted, no-op and failed patch (§6 Headless finalization and workspace patch capture). An explicitly partial cost gets a bounded finality wait (`_await_cost_finality`) before its partial flags stay visible.
 
-CLI schedules and skill-manifest schedules enqueue ordinary supervisor tasks; there is no parallel scheduler. `resync_skill_schedules()` mirrors manifests into the same table (§5), and the active schedule digest rides task and consciousness context.
+CLI schedules and skill-manifest schedules enqueue ordinary supervisor tasks; there is no parallel scheduler. `resync_skill_schedules()` mirrors manifests into the same table (§5); a blank timezone means the DST-aware system zone (fixed offset only when that zone is unrecoverable), and the active schedule digest rides task and consciousness context.
 
 Packaged CLI artifacts are a thin wrapper plus installer, not a second PyInstaller runtime: `packaged_cli` locates `repo.bundle`, its manifest and `python-standalone`, bootstraps the launcher-managed repo and runs the same `ouroboros.cli` under the embedded interpreter. Packaged `server` is refused because it would bypass launcher-owned bootstrap, process identity, restart and cleanup. `run --start` is loopback-only and starts the desktop app when no ready gateway answers.
 
