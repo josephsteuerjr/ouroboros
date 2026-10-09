@@ -438,6 +438,13 @@ CURRENT_PRODUCER_CONTRACTS = {
     # voice (delegated, Presence, agent-to-agent) through native ACCESS_BLOCKED.
     "MAIN_NOTICE_BLOCKED": (True, "blocked"),
     "native:ACCESS_BLOCKED:MAIN_NOTICE_BLOCKED": (True, "blocked"),
+    # #1074: an admitted, absent path is a discovery miss — a successful call with
+    # a warning, the list_files/read_file parity. search_code's miss is a new
+    # identifier; the image loader now publishes the already-recorded
+    # FILE_NOT_FOUND text natively as LEGACY_WARNING (the plain answer is unchanged).
+    "SEARCH_NOT_FOUND": (False, "ok"),
+    "FILE_NOT_FOUND": (False, "ok"),
+    "native:LEGACY_WARNING:FILE_NOT_FOUND": (False, "ok"),
 }
 
 

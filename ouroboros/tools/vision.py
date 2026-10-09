@@ -542,11 +542,12 @@ def _load_local_image_payload(ctx: ToolContext, file_path: str) -> Tuple[Optiona
     policy + size cap + fail-closed MIME sniff), then return a downscaled provider
     payload ``{"base64", "mime"}``. On any rejection returns ``(None, message)``.
     LOCAL FILES ONLY — no URL, no base64 (no new exfiltration surface). Shared by
-    vlm_query(file_path=...) and view_image so both enforce identical checks."""
+    vlm_query(file_path=...) and view_image so both enforce identical checks.
+    A relative path resolves against the process working directory. An absent
+    path inside the admitted roots is a discovery miss (typed warning, no image),
+    reported only after every admission guard; size/read/MIME failures stay errors."""
     import pathlib
     fp = pathlib.Path(file_path).expanduser().resolve()
-    if not fp.exists():
-        return None, _refuse(ctx, f"⚠️ File not found: {file_path}")
     allowed = _allowed_file_roots(ctx)
     if not any(_path_is_under(fp, root) for root in allowed):
         return None, _refuse(ctx, (
@@ -568,6 +569,9 @@ def _load_local_image_payload(ctx: ToolContext, file_path: str) -> Tuple[Optiona
         _artifact_block = ""
     if _artifact_block:
         return None, _artifact_block
+    if not fp.exists():
+        return None, _publish_tool_result(ctx, ToolResult(status="ok", code="LEGACY_WARNING", text=(
+            f"⚠️ FILE_NOT_FOUND: image file not found: {file_path} (resolved: {fp}).")))
     if fp.stat().st_size > _VLM_MAX_FILE_BYTES:
         return None, _refuse(
             ctx, f"⚠️ File too large ({fp.stat().st_size} bytes). Max {_VLM_MAX_FILE_BYTES} bytes."

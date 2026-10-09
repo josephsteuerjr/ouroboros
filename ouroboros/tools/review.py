@@ -74,20 +74,20 @@ def get_tools():
             schema={
                 "name": "task_acceptance_review",
                 "description": (
-                    "Record a task-result claim, checklist, evidence, and optional agent disposition. "
-                    "For a root task in auto/required mode, nominate the complete ready task result: "
-                    "after all tool results in this round, the host advances the same review operation "
-                    "used by final delivery. Settling review does not finish the task. "
-                    "A child task, or a root whose task review is off, gets advisory evidence now: the child "
-                    "from at most ONE configured reviewer row (name it with reviewer_slot_id when several are "
-                    "configured), the off-mode root from its configured panel."
+                    "Record a task-result claim, checklist and evidence. author_action or a recognized "
+                    "agent_disposition stages completion under the current review policy. Otherwise, a "
+                    "root in auto/required mode nominates its complete ready result: after this round's "
+                    "tool results, the host advances final delivery's review operation; settling that "
+                    "review alone does not finish the task. A child gets advisory evidence now from at "
+                    "most ONE configured reviewer (reviewer_slot_id selects it); a review-off root "
+                    "gets its configured panel."
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "claim": {"type": "string", "description": "Final claim or task result the agent intends to release."},
                         "goal": {"type": "string", "description": "Original task goal."},
-                        "evidence": {"type": "object", "description": "Relevant tool trace, artifacts, tests, and observed facts. To select earlier tool records from the host's complete retained trajectory, supply tool_trajectory_indices: [zero-based source indices]. The host materializes these records with their corpus-SHA addresses; a bounded or missing record stays partial/unavailable. Your own prose remains agent-supplied evidence."},
+                        "evidence": {"type": "object", "description": "Tool trace, artifacts, tests and observations. tool_trajectory_indices selects zero-based records from the host's complete retained trajectory, materialized with corpus-SHA addresses. Bounded/missing records stay partial/unavailable; your prose stays agent-supplied evidence."},
                         "checklist": {"type": "string", "default": "", "description": "Optional acceptance checklist."},
                         "acceptance_subject": {
                             "type": "object",
@@ -103,20 +103,20 @@ def get_tools():
                             "type": "string",
                             "enum": ["accepted", "rejected", "partial", "deferred"],
                             "default": "",
-                            "description": "Explicit author stance. After receiving the first host review, supply this with rationale to finish Advisory for your current result, including a revised answer, without another panel. Before first feedback it is evidence only; later tool effects or owner/evidence supersession require a new finish stance (a stop is recorded as it stands). Never creates reviewer PASS.",
+                            "description": "Completion alias: any listed stance stages finish, including before first feedback; permission to finish follows review policy. With rationale after the first host review, Advisory may finish a revised result without another panel. Later tool effects or owner/evidence supersession need a new finish stance; a stop stands as recorded. Never creates reviewer PASS.",
                         },
                         "rationale": {
                             "type": "string",
                             "default": "",
-                            "description": "Rationale required for an explicit author finish or stop; for a stop the owner sees it on the task row as the reason, so state plainly what is unfinished. Rationale alone (no agent_disposition and no author_action) is evidence only and does not end review; with author_action it records the act and no invented stance.",
+                            "description": "Required reason for explicit finish/stop. For stop, plainly name unfinished work: the owner sees this on the task row. Alone it is evidence, not completion; with author_action it records the act without inventing a stance.",
                         },
                         "author_action": {
                             "type": "string", "enum": ["finish", "stop"],
-                            "description": "Finish the current result under its review policy, or stop honestly with unfinished work. Stop never authorizes a blocked action; include rationale. Omission preserves explicit Advisory finish.",
+                            "description": "Finish under current review policy, or stop with unfinished work; include rationale. Stop never authorizes a blocked action. When omitted, a recognized agent_disposition still stages finish.",
                         },
                         "acceptance_retry": {
                             "type": "object",
-                            "description": "ONE-USE retry of a disclosed local acceptance-preparation failure. Name the incident id the host disclosed and the substantive basis: material_change (the requirements or material evidence really changed), repair_evidence (the cause was repaired for the same material) or owner_retry (the owner explicitly asked). Re-sending the same declaration grants nothing further; a plain re-nomination, a rephrasing or a status question is not a retry.",
+                            "description": "ONE-USE retry of a disclosed local acceptance-preparation failure: name its incident id and basis — material_change (changed requirements/material evidence), repair_evidence (repaired cause, same material), or owner_retry (explicit owner request). Re-sending grants no further retry; re-nomination, rephrasing and status questions do not qualify.",
                             "properties": {
                                 "incident_id": {"type": "string"},
                                 "basis": {"type": "string", "enum": ["material_change", "repair_evidence", "owner_retry"]},
@@ -128,11 +128,11 @@ def get_tools():
                         },
                         "reviewer_slot_id": {
                             "type": "string",
-                            "description": "Child task only: the one review-pool row (its subagent id) to review with, required when the pool has more than one; the host checks membership. Pick by what the claim needs; each row keeps its own delivery.",
+                            "description": "Child only: one review-pool row's subagent id, required when several exist; host checks membership. Choose for the claim; each row keeps its delivery.",
                         },
                         "late_review": {
                             "type": "object",
-                            "description": "Owner action on one frozen delivered historical answer. Get debt_id/source_ref with ordinary get_task_result; leave claim and goal empty. Name NEW host-resolvable owner chat/quiz/mailbox words in the caller conversation or its host-bound relayed origin; Main interprets the target across Projects, the action and optional ABSOLUTE original-root cap in USD. Rationale explains that interpretation; hashes and inherited origin alone grant nothing. action=amend_cap only changes that cap (money, also while paused); it never prepares review, Resumes or clears fences. action=review requests the configured advisory panel, first recording any supplied cap; exact delivery and current target/root/caller controls must permit dispatch. Review uses the original wallet and one stable paid identity; existing paid or unknown work is collect-only. The separate supplement preserves the original answer and decision. Frozen source reads use the supplied bounded get_task_result selector.",
+                            "description": "Owner action on one frozen delivered historical answer. Get debt_id/source_ref via get_task_result; leave claim/goal empty. Cite NEW host-resolvable owner chat/quiz/mailbox words in the caller conversation or host-bound relayed origin. Main interprets the cross-Project target, action and optional ABSOLUTE original-root USD cap; rationale explains it. Hashes/inherited origin alone grant nothing. amend_cap changes money only, even while paused: no review preparation, Resume or fence clearing. review requests the configured advisory panel after recording any supplied cap; exact delivery and current target/root/caller controls must permit dispatch. Uses the original wallet and one stable paid identity; paid/unknown work is collect-only. A separate supplement preserves the answer/decision. Read frozen sources through the supplied bounded get_task_result selector.",
                             "properties": {
                                 "task_id": {"type": "string"},
                                 "debt_id": {"type": "string"},
