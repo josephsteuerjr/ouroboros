@@ -670,8 +670,8 @@ def _plan_slots_for_wave(ctx: ToolContext, slots_fn: Any, existing: dict, resume
 
     if not resume_in_flight and (err := reviewer_slot_config_error()):
         return [], _plan_unavailable(
-            ctx, f"ERROR: Invalid reviewer-slot configuration blocks plan review — {err}. "
-            "Fix Review lanes on the Agents tab in Settings.", "reviewer_slot_config_invalid")
+            ctx, f"ERROR: Invalid review pool configuration blocks plan review — {err}. "
+            "Fix the Reviewer rows on the Agents tab in Settings.", "reviewer_slot_config_invalid")
     if resume_in_flight:
         from ouroboros.tools.plan_review_artifacts import frozen_plan_slots
         try:
@@ -798,8 +798,8 @@ async def _run_plan_review_async(ctx: ToolContext, request: _PlanRequest, *, col
         return slot_error
     if not slots:
         return _plan_unavailable(
-            ctx, "ERROR: No review models configured. Configure Review lanes "
-            "(OUROBOROS_REVIEWER_SLOTS) on the Agents tab in Settings.",
+            ctx, "ERROR: No review models configured. Mark at least one catalog row "
+            "Reviewer (OUROBOROS_SUBAGENTS) on the Agents tab in Settings.",
             "review_models_unconfigured")
     configured_slots = list(slots)
     resume = _plan_in_flight_resume_inputs(
