@@ -233,7 +233,7 @@ server.py (Starlette+uvicorn) ← HTTP + WebSocket on configurable host:port (de
       ├── owner_words.py       ← The owner's words that caused a work tree: carried by value to helpers, resolved from origin/binding/annotation carriers for older tasks, rendered verbatim for children, sessions and reviewers
       ├── project_lease.py     ← One-writer-per-project lease in `assign_tasks`; same-project subagent swarms exempt; `""` is no lane
       ├── context.py           ← Main context assembly and Available-subagents catalog; ordinary shared context retains authored knowledge summaries and an explicit missing-overview gap
-      ├── context_input_selection.py ← Optional declared-source child composition and validation (API model or configured session); ordinary shared continuity stays default (§6 Selected first-input sources)
+      ├── context_input_selection.py ← Declared-source composition; first/latest usable author input sources and historical evaluator exhibits, independent of current criteria (§6 Selected first-input sources)
       ├── main_context_authority.py ← Main's defensive authority view and helpers' idempotent predecessor briefs, with conditions, source and sized omissions (§6)
       ├── client_surface.py    ← Closed-key bounded client-surface normalizer; surface identity excludes viewport/narrow_layout (§4 WebSocket protocol)
       ├── context_fit.py       ← Deterministic Max/Low/Nano context projections from one immutable core with labelled measurement + typed reclaim deficit; owns the ONE message-side transcript cache seal; no routing/retry/global-mode authority (§6 Context fitting, retry, and compaction)
