@@ -188,15 +188,15 @@ def test_wrapper_retains_only_unresolved_custody(candidate, monkeypatch, tmp_pat
             assert result["outcome"]["retained_checkout"] == str(checkout)
             assert result["outcome"]["retained_custody"]
         if mode in {"preflight", "exception_pending", "base_exception_pending"}:
-            preflight = json.loads((output / "outcome.json").read_text())["outcome"]["retained_custody"]["preflight"]
+            preflight = json.loads((output / "outcome.json").read_text(encoding="utf-8"))["outcome"]["retained_custody"]["preflight"]
             assert preflight["state"] == STATE_PENDING and preflight["record_id"]
         if mode == "preflight":
-            summary = json.loads((output / "preflight.json").read_text())
+            summary = json.loads((output / "preflight.json").read_text(encoding="utf-8"))
             assert summary["review_record"]["record_id"] == summary["preflight"]["record_id"]
         if mode == "finished":
-            assert json.loads((output / "preflight.json").read_text())["preflight"]["status"] == "not_performed"
+            assert json.loads((output / "preflight.json").read_text(encoding="utf-8"))["preflight"]["status"] == "not_performed"
         if mode == "answered":
-            summary = json.loads((output / "preflight.json").read_text())
+            summary = json.loads((output / "preflight.json").read_text(encoding="utf-8"))
             assert summary["preflight"]["status"] == "performed"
             assert [seat["answer"] for seat in summary["seats"]] == [full_source]
             assert (output / "preflight.txt").read_text(encoding="utf-8") == full_source + "\n"

@@ -47,7 +47,7 @@ def test_coupling_facts_survive_action_authority(candidate, access, status):  # 
     assert result.__dict__ == before
     assert coupling_items[0]["verdict"] == "FAIL" and coupling_items[0]["tag"] == "coupling"
     if access == "cyber_pro":
-        event = json.loads((candidate.drive_logs() / "events.jsonl").read_text().splitlines()[-1])
+        event = json.loads((candidate.drive_logs() / "events.jsonl").read_text(encoding="utf-8").splitlines()[-1])
         assert event["review_enforcement"] == "blocking"
         assert event["decision_authority"] == "cyber_pro"
 

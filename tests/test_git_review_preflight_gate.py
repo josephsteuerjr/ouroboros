@@ -81,7 +81,7 @@ def _stub_preflight_lanes(repo, monkeypatch):
     lanes = []
 
     def green_lane(python, worktree, temp_root, args, timeout):
-        assert worktree != repo and (worktree / "candidate.txt").read_text() == "tested"
+        assert worktree != repo and (worktree / "candidate.txt").read_text(encoding="utf-8") == "tested"
         lanes.append((worktree, tuple(args)))
         return 0, "green fixture lane", ""
 
