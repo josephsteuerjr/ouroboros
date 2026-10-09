@@ -297,18 +297,23 @@ def test_managed_continuation_keeps_old_money_and_mints_one_new_attempt(tmp_path
 
 @pytest.mark.parametrize("reported_model", ["absent", None, "test"])
 @pytest.mark.parametrize("axis", ["matching", "empty", "before_wait", "source", "profile", "fingerprint", "model", "local"])
-def test_catalog_reachability_binds_effective_account_and_wait_start(monkeypatch, axis, reported_model):
+@pytest.mark.parametrize("advisory", [False, True])
+def test_catalog_reachability_binds_effective_account_and_wait_start(monkeypatch, axis, reported_model, advisory):
     import time
     from ouroboros import llm_claudexor
     started = time.time() - 10
     catalog = dict(source="codex", credentialProfileId="effective-profile", accountFingerprint="account-a",
                    observedAt=datetime.fromtimestamp(started + 1, timezone.utc).isoformat(),
                    provenance="provider_http", models=[{"id": "test"}])
+    if advisory:
+        catalog.update(models=[], admission={"requestedModel": "test", "inventoryAbsence": "advisory"})
     if axis == "before_wait": catalog["observedAt"] = datetime.fromtimestamp(started - 1, timezone.utc).isoformat()
     if axis == "source": catalog["source"] = "foreign"
     if axis == "profile": catalog["credentialProfileId"] = "foreign"
     if axis == "fingerprint": catalog["accountFingerprint"] = "foreign"
-    if axis == "model": catalog["models"] = [{"id": "foreign"}]
+    if axis == "model":
+        catalog["models"] = [{"id": "foreign"}]
+        if advisory: catalog["admission"]["requestedModel"] = "foreign"
     if axis == "local": catalog["provenance"] = "local_cache"
     if axis == "empty": catalog = {}
     route = {"source": "codex", "credentialProfileId": "effective-profile", "accountFingerprint": "account-a"}

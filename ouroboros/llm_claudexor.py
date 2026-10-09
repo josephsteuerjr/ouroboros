@@ -25,6 +25,8 @@ from ouroboros.effort_evidence import model_effort_usage
 from ouroboros.gateways.claudexor import (ClaudexorUnavailable, engine_at_least, model_failure_evidence_supported,
                                           operation_query_supported, _READ_TIMEOUT_SEC)
 from ouroboros.llm_attempt import _attempt_request, _candidate_before_dispatch, effort_request_facts
+from ouroboros.llm_capability_policy import (
+    model_catalog as model_catalog, catalog_admits_model as catalog_admits_model)
 from ouroboros.send_clock import stamp_clock_note
 from ouroboros.llm_substitution import (
     AccountRotation, SubstitutionBudget, substitution_fact, failed_account_preference,
@@ -40,16 +42,6 @@ from ouroboros.usage_accounting import (
 from ouroboros.utils import append_jsonl, sanitize_tool_result_for_log, utc_now_iso
 
 log = logging.getLogger(__name__)
-def model_catalog(source: str, credential_profile_id: str | None = None, *,
-                  requested_model: str | None = None, timeout_sec: float | None = None) -> dict:
-    """Metadata-only transport; the capability evidence owner interprets the envelope."""
-    gateway = read_owned_gateway()
-    try:
-        hint = {"requested_model": requested_model} if requested_model is not None else {}
-        return gateway.list_source_models(source, credential_profile_id, **hint,
-                                          **({"timeout_sec": timeout_sec} if timeout_sec is not None else {}))
-    finally:
-        gateway.close()
 
 
 def model_sources(*, processing_view: bool = False) -> dict:

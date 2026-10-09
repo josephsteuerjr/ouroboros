@@ -406,6 +406,7 @@ ouroboros/ — agent core and shared runtime (§6)
     mcp.py — MCP HTTP surface over the shared MCPManager
     claudexor_accounts.py — Agent accounts HTTP surface: thin proxies over the owned daemon (status, wake, login and its job actions, credential profiles); no auth logic or browser exposure of the daemon token; `reads` classifies catalog/accounts/quota as `ok|not_read|failed`, and only `ok` makes even an empty collection authoritative (§3 Agent accounts; routes: §4)
     claudexor_quota.py — POST /api/claudexor/quota/refresh: one explicit owner refresh delegated exactly once to the engine's quota POST; no lifecycle start or retry; GET /api/claudexor/status stays passive
+    harness_maintenance.py — Owner maintenance HTTP surface over the shared host service (§6 Vendor program maintenance; routes: §4)
     host_service.py — Loopback-only Host Service API (§12)
     host_notify.py — POST /notify beside the Host Service: a granted skill's sentence becomes one signed `skill_notice` System row in the owner's chat (§12)
     history.py — Shared Chat room/quiz/media/review/terminal projection and cost-breakdown factories
