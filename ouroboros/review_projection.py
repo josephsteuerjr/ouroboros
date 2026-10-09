@@ -82,6 +82,14 @@ def _public_review_reason(value: Any) -> str:
     return str(_sub().redact_projection(text).value)
 
 
+def _actor_reason(row: Dict[str, Any], reason: str) -> str:
+    """Keep the reported failure beside the reason the existing card displays."""
+    cause = str(row.get("reported_cause") or "")
+    if cause and cause not in reason:
+        reason = f"{reason}\nReported cause: {cause}".strip()
+    return _public_review_reason(reason)
+
+
 def awaiting_panel_reason(slot_ids: List[str], configured: int, aggregate: str) -> str:
     """The one host sentence for the slots of a panel released at the dispatch barrier."""
     return (f"awaiting {len(slot_ids)} of {configured} reviewer slot(s): {', '.join(slot_ids)}"
@@ -186,7 +194,7 @@ def _review_actor_projection(actor: Any, surface: str) -> Dict[str, Any]:
             "findings": len(parsed_findings),
         },
         "quorum_contribution": bool(row.get("quorum_contribution")),
-        "reason": _public_review_reason(reason),
+        "reason": _actor_reason(row, reason),
         "enforcement_impact": str(row.get("enforcement_impact") or "abstains"),
         # Preserve the physical identity when the logical actor times out.
         "operation_id": str(row.get("operation_id") or ""),
@@ -296,6 +304,8 @@ def build_review_binding(
 
 def _panel_transport(statuses: List[str]) -> str:
     """One panel's transport word over the words of its collected actors."""
+    if "authority_error" in statuses and all(word in {"authority_error", "not_dispatched"} for word in statuses):
+        return "authority_error"  # a local refusal plus withheld rows has no provider failure
     for word in ("success", "not_dispatched", "timeout", "authority_error"):
         if statuses and all(status == word for status in statuses):
             return word
@@ -335,14 +345,17 @@ def _ledger_seat_actor(seat: Dict[str, Any], record: Dict[str, Any]) -> Dict[str
         "slot_id": str(seat.get("seat_id") or ""), "model": model,
         "provider": _sub().provider_for_model(model) if model else "unknown",
         "actor_role": f"{surface} {'additional ' if seat.get('additional') else ''}reviewer",
-        "transport_status": "success" if status in _LEDGER_PARSE else (status or "unknown"),
+        "transport_status": str(seat.get("transport_status") or ("success" if status in _LEDGER_PARSE else status or "unknown")),
         "parse_status": _LEDGER_PARSE.get(status, "none"),
         "semantic_verdict": str(((record.get("verdict") or {}).get("per_row") or {}).get(seat.get("seat_id")) or ""),
         "quorum_contribution": contributes,
         "enforcement_impact": str(record.get("enforcement") or "unknown") if contributes else "abstains",
         "operation_state": str(seat.get("operation_state") or ""),
         "parts": parts, "answers": counted, "response_ref": _response_ref_projection(ref),
+        "reason": _actor_reason(seat, str(seat.get("raw_text") or seat.get("failure_code") or "")
+                                if status not in _LEDGER_PARSE else ""),
     }
+    actor.update({key: seat[key] for key in _sub().TYPED_FAILURE_FACT_KEYS if seat.get(key) not in (None, "")})
     actor.update(_sub().disclosed_list_projection(
         findings, key="findings", limit=_sub().MAX_PROJECTED_ACTOR_FINDINGS, item=_sub().projected_finding_row))
     return actor

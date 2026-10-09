@@ -105,3 +105,41 @@ def test_problem_context_is_only_diagnostic_and_old_engines_keep_empty_cause():
     assert type(error) is ClaudexorUnavailable and error.code == "idempotency_status_unavailable"
     row["problem"]["context"] = {}
     assert _problem(row).reported_cause == ""
+
+
+@pytest.mark.parametrize("existing_project", [False, True])
+@pytest.mark.parametrize("retained_thread", [False, True])
+def test_unwritable_request_keeps_existing_or_thread_owned_registration(
+    tmp_path, fake_route, monkeypatch, existing_project, retained_thread,
+):
+    from ouroboros import observability, review_execution
+
+    fake_route.project_unregistered = not existing_project
+    threads = []
+
+    def create_thread(self, request, **_kwargs):
+        threads.append(request)
+        return {"id": "retained-thread"}
+
+    def fail_blob(*_args, **_kwargs):
+        raise OSError("request blob cannot be persisted")
+
+    monkeypatch.setattr(fake_route, "create_thread", create_thread, raising=False)
+    monkeypatch.setattr(observability, "write_blob", fail_blob)
+    state = {}
+    invocation = review_execution.SessionInvocation(
+        task_id="task", surface="plan_review" if retained_thread else "scope_review",
+        slot_id="scope_slot_1", timeout_sec=30, use_thread=retained_thread,
+        retry_state=state,
+    )
+    with pytest.raises(review_execution.ReviewRouteUnavailable) as raised:
+        review_execution.run_delegated_review_session(
+            prompt="review", root="/tmp/fake-repo", custody_drive=tmp_path, invocation=invocation,
+        )
+    gateway = fake_route.instances[-1]
+    assert raised.value.code == "start_request_row_unwritable"
+    assert gateway.start_requests == [] and state == {}
+    assert gateway.removals == ([] if existing_project or retained_thread else ["proj-new"])
+    assert bool(threads) is retained_thread
+    if retained_thread:
+        assert threads[0]["scope"] == {"kind": "project", "root": "/tmp/fake-repo"}

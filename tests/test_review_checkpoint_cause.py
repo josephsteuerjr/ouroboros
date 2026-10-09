@@ -95,3 +95,85 @@ def test_real_session_checkpoint_preserves_lock_cause_before_any_post(tmp_path, 
     else:
         assert len(gateway.start_requests) == 1 and actor.status == "ok"
         assert actor.raw_text == "[]" and not actor.reported_cause
+
+
+@pytest.mark.parametrize("scenario,expected", [
+    ("authority", "authority_error"), ("authority_unsent", "authority_error"),
+    ("provider", "provider_transport_error"), ("unsent", "not_dispatched"),
+    ("success", "success"),
+])
+def test_failure_facts_reach_persisted_task_history_and_actual_card(tmp_path, fake_route, monkeypatch, scenario, expected):
+    from dataclasses import asdict, replace
+    from ouroboros import review_ledger
+    from ouroboros.gateways.claudexor import ClaudexorUnavailable
+    from ouroboros.review_state import ReviewStateLockError
+    from ouroboros.review_substrate import ReviewCoordinator
+    from ouroboros.tools.review_response import parse_model_response
+    from ouroboros.triad_review import parse_model_review_results
+    from tests.test_review_ledger import _facts
+    from tests.test_review_record_card_projection import _render, _terminal
+
+    def checkpoint(_):
+        raise ReviewStateLockError(tmp_path / "lock", {"reason": "contention", "errno": None})
+
+    coordinator = ReviewCoordinator(llm=FakeLLM(), drive_root=tmp_path)
+    request, slot = _agent_request(task_id="task-1"), _agent_slot()
+    if scenario == "provider":
+        error = ClaudexorUnavailable("idempotency_status_unavailable", "Cannot observe the request", status_code=503)
+        error.reported_cause = "daemon lookup transport unavailable"
+
+        def unavailable(self, request, *, idempotency_key=""):
+            self.start_requests.append(dict(request))
+            self.start_keys.append(idempotency_key)
+            raise error
+
+        monkeypatch.setattr(fake_route, "start_run", unavailable)
+    if scenario == "unsent":
+        actors = [coordinator._error_actor(request, slot, "No dispatch admitted", operation_state="not_dispatched")]
+    else:
+        actors = [coordinator._run_slot(request, slot,
+                  pending_invocation_checkpoint=checkpoint if scenario.startswith("authority") else None)]
+    if scenario == "authority_unsent":
+        actors.append(coordinator._error_actor(request, replace(slot, slot_id="withheld"),
+                      "No dispatch admitted", operation_state="not_dispatched"))
+    envelopes = [parse_model_response(actor.model, {
+        **asdict(actor), "choices": [{"message": {"content": actor.raw_text}}],
+    }, {}) for actor in actors]
+    raws = [actor.to_dict() for actor in parse_model_review_results({"results": envelopes}).actor_records]
+    record = review_ledger.write_record(tmp_path, review_ledger.build_commit_gate_record(_facts(raws)))
+    readback = review_ledger.load_record(tmp_path, record["record_id"])
+    stored, event, history = _terminal(tmp_path, "task-1")
+    projection = stored["review_projection"]
+    assert projection == event == history["review_projection"]
+    panel = projection["panels"][0]
+    assert panel["transport_status"] == expected
+    shown = _render("task-1", projection)
+    assert f"transport={expected}" in shown["card"]
+    if scenario.startswith("authority") or scenario == "provider":
+        cause = actors[0].reported_cause
+        assert readback["rows"][0]["reported_cause"] == cause
+        assert panel["actors"][0]["reported_cause"] == cause
+        assert cause in shown["card"]
+        assert any(cause in attempt["detailText"] for group in shown["groups"] for attempt in group["attempts"])
+    if scenario.startswith("authority") or scenario == "unsent":
+        assert all(not gateway.start_requests for gateway in fake_route.instances)
+        assert "provider_transport_error" not in shown["card"]
+    elif scenario == "provider":
+        keys = [key for gateway in fake_route.instances for key in gateway.start_keys]
+        assert keys and len(set(keys)) == 1  # observation retries retain the one original operation
+    else:
+        assert sum(len(gateway.start_requests) for gateway in fake_route.instances) == 1
+
+
+def test_mixed_provider_failure_is_not_hidden_and_legacy_causes_are_not_invented():
+    from ouroboros.review_projection import ledger_record_panel
+    from ouroboros import review_ledger
+    from tests.test_review_ledger import _facts
+
+    assert _panel_transport(["authority_error", "provider_transport_error"]) == "provider_transport_error"
+    assert _panel_transport(["authority_error", "timeout"]) == "provider_transport_error"
+    record = review_ledger.build_commit_gate_record(_facts([{
+        "slot_id": "old", "status": "error", "model_id": "old/model",
+    }])).to_dict()
+    actor = ledger_record_panel(record)["actors"][0]
+    assert actor["reason"] == "" and "reported_cause" not in actor
