@@ -75,7 +75,8 @@ network-bound runs inside it.
   suppress HTTP probes; retained receipts still settle.
 - `Txn.record_evidence` merges only physical-failure and opaque provider-binding
   evidence under a revision check. These additive `extra` fields require no
-  column/index migration on an existing database. Failure, administrative
+  column/index migration on an existing database. The original physical failure,
+  HTTP-200 body errors included, is retained in private CAS before retry. Failure, administrative
   closure, answer completeness and monetary finality remain independent.
 - One-shot kinds compare identity, not payload: a subscription session's later
   model or token observation replays the stored row.
@@ -147,7 +148,8 @@ only its own budget.
    from the imported summaries; one-shot identities are stored.
 3. An install whose pre-ledger import never completed imports its `llm_usage`
    events and `state.json` totals in the same job (source hashes, archived
-   copies under `archive/usage_import/`, the watermark).
+   copies under `archive/usage_import/`, the watermark). Ambiguity is disclosed;
+   no log is rewritten and no attempt invented.
 4. Publish the store by atomic rename; record the header's epoch/sequence, the
    source size, hash and counts in `meta.import`; continue the marker at the
    journal's `[epoch, last seq]` so the `state.json` projection never sees a
@@ -209,7 +211,8 @@ least one selected attempt could not complete the requested action.
 
 `openrouter_cost.py` owns generation metadata parsing and private receipt CAS.
 New sends bind the original endpoint and credential SHA-256, then the first
-observed generation ID; contradictory IDs record a conflict. The explicit GET
+observed generation ID as soon as headers or body expose it, so a later stream
+failure does not lose the price lookup identity; contradictory IDs record a conflict. The explicit GET
 uses the settings/route resolver and requires that exact endpoint/fingerprint,
 without rotating keys. Missing legacy bindings cannot be guessed from a peer,
 model, timestamp or arbitrary request ID. Custom endpoints supplied only through
@@ -255,7 +258,8 @@ owners; real review task IDs still require review-operation custody. The final
 ownership recheck and monetary revision CAS cannot atomically fence a task
 restart in another process; that cross-process race remains.
 
-An exact price received before a socket failure settles money without proving
+An exact price received before a later read, close, rejection or cancellation
+error settles money without proving
 that the response completed. The existing `stream_incomplete` fact keeps Main's
 unknown-response policy, Presence's configured bounded transport-death retry,
 revoked-control no-resend and diagnostic response outcomes independent of the
