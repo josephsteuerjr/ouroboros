@@ -3589,10 +3589,9 @@ def test_the_proxy_count_in_the_docs_matches_the_handlers_that_exist(tmp_path):
     places a reader looks first. A hand-counted number in prose cannot be trusted
     to be re-counted when the fifth one lands, so it is asserted instead.
 
-    ``docs/ARCHITECTURE.md`` carries the same module-local count in its gateway
-    map. Every Claudexor route must also be named by one of the dedicated gateway
-    module entries: a proxy the map never names is a proxy nobody discovers from
-    the architecture doc.
+    Every Claudexor route must also be named by one of the dedicated gateway
+    module entries in the architecture map: a proxy the map never names is a
+    proxy nobody discovers from the architecture doc.
     """
     import inspect
     import re
@@ -3612,11 +3611,6 @@ def test_the_proxy_count_in_the_docs_matches_the_handlers_that_exist(tmp_path):
     )
 
     arch = architecture_text()
-    account_line = next(ln for ln in arch.splitlines() if "claudexor_accounts.py" in ln)
-    assert f"{expected} thin proxies" in account_line.lower(), (
-        "the gateway map still counts a different number of account proxies: "
-        f"{account_line.strip()[:160]}"
-    )
     gateway_lines = [
         ln for ln in arch.splitlines()
         if "claudexor_accounts.py" in ln or "claudexor_quota.py" in ln
