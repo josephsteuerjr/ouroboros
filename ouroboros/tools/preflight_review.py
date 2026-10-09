@@ -95,12 +95,12 @@ def _preflight_review_params() -> Dict[str, Any]:
 
 
 _PREFLIGHT_DESCRIPTION = (
-    "Optional early look before commit_reviewed: ONE enabled catalog row you name (a review-pool member or not) "
-    "reads the live worktree of the system repository, as review_change(subject=worktree, surface=preflight, "
-    "reviewers=[reviewer]), the same action commit_reviewed(preflight_reviewer=...) takes. It informs and never "
-    "gates; its surface=preflight record never answers the commit panel, and the same unchanged worktree returns "
-    "the settled record free. No tests run here (commit_reviewed runs them). deterministic_only=True with "
-    "source=worktree|index returns the free release-metadata diagnostics instead. Returns review_change's JSON."
+    "Optional early look by ONE named enabled catalog row, in the review pool or not. Reads the system "
+    "worktree via review_change(subject=worktree, surface=preflight, reviewers=[reviewer]), also used by "
+    "commit_reviewed(preflight_reviewer=...). Informational, never a gate or an answer for the commit panel; "
+    "unchanged worktree reuses its settled record free. No tests here; commit_reviewed runs them. "
+    "deterministic_only=True requires source=worktree|index and returns free release diagnostics instead. "
+    "Returns review_change's JSON."
 )
 
 _REVIEW_STATUS_DESCRIPTION = (

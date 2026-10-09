@@ -539,11 +539,11 @@ class OuroborosAgent:
         )
         if str(task.get("delegation_role") or "") == "subagent" and self._event_queue is not None and self._current_chat_id is not None:
             try:
+                role = str(task.get("role") or "").strip()
                 self._event_queue.put({
-                    "type": "send_message",
-                    "chat_id": self._current_chat_id,
+                    "type": "send_message", "chat_id": self._current_chat_id,
                     "role": "system", "system_type": "subagent_started",
-                    "text": f"▶️ Subagent {task.get('id')} running ({task.get('role') or 'researcher'}).",
+                    "text": f"▶️ Subagent {task.get('id')} running{' (' + role + ')' if role else ''}.",
                     "format": "markdown",
                     "is_progress": True,
                     "task_id": str(task.get("id") or ""),
