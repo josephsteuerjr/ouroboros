@@ -848,8 +848,7 @@ message's recipient, opening another work pane or manufacturing activity.
 ### List editors
 
 A list editor is any section where the owner adds and edits entries in place:
-the Available subagents roster, the Review lanes groups, MCP servers, custom
-keys.
+the Available subagents roster, MCP servers, custom keys.
 
 - A section-level add action acts from its group's header (§6). A list
   editor's new entry appears at the end of its own group, is scrolled into
@@ -1381,7 +1380,7 @@ widget's content belongs to its author.
 
 ## 6. Account group / row anatomy
 
-For a repeated identity row (a connected agent account, a reviewer slot,
+For a repeated identity row (a connected agent account, a subagent row,
 a server entry):
 
 1. **Classification chip** — neutral pair, `--type-meta`. Only where the row's
@@ -1428,14 +1427,12 @@ manual value labelled "set by you". Changing an account withdraws the previous
 account's metadata immediately, including during a failed or pending catalog
 read. Unknown limits stay unknown. Catalog updates keep the edited field and
 caret in place and never assign a model. `model_roles.js` and `model_roles.css`
-own the shared Settings/wizard editor; `reviewer_slots.css` supplies the same
-reviewer-row layout to both documents.
+own the shared Settings/wizard editor.
 
 A source is chosen, never spelled. Every surface that assigns a model — the
-Models roles, Available subagents, every review lane, the first-run wizard and
+Models roles, Available subagents (reviewers included), the first-run wizard and
 the quota-wait picker — offers one grouped source select with the same groups
-in the same order: configured subagents where references are allowed,
-Subscriptions · models, API keys (one entry per provider with a stored
+in the same order: Subscriptions · models, API keys (one entry per provider with a stored
 credential, then one disabled pointer to Accounts; a saved choice without a
 credential stays selectable as "(no key)"), Agents · sessions where a session
 is possible. The model chooser lists only the chosen source's catalog, so a
@@ -1515,10 +1512,10 @@ has migrated. Migrated today:
   menu/chooser chrome, used by both top-level documents and optional author pages)
 - `web/settings.css` (settings shell, model/effort cards, MCP cards)
 - `web/onboarding.css` (the whole first-run wizard)
-- `web/model_roles.css` and `web/reviewer_slots.css` (shared role editors)
+- `web/model_roles.css` (shared role editor)
 - `web/style.css` between the `design-system:migrated-begin` and
   `design-system:migrated-end` marker pairs (several — migrated surfaces are
-  not contiguous in the file): harness accounts, reviewer slots, the
+  not contiguous in the file): harness accounts, the
   Dashboard → Updates tab (status card, one action row, collapsed Recovery
   with a single restore list), and chat (typography, foreground and status
   colour; component geometry keeps its local literals per the viewport
