@@ -1,4 +1,11 @@
-"""Durable advisory/review ledger persisted in state/advisory_review.json."""
+"""Durable advisory/review ledger persisted in state/advisory_review.json.
+
+Compact atomic encoding retains the complete schema, raw evidence and legacy
+normalization without recursively copying dataclass payloads. Conditional saves
+still acquire the lock, strictly load and prepare the whole state; only an equal
+prepared payload may skip replacement. Lock acquisition failures keep the platform
+cause in ReviewStateLockError without changing timeout or stale-lock policy.
+"""
 
 from __future__ import annotations
 

@@ -502,7 +502,7 @@ class ClaudexorGateway:
             ) from exc
 
     def _problem(self, response: httpx.Response) -> ClaudexorUnavailable:
-        """Translate a ControlProblem body into a typed refusal."""
+        """Keep ControlProblem authority; nested lookup causes are diagnostics only."""
         code = f"http_{response.status_code}"
         message = response.text[:500]
         context: Dict[str, Any] = {}
