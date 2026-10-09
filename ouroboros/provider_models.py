@@ -688,14 +688,15 @@ def supports_vision(model_id: str, *, model_role: str = "",
     record (``vision_routing.route_image_input``). For claudexor routes the
     catalog entry's ``imageInput`` boolean is the ENGINE capability (model image
     modality AND a build that carries images): ``True`` → inline; a present
-    entry without the field is an engine that claims no image transport →
-    False (honest refusal, no guessing from modalities). An unavailable catalog
-    or an account/source mismatch leaves the fact unknown → None: image senders
-    preserve input then, and the actual call can start the engine and return
-    its normal typed refusal. A model's name is not evidence, so every other
-    case is None; our own lanes that cannot carry bytes (local, GigaChat) are
-    the send policy's transport fact, decided by lane, not a model fact.
-    Metadata discovery never starts an engine or buys a model generation.
+    entry without the field (or a catalog with no row for the model at all) is
+    an engine that claims no image transport → False (honest refusal, no
+    guessing from modalities). An unavailable catalog or an account/source
+    mismatch leaves the fact unknown → None: image senders preserve input then,
+    and the actual call can start the engine and return its normal typed
+    refusal. A model's name is not evidence, so every other case is None; our
+    own lanes that cannot carry bytes (local, GigaChat) are the send policy's
+    transport fact, decided by lane, not a model fact. Metadata discovery never
+    starts an engine or buys a model generation.
     """
     if provider_for_model(model_id) == "claudexor":
         from ouroboros.gateways.claudexor import ClaudexorUnavailable
