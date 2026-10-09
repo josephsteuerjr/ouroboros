@@ -588,14 +588,14 @@ def _vision_registry(tmp_path, monkeypatch):
     return registry, uploads
 
 
-def test_view_image_missing_file_is_a_typed_error_at_the_registry(tmp_path, monkeypatch):
+def test_view_image_missing_file_is_a_typed_warning_at_the_registry(tmp_path, monkeypatch):
+    """#1074: an admitted, absent image is a discovery miss, not a failed call."""
     registry, uploads = _vision_registry(tmp_path, monkeypatch)
 
     result = registry.execute_result("view_image", {"path": str(uploads / "missing.png")})
 
-    assert result.status == "error"
-    assert result.code == "TOOL_ARG_ERROR"
-    assert "not found" in result.text.lower()
+    assert (result.status, result.code) == ("ok", "LEGACY_WARNING")
+    assert result.text.startswith("⚠️ FILE_NOT_FOUND: image file not found: ")
     assert registry._ctx.messages == []
 
 
@@ -613,8 +613,7 @@ def test_vlm_query_missing_file_is_typed_and_never_builds_a_client(tmp_path, mon
         "vlm_query", {"prompt": "what is this?", "file_path": str(uploads / "missing.png")},
     )
 
-    assert result.status == "error"
-    assert result.code == "TOOL_ARG_ERROR"
+    assert (result.status, result.code) == ("ok", "LEGACY_WARNING")
     assert "not found" in result.text.lower()
     assert registry._ctx.messages == []
 
