@@ -60,8 +60,10 @@ Every path-addressed `/api/files/*` operation resolves its requested `path` and 
 | POST | `/api/settings` | `gateway.settings.api_settings_post` |
 | POST | `/api/settings/secret` | `gateway.settings_secrets.api_settings_secret` |
 | GET | `/api/review-pool` | `gateway.settings.api_review_pool` |
-| GET | `/api/claudexor/status` | `gateway.claudexor_accounts.api_claudexor_status` (daemon adds nullable `last_exit` and `memory`; saved host exit observation plus a read of the already-running engine, never a wake) |
+| GET | `/api/claudexor/status` | `gateway.claudexor_accounts.api_claudexor_status` (daemon adds nullable `last_exit` and `memory`; saved host exit observation plus a read of the already-running engine, never a wake; `resource_capabilities_read` distinguishes an unread operations catalog from unsupported resources) |
 | POST | `/api/claudexor/quota/refresh` | `gateway.claudexor_quota.api_claudexor_quota_refresh` |
+| POST | `/api/claudexor/account-resets` | `gateway.claudexor_quota.api_claudexor_account_reset` (exact target/offer/grant and original `Idempotency-Key`) |
+| GET | `/api/claudexor/account-resets/{operation_id}` | `gateway.claudexor_quota.api_claudexor_account_reset` (receipt inspection) |
 | POST | `/api/claudexor/wake` | `gateway.claudexor_accounts.api_claudexor_wake` |
 | POST | `/api/claudexor/login` | `gateway.claudexor_accounts.api_claudexor_login` |
 | GET | `/api/claudexor/login/{job_id}` | `gateway.claudexor_accounts.api_claudexor_login_job` |

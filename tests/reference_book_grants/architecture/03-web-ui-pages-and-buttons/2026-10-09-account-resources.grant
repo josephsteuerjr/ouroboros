@@ -1,0 +1,2 @@
+2928
+Describe the new account-resource disclosure and explicit reset flow: independent facet freshness, capability negotiation, same-key recovery, outcome/readback distinction and shared state ownership. Existing account and login semantics remain documented.

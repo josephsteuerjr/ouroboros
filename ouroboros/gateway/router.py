@@ -97,7 +97,7 @@ def collect_routes(
         api_claudexor_status,
         api_claudexor_wake,
     )
-    from ouroboros.gateway.claudexor_quota import api_claudexor_quota_refresh
+    from ouroboros.gateway.claudexor_quota import api_claudexor_account_reset, api_claudexor_quota_refresh
     from ouroboros.gateway.onboarding import (
         api_onboarding_complete,
         api_onboarding_subagents_preview,
@@ -304,6 +304,8 @@ def collect_routes(
         # own account surface; zero auth logic on this side.
         Route("/api/review-pool", endpoint=api_review_pool, methods=["GET"]),
         Route("/api/claudexor/status", endpoint=api_claudexor_status, methods=["GET"]),
+        Route("/api/claudexor/account-resets", endpoint=api_claudexor_account_reset, methods=["POST"]),
+        Route("/api/claudexor/account-resets/{operation_id}", endpoint=api_claudexor_account_reset, methods=["GET"]),
         Route(
             "/api/claudexor/quota/refresh",
             endpoint=api_claudexor_quota_refresh,

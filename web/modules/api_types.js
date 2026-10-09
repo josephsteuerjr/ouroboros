@@ -1221,6 +1221,9 @@
  * @property {Object=} profiles
  * @property {Array<Object>=} quota
  * @property {Array<Object>=} quota_absences
+ * @property {Array<Object>=} resources Engine resource facets retain decimal strings, units and independent observation times.
+ * @property {Object<string, boolean>=} resource_capabilities Catalog-negotiated read, refresh, reset and inspect_reset operations.
+ * @property {ClaudexorReadState=} resource_capabilities_read Operations-catalog evidence, independent of reads.catalog (agent capabilities).
  * @property {ClaudexorStatusReads=} reads
  * @property {boolean=} unified_accounts
  * @property {SubagentLastDelegation=} subagent_last_delegation
