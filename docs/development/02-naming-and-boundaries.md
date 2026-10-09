@@ -106,9 +106,10 @@ and competes with the task for context; only the safety supervisor has its own
 prompt, and a consciousness wake-up gets SYSTEM.md plus
 `prompts/CONSCIOUSNESS.md` as its USER message, never a second system prompt. It
 carries identity and tone, the decision loop, cross-tool policy, prohibitions and
-safety invariants stated once, and the memory contract's resident rule: a note's
-authored summary is its resident face in the knowledge index, and an absent
-carrier renders as a visible gap, never silence. It never carries how a tool
+safety invariants stated once, and the memory contract's resident rule: active
+notes carry authored summaries in the index; archived sources remain available
+by address and explicit listing (ARCHITECTURE §6, "Durable memory and project
+focus"). An absent carrier renders as a visible gap, never silence. It never carries how a tool
 works: parameters, recipes, typed outcomes and "when to choose it" belong to the
 `get_tools()` schema every profile receives in full each round (delegated,
 repair, credential and contract filters narrow it; a route's schema ceiling leaves
