@@ -69,7 +69,9 @@ test('the empty-Main greeting and the reconnect notice are chrome: a read over t
     const doc = { byId: new Map(), createElement: (tag) => new ElementStub(tag, doc) };
     const messages = new ElementStub('div', doc);
     messages.isConnected = true;
-    const controls = createHistoryControls(messages);
+    const chrome = new ElementStub('div', doc);
+    chrome.isConnected = true;
+    const controls = createHistoryControls(messages, chrome);
     const node = (className) => { const element = doc.createElement('div'); element.className = className; return element; };
     messages.appendChild(node('chat-bubble assistant typing-bubble'));
     messages.appendChild(node('chat-empty-welcome'));
@@ -78,9 +80,10 @@ test('the empty-Main greeting and the reconnect notice are chrome: a read over t
     messages.appendChild(notice);
     assert.equal(feedIsEmpty(messages), true);
     assert.equal(controls.beginRecent(), true);
-    controls.render({ initialized: true });
-    assert.equal(messages.querySelector('.chat-load-older').querySelector('.chat-load-older-note').textContent,
-        'Loading saved history…');
+    controls.render({ initialized: false }, { gaps: true });
+    assert.equal(chrome.children.length, 0, 'unanswered first read is loading, not a known gap');
+    assert.equal(controls.olderButton.textContent, 'Loading saved history…');
+    assert.equal(messages.querySelector('.chat-load-older').querySelector('.chat-load-older-note').hidden, true);
     controls.endRecent(new Error('offline'));
     assert.equal(controls.recentFailed(), true);
     controls.endRecent();
