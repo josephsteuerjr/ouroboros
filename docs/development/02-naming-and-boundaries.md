@@ -343,7 +343,7 @@ the contract green (ARCHITECTURE §8 "CI topology").
 
 Adding or changing a provider updates one coherent route contract: credential and
 readiness detection with exact model-id migration; Main/Light/Fallback and
-reviewer-slot defaults that never overwrite explicit owner choices; canonical
+factory review-pool defaults that never overwrite explicit owner choices; canonical
 tool/reasoning/image/cache intent at `llm.py`, with wire projection and exact-route
 recovery in the small transport leaves; nullable pricing and truthful capability
 omissions; review and scope routing with sourced context-window evidence for send
