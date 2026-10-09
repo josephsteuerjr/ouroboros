@@ -90,11 +90,7 @@ _ATTEMPT_RECORD = "attempt.yaml"
 
 
 class ClaudexorUnavailable(RuntimeError):
-    """Typed lane refusal: the delegated route cannot run right now.
-
-    Carries the machine-readable ``code`` so callers classify instead of matching
-    prose. Never raised for an ordinary in-run failure — only for "this transport
-    is not usable".
+    """Typed engine or transport failure; callers classify by ``code``, not prose.
 
     ``required_actions`` retains the daemon's TOP-LEVEL ``ControlProblem.requiredActions``
     string list when the refusal carried one (e.g. the reconcile 409's
@@ -102,8 +98,7 @@ class ClaudexorUnavailable(RuntimeError):
     a preserved fact for the typed error seam, not a client action framework.
     """
 
-    # What the engine REPORTED about a failed run ("" = nothing reported); set only by
-    # ``run_failure_error``. An opaque fact: carried and shown, never branched on.
+    # What the engine reported about a failed run or request; diagnostic, never policy.
     reported_cause = ""
     retry_after = ""  # The received HTTP Retry-After header, never a local backoff.
 
@@ -507,7 +502,7 @@ class ClaudexorGateway:
             ) from exc
 
     def _problem(self, response: httpx.Response) -> ClaudexorUnavailable:
-        """Translate a ControlProblem body into a typed refusal."""
+        """Keep ControlProblem authority; nested lookup causes are diagnostics only."""
         code = f"http_{response.status_code}"
         message = response.text[:500]
         context: Dict[str, Any] = {}
@@ -547,6 +542,9 @@ class ClaudexorGateway:
                 or ClaudexorUnavailable(code, message, status_code=response.status_code,
                                         required_actions=required_actions))
         error.retry_after = response.headers.get("Retry-After", "")
+        if isinstance(context.get("cause"), dict):
+            facts = {key: context[key] for key in ("stage", "cause", "preflight") if key in context}
+            error.reported_cause = run_failure_cause({"safeMessage": json.dumps(facts, ensure_ascii=False)})
         return error
 
     # -- operations ------------------------------------------------------------
