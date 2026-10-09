@@ -205,17 +205,17 @@ def test_architecture_component_map_covers_every_live_runtime_module():
     )
 
 
-def test_architecture_map_row_of_the_review_subject_names_its_nodes():
-    """The component-map row of ``tools/review_subject.py`` must name the subject
-    operation's nodes, not only the managed resolution delta it began as: a reader
-    sent to the map finds where a subject is frozen, materialized and identified."""
+def test_architecture_subject_map_row_resolves_its_owner_section():
+    """The map preserves the module and a resolvable owner section, not a fixed
+    inventory of private helpers inside the registry row."""
+    from ouroboros.reference_books import load_reference_book, read_book_section
+
     arch = _read("docs/ARCHITECTURE.md")
     rows = [line for line in arch.splitlines() if line.strip().startswith("review_subject.py ")]
     assert len(rows) == 1, rows
-    for node in ("ReviewSubjectSpec", "freeze_subject", "FrozenSubject", "is_gate_subject", "isolated_checkout",
-                 "checkout_token", "review_reuse_key", "review_round_sha", "review_retry_key", "reuse_or_none",
-                 "Subject operation"):
-        assert node in rows[0], node
+    assert "§6 Subject operation" in rows[0]
+    section = read_book_section(load_reference_book(REPO, "architecture"), "Subject operation")
+    assert section.sources[0].path == "docs/architecture/06-agent-core.md"
 
 
 def _change_review_items() -> dict:
