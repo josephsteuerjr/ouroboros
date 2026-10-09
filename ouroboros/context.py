@@ -607,17 +607,16 @@ def build_knowledge_sections(
     # One mind keeps its authored common orientation across rooms. The generated
     # inventory is navigation, not a substitute for that understanding; a
     # project's shelf adds focus without hiding the common corpus.
-    from ouroboros.knowledge import (INDEX_FILE, OVERVIEW_TOPIC, inventory_knowledge,
-                                     read_knowledge_note, render_knowledge_index, resolve_knowledge_address)
+    from ouroboros.knowledge import (OVERVIEW_TOPIC, knowledge_index_view,
+                                     read_knowledge_note, resolve_knowledge_address)
 
     pid = str(project_id or "").strip()
     global_address = resolve_knowledge_address(env.drive_path("memory").parent, OVERVIEW_TOPIC, "global")
-    authored_overview = False
+    overview = None
     try:
         overview = read_knowledge_note(global_address)
         overview_text = overview.source.text_at(overview.source.body_span) if overview.source else overview.text
         if overview_text.strip():
-            authored_overview = overview.source is not None
             sections.append(f"## Shared understanding\n\nSource: knowledge_read(topic='{OVERVIEW_TOPIC}', scope='global').\n\n" + overview_text)
         else:
             sections.append(_SHARED_UNDERSTANDING_GAP)  # present but empty is still unauthored
@@ -625,29 +624,29 @@ def build_knowledge_sections(
         sections.append(_SHARED_UNDERSTANDING_GAP)
     except (OSError, UnicodeDecodeError) as exc:
         sections.append(f"Shared understanding source unavailable: knowledge_read(topic='{OVERVIEW_TOPIC}', scope='global'). {type(exc).__name__}.")
-    knowledge_indexes = [(global_address.shelf / INDEX_FILE,
+    knowledge_indexes = [(global_address,
                           "## Knowledge base\n\nGlobal navigation: knowledge_list(scope='global'); read linked topics with knowledge_read(topic=..., scope='global').",
                           "knowledge index")]
     if pid:
         from ouroboros.project_facts import project_knowledge_dir
 
-        knowledge_indexes.append((project_knowledge_dir(pid) / INDEX_FILE,
+        project_address = resolve_knowledge_address(project_knowledge_dir(pid).parents[2], "topic", f"project:{pid}")
+        knowledge_indexes.append((project_address,
                                   f"## Project knowledge ({pid})", "project knowledge index"))
-    if include_pattern_body:
-        knowledge_indexes.append((env.drive_path("memory/knowledge/patterns.md"), pattern_header, "patterns register"))
-    for path, header, label in knowledge_indexes:
-        # The authored summary is the resident face of a note, so the index carries it
-        # whether or not a common orientation exists; the fresh inventory render also
-        # covers the case where the index file is absent (a note landed before any
-        # rebuild); an existing stale index is still read as written.
-        is_global_index = path == global_address.shelf / INDEX_FILE
-        text = (render_knowledge_index(inventory_knowledge(global_address), include_summaries=True)
-                if is_global_index and (authored_overview or not path.exists()) else safe_read(path))
-        if not text.strip():
-            continue
+    for address, header, label in knowledge_indexes:
+        # Every shelf and overview branch projects the current source state, even
+        # when a previous writer could not publish its generated index.
+        try:
+            text = knowledge_index_view(address, overview=overview)
+        except (OSError, UnicodeDecodeError) as exc:
+            text = f"Knowledge navigation unavailable: {type(exc).__name__}; knowledge_list(scope={address.scope!r})."
         if warn_large and len(text) > _LARGE_CONTEXT_SECTION_CHARS:
             log.warning("context: %s is large (%d chars)", label, len(text))
         sections.append(f"{header}\n\n{text}")
+    if include_pattern_body:
+        text = safe_read(env.drive_path("memory/knowledge/patterns.md"))
+        if text.strip():
+            sections.append(f"{pattern_header}\n\n{text}")
     if not include_pattern_body:
         sections.append("Pattern Register details: knowledge_read(topic='patterns', scope='global').")
     if pid:
