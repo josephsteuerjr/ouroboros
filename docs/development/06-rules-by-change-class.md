@@ -299,6 +299,13 @@ and 20 (`delegated_transport`), both critical. The imperatives:
   the UI — final admission is the engine's. Substrate and per-skill lifecycle
   facts are VISIBILITY ONLY (acceptance judges quality, never the route), and
   an unreadable custody log reads `evidence_read_failed`, never proven-empty.
+- Vendor-program maintenance stays engine-owned and capability-driven (§6 Vendor program maintenance).
+  Preserve selected version versus bundled baseline, request identity after lost contact,
+  partial-effect and cancellation facts. UI and native tools share the host service;
+  neither assumes a harness-specific installer nor couples updates to task replay.
+  Verify authority in both directions and desktop/mobile operation rejoin
+  (`test_harness_maintenance_host`, `test_harness_maintenance_transport`,
+  `test_harness_maintenance_browser`).
 - The coordination poll is READ-ONLY of task state (it observes, never
   resolves or latches, so a poll cannot change its own next answer) and writes
   nothing beyond the canonical usage-ledger reader's bounded maintenance —

@@ -45,11 +45,30 @@ def model_catalog(source: str, credential_profile_id: str | None = None, *,
     """Metadata-only transport; the capability evidence owner interprets the envelope."""
     gateway = read_owned_gateway()
     try:
+        started = time.monotonic()
         hint = {"requested_model": requested_model} if requested_model is not None else {}
+        if requested_model is not None and operation_query_supported(
+                gateway.operations(**({"timeout_sec": timeout_sec} if timeout_sec is not None else {})),
+                method="GET", path="/v2/model-sources/:id/models", name="includeAdmission", value="true"):
+            hint["include_admission"] = True
+        if timeout_sec is not None:
+            timeout_sec = max(0.000001, timeout_sec - (time.monotonic() - started))
         return gateway.list_source_models(source, credential_profile_id, **hint,
                                           **({"timeout_sec": timeout_sec} if timeout_sec is not None else {}))
     finally:
         gateway.close()
+
+
+def catalog_admits_model(catalog: dict, model: str) -> bool:
+    """An exact engine admission permits an attempt, without inventing a model row.
+
+    Older engines retain membership semantics. Source/account/freshness binding
+    belongs to the caller; this is neither entitlement nor generation evidence.
+    """
+    admission = catalog.get("admission")
+    return (any(isinstance(row, dict) and row.get("id") == model for row in catalog.get("models", []))
+            or (isinstance(admission, dict) and admission.get("requestedModel") == model
+                and admission.get("inventoryAbsence") == "advisory"))
 
 
 def model_sources(*, processing_view: bool = False) -> dict:

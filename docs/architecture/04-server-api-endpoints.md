@@ -63,6 +63,10 @@ Every path-addressed `/api/files/*` operation resolves its requested `path` and 
 | GET | `/api/claudexor/status` | `gateway.claudexor_accounts.api_claudexor_status` (daemon adds nullable `last_exit` and `memory`; saved host exit observation plus a read of the already-running engine, never a wake) |
 | POST | `/api/claudexor/quota/refresh` | `gateway.claudexor_quota.api_claudexor_quota_refresh` |
 | POST | `/api/claudexor/wake` | `gateway.claudexor_accounts.api_claudexor_wake` |
+| GET | `/api/claudexor/maintenance/harnesses` | `gateway.harness_maintenance.api_harness_maintenance_inventory` — passive engine inspection, optional fresh/latest check |
+| POST | `/api/claudexor/maintenance/operations` | `gateway.harness_maintenance.api_harness_maintenance_create` — stable Idempotency-Key, 202 engine operation |
+| GET | `/api/claudexor/maintenance/operations/{operation_id}` | `gateway.harness_maintenance.api_harness_maintenance_operation` — retained engine facts |
+| POST | `/api/claudexor/maintenance/operations/{operation_id}/cancel` | `gateway.harness_maintenance.api_harness_maintenance_operation` — cancellation acknowledgement is not confirmed termination |
 | POST | `/api/claudexor/login` | `gateway.claudexor_accounts.api_claudexor_login` |
 | GET | `/api/claudexor/login/{job_id}` | `gateway.claudexor_accounts.api_claudexor_login_job` |
 | DELETE | `/api/claudexor/login/{job_id}` | `gateway.claudexor_accounts.api_claudexor_login_job` |
