@@ -83,6 +83,26 @@ def test_note_states_the_rule_when_owed_and_one_quiet_line_when_paid(tmp_path):
     assert book_balance_note(repo, ["notes.md"]) == ""
 
 
+@pytest.mark.serial
+def test_note_never_calls_an_unmeasured_book_paid(tmp_path):
+    repo = tmp_path / "fresh"
+    repo.mkdir()
+    (repo / "notes.md").write_text("notes\n", encoding="utf-8")
+    _git(repo, "init", "-q")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "no book yet")
+    for path, text in {BOOK_ENTRYPOINTS["architecture"]: ENTRY, CHAPTER: BODY}.items():
+        (repo / path).parent.mkdir(parents=True, exist_ok=True)
+        (repo / path).write_text(text, encoding="utf-8", newline="\n")
+    unmeasured = book_balance_note(repo, [CHAPTER])
+    assert "n/a vs HEAD" in unmeasured and "nothing owed" not in unmeasured
+    missing = ENTRY + "- [Two](architecture/02-missing.md)\n"  # a chapter list naming an absent file
+    (repo / BOOK_ENTRYPOINTS["architecture"]).write_text(missing, encoding="utf-8", newline="\n")
+    assert "balance unavailable" in book_balance_note(repo, [CHAPTER])
+    measured = _book_repo(tmp_path / "measured")
+    assert "nothing owed" in book_balance_note(measured, [CHAPTER])
+
+
 def _registry(tmp_path, *, external: bool):
     from ouroboros.tools.registry import ToolContext, ToolRegistry
 
@@ -152,6 +172,28 @@ def test_plan_task_carries_the_book_fact_for_a_system_repo_plan_only(harness):
     assert "FACT: affected_paths" not in _call(harness.make_ctx(task_id="task-3"), spec=existing)
     workspace = {**DECK_SPEC, "affected_paths": [str(harness.workspace / "docs" / "architecture" / "01-x.md")]}
     assert "FACT: affected_paths" not in _call(harness.make_ctx(task_id="task-4"), spec=workspace)
+
+
+def test_plan_task_measures_a_bound_body_candidate(harness):
+    import shutil
+
+    harness.install({"s1": CLEAN, "s2": CLEAN, "s3": CLEAN})
+    candidate = harness.system.parent / "candidate"
+    shutil.copytree(harness.system, candidate)
+
+    def bound(task_id):
+        ctx = harness.make_ctx(active_workspace=False, task_id=task_id)
+        ctx.serving_repo_dir = harness.system
+        ctx.repo_dir = ctx.system_repo_dir = candidate
+        ctx.task_metadata["body_candidate"] = {"path": str(candidate)}
+        return ctx
+
+    chapter = {**DECK_SPEC, "affected_paths": ["docs/architecture/01-one.md"]}
+    assert "FACT: affected_paths name book sources of docs/ARCHITECTURE.md" in _call(bound("c-1"), spec=chapter)
+    module = {**DECK_SPEC, "affected_paths": ["supervisor/brand_new.py"]}
+    assert "new module(s) supervisor/brand_new.py" in _call(bound("c-2"), spec=module)
+    existing = {**DECK_SPEC, "affected_paths": ["ouroboros/loop.py"]}
+    assert "FACT: affected_paths" not in _call(bound("c-3"), spec=existing)
 
 
 @pytest.mark.serial

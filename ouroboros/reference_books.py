@@ -407,13 +407,17 @@ def book_balance_note(root: Path, paths: Iterable[str]) -> str:
     Callers decide that ``root`` is the body (the system repository or its bound candidate):
     a user's project with a ``docs/architecture`` folder never receives this note.
     """
-    balances = book_balances(root, [path for path in paths if book_path_role(path)])
-    if not balances:
+    touched = [path for path in paths if book_path_role(path)]
+    if not touched:
         return ""
+    balances = book_balances(root, touched)
+    if not balances:
+        return "ℹ️ Reference book: balance unavailable (its chapter list does not parse here)."
     lines = [render_book_balance(balance) for balance in balances]
-    if not any(balance.owed for balance in balances):
-        return "ℹ️ Reference book: " + "; ".join(lines) + "; nothing owed."
-    return "ℹ️ Reference books:\n" + "\n".join(lines) + "\n" + BOOK_GROWTH_RULE
+    if any(balance.owed for balance in balances):
+        return "ℹ️ Reference books:\n" + "\n".join(lines) + "\n" + BOOK_GROWTH_RULE
+    measured = all(balance.vs_head is not None or balance.vs_upstream is not None for balance in balances)
+    return "ℹ️ Reference book: " + "; ".join(lines) + ("; nothing owed." if measured else ".")
 
 
 def book_plan_fact(root: Path, paths: Iterable[str]) -> str:
