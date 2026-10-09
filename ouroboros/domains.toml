@@ -637,6 +637,8 @@ D20 = "Presence"
 "ouroboros/verified_download.py" = "D18"
 "ouroboros/version.py" = "D10"
 "ouroboros/vision_routing.py" = "D02"
+"ouroboros/vision_image_limits.py" = "D02"
+"ouroboros/image_preparation.py" = "D02"
 "ouroboros/workspace_admission.py" = "D17"
 "ouroboros/workspace_executor.py" = "D17"
 "ouroboros/workspace_patch_rules.py" = "D17"
@@ -937,6 +939,7 @@ lazy_only = [
   "D01->D08",
   "D01->D10",
   "D01->D11",
+  "D02->D05",
   "D02->D11",
   "D03->D05",
   "D03->D06",
