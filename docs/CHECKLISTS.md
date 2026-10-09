@@ -389,7 +389,7 @@ Ownership` section is delivered beside them.
   "Invariant: Projection over replay (hot readers of growing stores)" and
   "Invariant: UI resources carry a disposer" — check against those, do not
   re-derive them here; a GET handler performing new steady-state durable writes
-  outside the two exceptions named there is a finding. For an embedded or
+  outside that passive-read contract is a finding. For an embedded or
   framed UI surface, also use DEVELOPMENT.md "Invariant: Embedded surfaces
   declare geometry and refresh semantics" for host geometry/overflow, teardown,
   retry/error, and real-consumer visual evidence.

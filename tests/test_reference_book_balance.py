@@ -234,6 +234,42 @@ def test_note_never_calls_an_unmeasured_book_paid(tmp_path):
     assert "nothing owed" in book_balance_note(measured, [CHAPTER])
 
 
+@pytest.mark.serial
+@pytest.mark.parametrize("missing_book", ["architecture", "development"])
+@pytest.mark.parametrize("growth", ["", "Added.\n"])
+def test_note_discloses_an_unavailable_book_beside_a_measured_book(tmp_path, missing_book, growth):
+    repo = _book_repo(tmp_path)
+    development = "docs/development/01-one.md"
+    (repo / development).parent.mkdir(parents=True)
+    (repo / development).write_text(BODY, encoding="utf-8")
+    (repo / BOOK_ENTRYPOINTS["development"]).write_text(
+        ENTRY.replace("Architecture", "Development").replace("architecture/", "development/"), encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "both books")
+    _git(repo, "update-ref", "refs/remotes/canonical/ouroboros", "HEAD")
+    paths = [CHAPTER, development]
+    missing = CHAPTER if missing_book == "architecture" else development
+    readable = development if missing_book == "architecture" else CHAPTER
+    (repo / readable).write_text(BODY + growth, encoding="utf-8")
+    complete = book_balance_note(repo, paths)
+    readable_only = book_balance_note(repo, [readable])
+    assert "unavailable" not in complete
+    assert ("nothing owed" in complete) is (not growth)
+    assert (BOOK_GROWTH_RULE in complete) is bool(growth)
+
+    (repo / missing).unlink()
+    partial = book_balance_note(repo, paths)
+    assert f"{missing_book.title()} book balance unavailable" in partial
+    assert render_book_balance(book_balances(repo, [readable])[0]) in partial
+    assert "nothing owed" not in partial
+    assert (BOOK_GROWTH_RULE in partial) is bool(growth)
+    assert book_balance_note(repo, [readable]) == readable_only
+    assert book_balance_note(repo, ["notes.md"]) == ""
+
+    (repo / missing).write_text(BODY, encoding="utf-8")
+    assert book_balance_note(repo, paths) == complete
+
+
 def _registry(tmp_path, *, external: bool):
     from ouroboros.tools.registry import ToolContext, ToolRegistry
 

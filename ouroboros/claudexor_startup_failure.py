@@ -23,11 +23,10 @@ from text):
   The durable shape is an engine-emitted typed startup receipt (Claudexor
   #300); when it lands, the string half of this module retires.
 
-``heap_exhausted`` is only reported here, never prevented: the spawn
-(``OwnedClaudexorDaemon._spawn``) sets no heap size and derives none from host
-RAM. The daemon inherits the server's environment, so ``NODE_OPTIONS`` (for
-example ``--max-old-space-size=8192``) reaches it unchanged; that passthrough is
-the operator's escape hatch, not a product mechanism.
+``heap_exhausted`` is diagnostic; this module derives no ceiling from host RAM.
+Managed launch applies the engine's heap recommendation through
+``ClaudexorRuntimeManager._daemon_command``. The daemon inherits ``NODE_OPTIONS``
+unchanged, and an explicit heap option there overrides the recommendation.
 """
 
 from __future__ import annotations

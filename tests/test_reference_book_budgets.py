@@ -10,8 +10,8 @@ reports the same balance as a fact (BIBLE P3 c5). The workflow sets ``OURO_BOOK_
 ``block`` for the official repository's owner/member/collaborator pull requests and pushes to
 ``ouroboros``, ``warn`` for outside contributors and any fork's own CI. ``approved`` requires
 the owner's ``book-growth`` label; pushes bind it to the exact landed PR
-(``scripts/book_growth_mode.py``). Unset means ``block``, so an
-operator's explicit local run of the lane gets the hard answer.
+(``scripts/book_growth_mode.py``). Unset mode means ``block`` when
+``OURO_SIZE_RATCHET_BASE_REF`` resolves; without a base the book comparison skips.
 """
 from __future__ import annotations
 

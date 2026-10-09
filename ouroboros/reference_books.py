@@ -298,8 +298,9 @@ def read_book_section(book: ReferenceBook, title: str) -> BookView:
 # only surface that refuses a grown book; every local surface states the same fact.
 
 BOOK_GROWTH_RULE = (
-    "The official line accepts a change only when each book it touches ends no larger than at "
-    "its base; text a change adds is paid by shortening the same book. Local commits are not blocked."
+    "Official CI requires each touched book to end no larger than at its base; text a change "
+    "adds is paid by shortening the same book. The repository owner's book-growth label can "
+    "approve an exception. Local commits are not blocked."
 )
 
 
@@ -447,12 +448,15 @@ def book_balance_note(root: Path, paths: Iterable[str]) -> str:
     if not touched:
         return ""
     balances = book_balances(root, touched)
-    if not balances:
-        return "ℹ️ Reference book: balance unavailable (its chapter list does not parse here)."
-    lines = [render_book_balance(balance) for balance in balances]
+    wanted = {book_entrypoint_for(path) for path in touched}
+    available = {balance.book_id for balance in balances}
+    unavailable = [f"{book_id.title()} book balance unavailable"
+                   for book_id, entry in BOOK_ENTRYPOINTS.items()
+                   if entry in wanted and book_id not in available]
+    lines = [render_book_balance(balance) for balance in balances] + unavailable
     if any(balance.owed for balance in balances):
         return "ℹ️ Reference books:\n" + "\n".join(lines) + "\n" + BOOK_GROWTH_RULE
-    measured = all(balance.vs_upstream is not None for balance in balances)
+    measured = not unavailable and all(balance.vs_upstream is not None for balance in balances)
     return "ℹ️ Reference book: " + "; ".join(lines) + ("; nothing owed." if measured else ".")
 
 

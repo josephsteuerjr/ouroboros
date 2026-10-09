@@ -13,7 +13,7 @@ physical capture teaches ``state/request_wire_compatibility.json`` (entries expi
 14 days); unsettled attempts never teach. A returned response discloses
 ``usage.request_wire`` after ``validate_wire_attempt_identity`` even when monetary
 settlement failed; ``request_wire_history`` is a bounded, ordered disclosure, while
-``state/usage_attempts.jsonl`` owns money.
+``usage_store.py`` / ``state/usage.sqlite`` owns money.
 """
 
 from __future__ import annotations

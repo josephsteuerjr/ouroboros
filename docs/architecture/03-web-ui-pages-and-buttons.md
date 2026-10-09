@@ -21,6 +21,7 @@ Primary navigation exposes Chat (Main), a collapsible Projects group, Files, Ski
 Shared primitives keep pages from acquiring competing contracts: no page reimplements supervisor, review, marketplace, extension or provider semantics.
 
 - `web/ui.css` ← shared values and field/button/status/popup classes of both first-party documents; `style.css` keeps shell composition (DESIGN §8).
+- `theme_palette.js` ← translates `--chart-*` tokens into mounted Chart options because canvas cannot inherit CSS; updates preserve data and caller-authored option groups.
 - `page_header.js` / `page_icons.js` ← page headers, tab strips (`bindTabStrip`), `renderSegmentedField` (the one segmented single-select, writing `--segment-count`) and navigation icons; `settings_controls.bindEffortSegments` keeps an empty (inherit) choice as a real value.
 - `ui_interactions.js` ← `bindDialogFocus`, `bindMenu`, `bindPopoverPosition`, `bindEnterSubmit`; every binding returns teardown.
 - `scroll_fade.js` ← `bindScrollFade`: edge attributes from actually hidden content.
