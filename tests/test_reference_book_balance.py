@@ -105,7 +105,7 @@ def test_published_feature_keeps_contribution_growth(tmp_path, remote, url):
 def test_linked_body_candidate_without_upstream_keeps_committed_growth(tmp_path):
     serving = _book_repo(tmp_path / "serving")
     base = _git(serving, "rev-parse", "HEAD")
-    (serving / CHAPTER).write_text(BODY + "Inherited growth.\n", encoding="utf-8")
+    (serving / CHAPTER).write_text(BODY + "Inherited growth.\n", encoding="utf-8", newline="\n")
     _git(serving, "commit", "-qam", "serving growth")
     candidate = tmp_path / "candidate"
     _git(serving, "worktree", "add", "-qb", "candidate/task", str(candidate), "HEAD")
@@ -136,7 +136,7 @@ def test_unknown_contribution_never_means_paid_even_with_measured_head(tmp_path,
                 _git(repo, "update-ref", "HEAD", head)
             _git(repo, "update-ref", "refs/remotes/managed/ouroboros", base)
     for text in (BODY, BODY.replace(" and long enough to shorten", ""), BODY + "Added.\n"):
-        (repo / CHAPTER).write_text(text, encoding="utf-8")
+        (repo / CHAPTER).write_text(text, encoding="utf-8", newline="\n")
         (balance,) = book_balances(repo, [CHAPTER])
         assert balance.vs_head == len(text.encode()) - len(BODY.encode())
         assert balance.vs_upstream is None
@@ -148,10 +148,10 @@ def test_unknown_contribution_never_means_paid_even_with_measured_head(tmp_path,
 @pytest.mark.parametrize("suffix", ["", "Short.\n"])
 def test_committed_growth_can_be_paid_in_the_worktree(tmp_path, suffix):
     repo = _book_repo(tmp_path)
-    (repo / CHAPTER).write_text(BODY + "Committed growth.\n", encoding="utf-8")
+    (repo / CHAPTER).write_text(BODY + "Committed growth.\n", encoding="utf-8", newline="\n")
     _git(repo, "commit", "-qam", "growth")
     text = BODY if not suffix else "# One\n\nThe first chapter.\n\n" + suffix
-    (repo / CHAPTER).write_text(text, encoding="utf-8")
+    (repo / CHAPTER).write_text(text, encoding="utf-8", newline="\n")
     (balance,) = book_balances(repo, [CHAPTER])
     assert balance.vs_head < 0 and balance.vs_upstream <= 0 and balance.owed == 0
     assert "nothing owed" in book_balance_note(repo, [CHAPTER])
@@ -241,16 +241,17 @@ def test_note_discloses_an_unavailable_book_beside_a_measured_book(tmp_path, mis
     repo = _book_repo(tmp_path)
     development = "docs/development/01-one.md"
     (repo / development).parent.mkdir(parents=True)
-    (repo / development).write_text(BODY, encoding="utf-8")
+    (repo / development).write_text(BODY, encoding="utf-8", newline="\n")
     (repo / BOOK_ENTRYPOINTS["development"]).write_text(
-        ENTRY.replace("Architecture", "Development").replace("architecture/", "development/"), encoding="utf-8")
+        ENTRY.replace("Architecture", "Development").replace("architecture/", "development/"),
+        encoding="utf-8", newline="\n")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-qm", "both books")
     _git(repo, "update-ref", "refs/remotes/canonical/ouroboros", "HEAD")
     paths = [CHAPTER, development]
     missing = CHAPTER if missing_book == "architecture" else development
     readable = development if missing_book == "architecture" else CHAPTER
-    (repo / readable).write_text(BODY + growth, encoding="utf-8")
+    (repo / readable).write_text(BODY + growth, encoding="utf-8", newline="\n")
     complete = book_balance_note(repo, paths)
     readable_only = book_balance_note(repo, [readable])
     assert "unavailable" not in complete
@@ -266,7 +267,7 @@ def test_note_discloses_an_unavailable_book_beside_a_measured_book(tmp_path, mis
     assert book_balance_note(repo, [readable]) == readable_only
     assert book_balance_note(repo, ["notes.md"]) == ""
 
-    (repo / missing).write_text(BODY, encoding="utf-8")
+    (repo / missing).write_text(BODY, encoding="utf-8", newline="\n")
     assert book_balance_note(repo, paths) == complete
 
 
