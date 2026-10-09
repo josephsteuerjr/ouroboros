@@ -1254,8 +1254,8 @@ _LIST_SCHEMA = {
 _REVIEW_SCHEMA = {
     "name": "skill_review",
     "description": (
-        "Run reviewer-slot skill review on one external skill package using the "
-        "shared reviewer-slot configuration and scored against the "
+        "Run skill review by the review panel on one external skill package "
+        "using the review pool configuration and scored against the "
         "Skill Review Checklist section in docs/CHECKLISTS.md. Persists the "
         "verdict to data/state/skills/<name>/review.json with a content "
         "hash so a later edit invalidates the review automatically. "
