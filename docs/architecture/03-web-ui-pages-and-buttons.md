@@ -157,7 +157,7 @@ History reconciliation is one synchronous two-pass transaction over existing key
 
 `chat_reading_position.js` owns the viewport. It follows explicit live-edge intent within 48 CSS pixels (never a short feed; a scrollbar drag sets it where it stops), else keeps the anchor across mutations, resize and media; remote delivery while away sets one activity marker, cleared at the bottom. Every room opens following its newest message; a reopened room, kept panel or Chat page goes through `showLatest` (the ↓ path). A window shown again re-requests the reader's anchor; ready Review detail and full output schedule two positioning frames. Scrolling input, latest and question reveal cancel a pending intent; nested-box input never pages or starts following. An archive-edge gesture reads older pages until rows land; layout and scroll events read none. Read receipts wait out reveals.
 
-`createHistoryControls` owns the edge button and persistent Main/Project header loading/gap/error/approximation status; its `Load more history` (DESIGN “History edges”) retries a failed read, else reads older pages only, while any exist. Origin adoption uses `project_dialogue.project_origin_identity`, including legacy rows without client ID.
+`createHistoryControls` owns one initial-loading pill at the feed edge and the persistent Main/Project header gap/error/approximation note; only Main's floating header gives that note a reading backing; its `Load more history` (DESIGN “History edges”) retries a failed read, else reads older pages only, while any exist. Origin adoption uses `project_dialogue.project_origin_identity`, including legacy rows without client ID.
 
 #### Main rows and host-stamped card rows
 

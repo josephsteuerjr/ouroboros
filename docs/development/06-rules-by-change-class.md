@@ -1058,7 +1058,13 @@ and what enforces each.
   keeps reviewed commits (BIBLE P0/P3).
 - Freeze `review_evidence.task_inputs` and `completion_observations` before cleanup
   (ARCHITECTURE §6 Post-task reflection): origin, whole owner Q/A, peer provenance
-  and canonical split-root verification receipts. Zero exit is positive, absence
+  and canonical split-root verification receipts. Retain the first/latest usable
+  author input as a separately labelled `historical_author_inputs` sibling, never
+  as directives or criteria. Reuse the selected observation; no room/profile
+  reread, excluded-input exposure claim or failed-response anchor. Verify actual
+  read_file results in the next reflection/native input, session file reads and
+  exact-source retention after cleanup (`test_historical_inputs.py`,
+  `test_historical_input_consumers.py`). Zero exit is positive, absence
   unknown; unrelated passes erase no failure. Deliver content and recover the same
   snapshot. `OWNER_DELIVERY_TOOL_NAMES` counts sends, never global skill state.
   Transport receipts stay out of that snapshot: only a newly written reflection reads
