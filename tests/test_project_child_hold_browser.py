@@ -102,7 +102,10 @@ def test_nested_child_wait_and_same_id_recovery(direct_server_with_data, tmp_pat
             page.locator('.chat-live-card[data-task-id="parent"] > [data-live-summary-button]').click()
             child_card = page.locator(CHILD)
             child_card.wait_for(state="visible")
-            assert child_card.locator('[data-live-phase]').inner_text() == "Working"
+            # The scheduled receipt precedes the authoritative pending queue read.
+            page.wait_for_function("() => document.querySelector('.chat-live-card[data-task-id=held] [data-live-phase]')?.textContent === 'Queued'")
+            assert child_card.locator('[data-live-phase]').get_attribute('data-motion') == '0'
+            assert not child_card.locator('[data-live-typing]').is_visible()
             page.evaluate("() => window.__heldCard = document.querySelector('.chat-live-card[data-task-id=held]')")
             shot(page, "scheduled")
             result_path.write_text("{torn", encoding="utf-8")
