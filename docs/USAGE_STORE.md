@@ -242,7 +242,7 @@ Existing dirty-owner maintenance refreshes terminal task/root projections after
 the ledger write, including after restart. Completed review attribution permits
 price recovery; live review operations (including late acceptance after the
 author task ends), live owners and post-task work remain protected. Price
-uncertainty grants no continuation rights.
+uncertainty grants no continuation rights. Applying a price to an unresolved attempt closes its monetary row, removing that row's model-handoff blocker; separate live ownership checks and incomplete-response facts remain. Refining an already-settled nonfinal row never expands the open-attempt set.
 
 Standalone command custody uses the selected data root's existing current queue
 snapshot, never the imported process's empty maps. Missing or stale ownership

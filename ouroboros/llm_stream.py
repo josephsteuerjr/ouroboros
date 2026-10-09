@@ -556,6 +556,9 @@ class _StreamAssembly:
         else:
             self.generation_id = generation_id
         self.pending_generations.append(generation_id)
+        # The prior ID's write cannot certify a newly observed conflict.
+        # Parsing can raise before the async caller drains this pending write.
+        self.generation_bound = False
         if not self.defer_binding:
             self.bind_pending_generations()
 

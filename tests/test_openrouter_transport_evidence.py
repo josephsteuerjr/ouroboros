@@ -154,6 +154,26 @@ def test_generation_conflict_remains_visible_without_losing_answer(isolated, asy
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("header", ["gen-first", ""])
+def test_conflicting_error_frame_preserves_binding_conflict(isolated, asynchronous, header):
+    from ouroboros.llm_stream import ProviderStreamError
+    from ouroboros.openrouter_cost import generation_binding, fetch_generation_receipt
+
+    error_frame = ("data: " + json.dumps({"id": "gen-second", "error": {
+        "code": 400, "message": "synthetic conflicting generation"}, "usage": {"cost": 0.3}}) + "\n\n").encode()
+    wire = Wire([frame(generation="gen-first"), error_frame], header=header)
+    with pytest.raises(ProviderStreamError) as caught:
+        run_driver(wire, asynchronous=asynchronous)
+    rows = ledger_rows(isolated)
+    assert len(rows) == 1
+    assert rows[0]["provider_receipt_binding"]["conflict"] == {"observed_generation_id": "gen-second"}
+    assert generation_binding(rows[0]) is None
+    assert fetch_generation_receipt(isolated, rows[0], target())["status"] == "binding_unavailable"
+    assert caught.value.stream_receipt["generation_conflict"] is True
+    assert rows[0]["physical_failure"]
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
 def test_public_chat_without_price_never_fetches_generation(isolated, monkeypatch, asynchronous):
     import requests
 
