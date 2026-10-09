@@ -181,7 +181,7 @@ manifest instead of only what was wrong.
 ```mermaid
 flowchart LR
     install[install] --> review[skill_review]
-    review --> triad[reviewer-slot skill review]
+    review --> triad[skill review by the review panel]
     triad -- PASS --> deps
     deps --> enable[owner toggles enabled=true]
     enable --> execute[skill_exec / dispatch]
