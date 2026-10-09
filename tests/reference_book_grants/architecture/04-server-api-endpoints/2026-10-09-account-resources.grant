@@ -1,2 +1,0 @@
-391
-Register the new explicit account-reset POST and receipt GET in the canonical endpoint table; their method, path and owner are new public surface.

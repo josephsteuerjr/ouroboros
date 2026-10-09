@@ -1,4 +1,13 @@
-"""Explicit foreground quota refresh through the owned Claudexor daemon."""
+"""Explicit account refresh/reset transport through the owned Claudexor daemon.
+
+Discovers the already-running daemon, handshakes under the client's default 60 s
+read bound, and negotiates resource operations from the catalog. Quota refresh
+uses its 90 s foreground bound, preserves the legacy envelope when unsupported,
+and accepts an exact account only when advertised. Reset POST retains its body
+and Idempotency-Key; GET inspects the existing receipt. Catalog failures retain
+their typed cause rather than claiming unsupported. These routes start no daemon,
+retry nothing, apply no vendor policy and never expose the daemon token.
+"""
 
 from __future__ import annotations
 
