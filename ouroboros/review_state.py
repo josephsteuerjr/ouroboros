@@ -1,10 +1,7 @@
-"""Durable advisory/review ledger persisted in state/advisory_review.json.
-
-Compact atomic encoding retains the complete schema, raw evidence and legacy
-normalization without recursively copying dataclass payloads. Conditional saves
-still acquire the lock, strictly load and prepare the whole state; only an equal
-prepared payload may skip replacement. Lock acquisition failures keep the platform
-cause in ReviewStateLockError without changing timeout or stale-lock policy.
+"""Durable advisory/review state with full compact atomic encoding.
+Shallow mappings retain raw evidence and normalization. Conditional saves strictly
+load and prepare under lock; only equal payloads skip replacement. Acquisition
+failures retain platform causes without changing timeout or stale-lock policy.
 """
 
 from __future__ import annotations
@@ -379,12 +376,8 @@ def _save_state_unlocked(
 
 
 def save_state(drive_root: pathlib.Path, state: AdvisoryReviewState) -> None:
-    """Persist review state atomically under the review-state lock.
-
-    Raises ``TimeoutError`` on lock failure (matching ``update_state``): a
-    silently skipped save left the advisory ledger reporting a stale "fresh"
-    pre-review, which the commit gate then trusted — an immune-system hole,
-    not a tolerable degradation.
+    """Persist atomically under the review-state lock; never skip a failed save.
+    Acquisition failures raise ReviewStateLockError, a TimeoutError.
     """
     lock_path = drive_root / _LOCK_RELPATH
     outcome: Dict[str, Any] = {}
