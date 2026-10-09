@@ -62,6 +62,7 @@ D19 = "Frozen contracts (ABI)"
 D20 = "Presence"
 
 [modules]
+"ouroboros/openrouter_cost.py" = "D02"
 "ouroboros/obligations.py" = "D11"
 "ouroboros/startup_migrations.py" = "D11"
 "ouroboros/startup_task_files.py" = "D11"

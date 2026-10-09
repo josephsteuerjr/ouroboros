@@ -159,14 +159,14 @@ def propagate_model_error(error: Exception) -> None:
     retry or disclosed-unavailable path, just as it does for direct API calls.
     """
     from ouroboros.model_wait import ModelWaitInterrupted, model_wait_reason
+    from ouroboros.transport_custody import outcome_unknown_on_chain
 
     if isinstance(error, ModelWaitInterrupted):
         raise error
     if isinstance(error, ClaudexorModelError):
-        capture = getattr(error, "physical_attempt_capture", None)
         if (error.code in {"model_outcome_unknown", "model_operation_interrupted"}
                 or model_wait_reason(error)
-                or getattr(capture, "state", None) in {"dispatched", "unresolved"}):
+                or outcome_unknown_on_chain(error)):
             raise error
 
 

@@ -723,13 +723,17 @@ and what enforces each.
 - Administrative abandonment never turns a reservation bound into an actual price:
   use the existing unknown-price settlement; the attempt's one current row keeps its
   correction eligibility. One real late receipt or positive never-started proof may
-  correct that attempt; ordinary terminal rows stay immutable, and the store's writes
-  and its journal import apply one transition table. Reconcile through existing custody maintenance only after
+  correct that attempt; final prices stay immutable. Provider-validated exact prices
+  may refine successful nonfinal prices through an opaque binding; shared writes and
+  journal import preserve physical ownership. Reconcile through existing custody maintenance only after
   physical ownership ends, preserve review owners, and read exact recorded model
   operations without creating new work. Retry existing cost projections of dirty
   owners independently of another transition, imported aggregates included, using one
   indexed maintenance-drive view rather than filtering it for each owner. A different
-  recorded budget root keeps its own accounting path; never fabricate completion
+  recorded budget root keeps its own accounting path; never fabricate completion.
+  OpenRouter generation GETs belong only to the explicit source command, never
+  ordinary sends or maintenance. Preserve failure/received-price evidence before
+  retries and across cleanup errors without changing the call outcome.
   (ARCHITECTURE §6 "Budget tracking"; storage rules and tests:
   `docs/USAGE_STORE.md`, `tests/test_usage_abandoned_ledger.py`).
 - Hold a usage-store write transaction only for the budget check and the row write —
