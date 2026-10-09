@@ -539,22 +539,24 @@ export function sessionModelOptions(harness, currentModel, { catalogKnown = true
     return options;
 }
 
-export function profileOptionsFor(profiles, savedPin, { accountsKnown = true } = {}) {
+/** `labelled`: the select sits under a visible Account label, so options name the account alone. */
+export function profileOptionsFor(profiles, savedPin, { accountsKnown = true, labelled = false } = {}) {
+    const prefix = labelled ? '' : 'Account: ';
     const options = [
-        { value: '', label: 'Account: automatic rotation' },
+        { value: '', label: labelled ? 'Automatic rotation' : 'Account: automatic rotation' },
         ...(profiles || []).map(profileEntry).filter((profile) => profile.id).map((profile) => ({
             // The VALUE stays the id — it is what the setting stores and what
             // pins the route. Only the label speaks the owner's name for the
             // account, with the stored id appended when they differ.
             value: profile.id,
-            label: `Account: ${profile.name}${profile.name !== profile.id ? ` · ${profile.id}` : ''}`
+            label: `${prefix}${profile.name}${profile.name !== profile.id ? ` · ${profile.id}` : ''}`
                 + ` (pinned)${profile.enabled ? '' : ' (disabled)'}`,
         })),
     ];
     if (savedPin && !options.some((option) => option.value === savedPin)) {
         options.push({
             value: savedPin,
-            label: `Account: ${undiscoveredLabel(savedPin, accountsKnown)}`,
+            label: `${prefix}${undiscoveredLabel(savedPin, accountsKnown)}`,
         });
     }
     return options;
@@ -573,9 +575,9 @@ export function selectHtml(attrs, groups, selected) {
     return `<select class="ui-control" ${attrs}>${options}</select>`;
 }
 
-export function effortSelectHtml(attrs, selected, surfaceDefault = 'route default') {
+export function effortSelectHtml(attrs, selected, surfaceDefault = 'route default', defaultLabel = 'Default effort') {
     const options = [
-        { value: '', label: 'Default effort' },
+        { value: '', label: defaultLabel },
         ...EFFORT_CHOICES.map((effort) => ({ value: effort, label: effort })),
     ];
     return selectHtml(
