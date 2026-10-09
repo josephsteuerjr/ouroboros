@@ -22,4 +22,3 @@ export async function chooseAndSendReview({ openConfirmDialog, ws, readSettings 
     ws.send({ type: 'command', cmd: `/review ${answer.value || ''}`.trim() });
     return true;
 }
-
