@@ -597,6 +597,7 @@ class OwnedClaudexorDaemon:
 
         Callers: the periodic sweep and the owner's Refresh (the two retriers),
         and a successful attach. Restart/Panic clear it by constructing a new manager.
+        Between a sweep's release and its retry an ordinary caller may become the spawner; the retry joins that child.
         """
         with self._lock:
             record, self._last_start_failure = self._last_start_failure, None

@@ -248,7 +248,11 @@ def _run_periodic_custody_sweep(stop_event: Any = None, latch: Any = None) -> No
     wait. The caller took ``_CUSTODY_SWEEP_LOCK`` without blocking (busy => skip,
     never queue); this pass releases it in ``finally``. Nothing serializes it
     against assignment, so each step reads its CANDIDATES before the shared live
-    set, and the generation is re-read before every mutation."""
+    set, and the generation is re-read before every mutation.
+
+    Releasing a failed-start latch is the only thing that makes this pass spawn,
+    and only when it released one: a healthy install never spawns or waits here,
+    and a persistently crashing engine costs at most one spawn per sweep."""
     try:
         try:
             if _stop_requested(stop_event):
@@ -678,6 +682,12 @@ def _startup_prune_sweeps(*, preserve_task_sources=False, recovery_report=None):
 
 
 def _run_deferred_startup_prunes():
+    """Run housekeeping boot left owed; each step stays owed until it succeeds.
+
+    Tree and source prunes wait while recovery reported gaps (an error or an
+    unresolved ``*``) or ``startup_tree_exclusions`` cannot follow every recovery
+    link (an unreadable member); that closure keeps protected trees out of the prune.
+    Mailbox and service-log cleanup retries on its own flag, apart from the tree prune."""
     from ouroboros.startup_task_files import startup_tree_exclusions
     from ouroboros.headless import prune_task_trees
     if not _STARTUP_RECOVERY_GAPS[0] and (_STARTUP_TREES_OWED[0] or _STARTUP_SOURCE_PRUNES_OWED[0]):

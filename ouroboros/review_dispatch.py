@@ -17,6 +17,14 @@ every ceiling; a worker that outlives its logical caller cannot race the
 write-ahead fact, and a crash after dispatch keeps the durable paid fact.
 Commit review verifies this write fail-closed; other callers retain historical
 fail-open accounting. This seam also hosts the L-review lane's two-phase admission.
+
+Task acceptance binds one strict, exact-hash claim on the locked
+``task_acceptance_review_accounting`` tree wallet per panel to this stamp
+(``task_acceptance_paid_dispatch_stamp``); a binding or paid identity already
+claimed is ``unknown``, never resend authority. Before a new panel is prepared,
+``reconcile_pending_acceptance_runs`` collects already-paid panels at $0 from
+their original requests and rosters, and concurrent progress forces recollection
+so publication keeps the settled facts.
 """
 
 from __future__ import annotations

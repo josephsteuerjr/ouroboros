@@ -16,6 +16,10 @@ Design contract (owner-decided, sprint v6.55):
   obligation gate unconditionally — a deadline never hangs on review passes.
 - ``loop.py`` keeps only transport (message append + checkpoint emit); every
   threshold, text, and time computation lives here.
+- Time, cost and intrinsic notes carry ``resource_facts`` (``with_resource_facts``):
+  per-tool call/error counts, producer-reported durations, own/tree/delegated ledger
+  buckets and the unreserved global remainder. Only tool name, error flag and reported
+  duration are read; no argv, stdout or sleep/poll classification selects behaviour.
 """
 
 from __future__ import annotations
