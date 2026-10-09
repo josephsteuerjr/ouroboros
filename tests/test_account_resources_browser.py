@@ -375,3 +375,115 @@ def test_catalog_gap_retains_last_known_resources_and_valid_account_quota_siblin
     expect(row).not_to_contain_text("capabilities could not be checked")
     expect(row.locator('[data-resource-reset="opaque-grant"]')).to_be_enabled()
     assert not ui["reset_calls"]
+
+
+@pytest.mark.parametrize("width,theme", [(1440, "light"), (390, "dark")])
+def test_maintenance_and_resources_share_refresh_without_losing_pending_reset(resources_ui, width, theme):
+    from urllib.parse import parse_qs, urlparse
+
+    from playwright.sync_api import expect
+    from tests.test_harness_maintenance_browser import _inventory_row
+
+    ui = resources_ui
+    entry = _inventory_row("claude")
+    maintenance_only = _inventory_row("agy", targets=["latest"])
+    inventory = {"harnesses": [entry, maintenance_only]}
+    operation = {"id": "program-update", "harness": "claude", "state": "running",
+                 "phase": "installing", "target": {"kind": "latest", "version": "3.0.0"},
+                 "mutation": "unknown", "termination": "not_applicable"}
+    inspections, held, updates, cancellations = [], [], [], []
+    hold_inventory = False
+
+    def maintenance(route):
+        path = urlparse(route.request.url).path
+        if path.endswith("/harnesses"):
+            inspections.append(parse_qs(urlparse(route.request.url).query))
+            if hold_inventory:
+                held.append(route)
+            else:
+                route.fulfill(json=inventory)
+        elif path.endswith("/cancel"):
+            cancellations.append(path)
+            operation.update(state="cancelled", phase="settled", termination="unconfirmed")
+            route.fulfill(json=operation)
+        elif route.request.method == "POST":
+            updates.append((route.request.headers.get("idempotency-key"), route.request.post_data_json))
+            entry["operation"] = {key: operation[key] for key in ("id", "state", "phase")}
+            route.fulfill(status=202, json=operation)
+        else:
+            route.fulfill(json=operation)
+
+    ui["page"].route("**/api/claudexor/maintenance/**", maintenance)
+    # A full resource refresh returns all 20 targets; the single-target fixture
+    # used by the other tests must not manufacture account absence here.
+    ui["wire"]["quota"]["snapshots"] = copy.deepcopy(ui["fixture"]["status"]["quota"])
+    ui["wire"]["quota"]["resources"] = copy.deepcopy(ui["fixture"]["status"]["resources"])
+    page, row = open_accounts(ui, width, theme)
+    family = page.locator('.agent-family-card[data-family="claude"]')
+    expect(family.locator('[data-family-maintenance]')).to_have_count(1)
+    expect(family.get_by_role("button", name="Update", exact=True)).to_be_enabled()
+    row.locator("[data-resources]").click()
+    ui["reset_replies"].append("timeout")
+    row.locator('[data-resource-reset="opaque-grant"]').click()
+    page.locator("[data-confirm-ok]").click()
+    expect(row).to_contain_text("Reset outcome is unconfirmed")
+    original = ui["reset_calls"][0]
+    details = row.locator(".resource-provenance")
+    details.locator("summary").click()
+
+    hold_inventory = True
+    family.get_by_role("button", name="Check latest", exact=True).click()
+    expect(family.get_by_role("button", name="Checking…", exact=True)).to_be_disabled()
+    expect(details).to_have_attribute("open", "")
+    assert held
+    details.locator("summary").focus()
+    hold_inventory = False
+    entry["available"] = {"version": "3.0.0", "observedAt": "2026-10-09T12:00:00Z"}
+    for route in held:
+        route.fulfill(json=inventory)
+    expect(family.locator(".harness-maintenance-line")).to_contain_text("Latest 3.0.0")
+    expect(details).to_have_attribute("open", "")
+    expect(details.locator("summary")).to_be_focused()
+    expect(row.locator("[data-resources]")).to_have_attribute("aria-expanded", "true")
+    expect(row).to_contain_text("Reset outcome is unconfirmed")
+    assert ui["reset_calls"] == [original]
+
+    family.get_by_role("button", name="Update", exact=True).click()
+    expect(family).to_contain_text("Installing 3.0.0")
+    expect(row.locator("[data-refresh-account]")).to_have_attribute("aria-disabled", "false")
+    before_inspections = len(inspections)
+    ui["hold_refresh"].append(True)
+    page.locator("#btn-harness-refresh").click()
+    expect(page.locator("#btn-harness-refresh")).to_have_text("Refreshing…")
+    expect(page.locator("#btn-harness-refresh")).to_be_disabled()
+    assert ui["refresh_calls"] == [{}]
+    assert any(query.get("fresh") == ["true"] for query in inspections[before_inspections:])
+    status_reads = lambda: sum(urlparse(url).path == "/api/claudexor/status" for url in ui["reads"])
+    before_status = status_reads()
+    family.get_by_role("button", name="Cancel update", exact=True).click()
+    expect(family).to_contain_text("Installer may still be running")
+    assert status_reads() == before_status, "maintenance settlement must join the held resource writer"
+    expect(row).to_contain_text("Reset outcome is unconfirmed")
+    ui["pending_refresh"][0].fulfill(json=ui["wire"]["quota"])
+    expect(page.locator("#btn-harness-refresh")).to_be_enabled()
+    expect(page.locator(".harness-account-row")).to_have_count(20)
+    expect(row).to_contain_text("Reset outcome is unconfirmed")
+    expect(details).to_have_attribute("open", "")
+    expect(family).to_contain_text("Update cancelled")
+    assert len(updates) == len(cancellations) == 1
+    assert updates[0][0] and updates[0][1] == {"harness": "claude", "target": {"kind": "latest"}}
+    orphan = page.locator('.agent-family-card[data-family="agy"]')
+    expect(orphan.locator("[data-family-add], [data-resources]")).to_have_count(0)
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    frame_section(family.locator(".agent-family-head"))
+    capture(page, f"combined-maintenance-resources-{width}-{theme}")
+
+    ui["reset_replies"].append({**ui["wire"]["receipt"], "request": original[1],
+                               "outcome": "already_used", "resources": None})
+    row.locator("[data-recover-reset]").click()
+    expect(row).to_contain_text("does not confirm that this request applied it")
+    assert ui["reset_calls"] == [original, original]
+    assert ui["refresh_calls"] == [{}]
+    frame_section(row.locator(".account-resource-panel"))
+    capture(page, f"combined-maintenance-recovered-{width}-{theme}")
+    assert not any("/login" in path or path == "/api/settings" for path, _ in ui["posts"])

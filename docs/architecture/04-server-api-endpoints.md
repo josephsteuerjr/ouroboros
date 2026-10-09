@@ -65,6 +65,10 @@ Every path-addressed `/api/files/*` operation resolves its requested `path` and 
 | POST | `/api/claudexor/account-resets` | exact request and Idempotency-Key (§3) |
 | GET | `/api/claudexor/account-resets/{operation_id}` | receipt inspection (§3) |
 | POST | `/api/claudexor/wake` | |
+| GET | `/api/claudexor/maintenance/harnesses` | passive inspection; optional fresh/latest check |
+| POST | `/api/claudexor/maintenance/operations` | Idempotency-Key; 202 operation handle |
+| GET | `/api/claudexor/maintenance/operations/{operation_id}` | retained engine facts |
+| POST | `/api/claudexor/maintenance/operations/{operation_id}/cancel` | acknowledgement does not prove termination |
 | POST | `/api/claudexor/login` | |
 | GET | `/api/claudexor/login/{job_id}` | |
 | DELETE | `/api/claudexor/login/{job_id}` | |
