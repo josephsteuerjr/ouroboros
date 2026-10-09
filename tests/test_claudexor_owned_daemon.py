@@ -3619,7 +3619,7 @@ def test_the_proxy_count_in_the_docs_matches_the_handlers_that_exist(tmp_path):
     )
     gateway_lines = [
         ln for ln in arch.splitlines()
-        if "claudexor_accounts.py" in ln or "claudexor_quota.py" in ln
+        if ".py" in ln and "←" in ln and "/api/claudexor/" in ln
     ]
 
     # Every REGISTERED path is named in that map entry, so a new proxy cannot

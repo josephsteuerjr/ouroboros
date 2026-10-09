@@ -17,6 +17,11 @@ export function maintenanceOperationPending(operation) {
         || operation.termination === 'unconfirmed');
 }
 
+function inspectedAfterOperation(entry, operation) {
+    return TERMINAL.has(operation?.state)
+        && Date.parse(entry?.observedAt) > Date.parse(operation.finishedAt);
+}
+
 export function maintenanceVersionLine(entry, { unknownCurrent = false, inspectionError = '' } = {}) {
     if (!entry) return 'Program version not checked';
     const selected = entry.selection || {};
@@ -164,12 +169,13 @@ export function createHarnessMaintenanceController({
         state.request = null;
         state.operationError = '';
         if (!ACTIVE.has(operation.state)) state.cancelling = false;
-        // A current install or an uncertain effect cannot wear yesterday's
-        // version. A fresh successful inspection releases this local gap.
-        if (operation.phase === 'installing' || operation.mutation === 'unknown') state.unknownCurrent = true;
+        // A later version probe answers what is installed now, independently
+        // of a historical operation's effect or process-termination evidence.
+        const inspectedAfter = inspectedAfterOperation(rows.get(harness), operation);
+        if (operation.phase === 'installing' || operation.mutation === 'unknown') state.unknownCurrent = !inspectedAfter;
         if (TERMINAL.has(operation.state) && (previous?.id !== operation.id || !TERMINAL.has(previous?.state))) {
             state.revision += 1;
-            state.unknownCurrent = operation.mutation !== 'none';
+            state.unknownCurrent = operation.mutation !== 'none' && !inspectedAfter;
             void refresh({ harness, fresh: true });
             if (!disposed) onSettled(harness, operation);
         }
@@ -194,7 +200,8 @@ export function createHarnessMaintenanceController({
                     }
                     rows.set(entry.harness, entry);
                     state.inspectionError = '';
-                    state.unknownCurrent = ACTIVE.has(state.operation?.state) && state.operation?.phase === 'installing';
+                    state.unknownCurrent = (ACTIVE.has(state.operation?.state) && state.operation?.phase === 'installing')
+                        || (state.operation?.mutation === 'unknown' && !inspectedAfterOperation(entry, state.operation));
                     // Inventory offers a handle, not the full result. Do not
                     // replace a retained full receipt with its shorter summary.
                     if (!state.request && entry.operation?.id && entry.operation.id !== state.operation?.id) {

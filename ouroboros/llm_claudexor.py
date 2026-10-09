@@ -25,6 +25,8 @@ from ouroboros.effort_evidence import model_effort_usage
 from ouroboros.gateways.claudexor import (ClaudexorUnavailable, engine_at_least, model_failure_evidence_supported,
                                           operation_query_supported, _READ_TIMEOUT_SEC)
 from ouroboros.llm_attempt import _attempt_request, _candidate_before_dispatch, effort_request_facts
+from ouroboros.llm_capability_policy import (
+    model_catalog as model_catalog, catalog_admits_model as catalog_admits_model)
 from ouroboros.send_clock import stamp_clock_note
 from ouroboros.llm_substitution import (
     AccountRotation, SubstitutionBudget, substitution_fact, failed_account_preference,
@@ -40,35 +42,6 @@ from ouroboros.usage_accounting import (
 from ouroboros.utils import append_jsonl, sanitize_tool_result_for_log, utc_now_iso
 
 log = logging.getLogger(__name__)
-def model_catalog(source: str, credential_profile_id: str | None = None, *,
-                  requested_model: str | None = None, timeout_sec: float | None = None) -> dict:
-    """Metadata-only transport; the capability evidence owner interprets the envelope."""
-    gateway = read_owned_gateway()
-    try:
-        started = time.monotonic()
-        hint = {"requested_model": requested_model} if requested_model is not None else {}
-        if requested_model is not None and operation_query_supported(
-                gateway.operations(**({"timeout_sec": timeout_sec} if timeout_sec is not None else {})),
-                method="GET", path="/v2/model-sources/:id/models", name="includeAdmission", value="true"):
-            hint["include_admission"] = True
-        if timeout_sec is not None:
-            timeout_sec = max(0.000001, timeout_sec - (time.monotonic() - started))
-        return gateway.list_source_models(source, credential_profile_id, **hint,
-                                          **({"timeout_sec": timeout_sec} if timeout_sec is not None else {}))
-    finally:
-        gateway.close()
-
-
-def catalog_admits_model(catalog: dict, model: str) -> bool:
-    """An exact engine admission permits an attempt, without inventing a model row.
-
-    Older engines retain membership semantics. Source/account/freshness binding
-    belongs to the caller; this is neither entitlement nor generation evidence.
-    """
-    admission = catalog.get("admission")
-    return (any(isinstance(row, dict) and row.get("id") == model for row in catalog.get("models", []))
-            or (isinstance(admission, dict) and admission.get("requestedModel") == model
-                and admission.get("inventoryAbsence") == "advisory"))
 
 
 def model_sources(*, processing_view: bool = False) -> dict:

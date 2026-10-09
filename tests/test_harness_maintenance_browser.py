@@ -147,3 +147,47 @@ def test_old_engine_explains_missing_capability(subscription_ui):
     expect(family.get_by_role('button', name='Check version', exact=True)).to_be_enabled()
     assert family.locator('[data-maintenance-action="latest"]').count() == 0
     assert not ui["posts"]
+
+
+@pytest.mark.parametrize("termination", ["confirmed", "unconfirmed"])
+def test_historical_unknown_effect_preserves_newer_version(subscription_ui, termination):
+    from playwright.sync_api import expect
+
+    ui, page = subscription_ui, subscription_ui["page"]
+    row = _inventory_row("codex")
+    row.update(observedAt="2026-10-09T12:01:00Z")
+    row["selection"]["version"] = row["installed"]["version"] = "3.1.0"
+    operation = {
+        "id": "historical-operation", "harness": "codex", "state": "failed", "phase": "settled",
+        "finishedAt": "2026-10-09T12:00:00Z", "mutation": "unknown", "termination": termination,
+    }
+    row["operation"] = {key: operation[key] for key in ("id", "state", "phase", "finishedAt")}
+    held_details, requests = [], []
+
+    def maintenance(route):
+        requests.append(route.request.method)
+        if urlparse(route.request.url).path.endswith("/harnesses"):
+            route.fulfill(json={"harnesses": [row]})
+        else:
+            held_details.append(route)
+
+    page.route("**/api/claudexor/maintenance/**", maintenance)
+    page.goto(ui["url"] + "/#settings")
+    page.locator('[data-settings-tab="providers"]').click()
+    family = page.locator('.agent-family-card[data-family="codex"]')
+    expect(family.locator('.harness-maintenance-line')).to_contain_text("Program 3.1.0")
+    assert held_details
+    for route in held_details:
+        route.fulfill(json=operation)
+    expect(family).to_contain_text("Installed files may have changed")
+    expect(family.locator('.harness-maintenance-line')).to_contain_text("Program 3.1.0")
+    expect(family).to_contain_text("Update failed")
+    if termination == "unconfirmed":
+        expect(family).to_contain_text("Installer may still be running")
+        expect(family.get_by_role('button', name='Cancel update', exact=True)).to_be_enabled()
+        assert family.locator('[data-maintenance-action="latest"]').count() == 0
+    else:
+        expect(family.get_by_role('button', name='Update', exact=True)).to_be_enabled()
+    assert set(requests) == {"GET"}
+    family.locator('.agent-family-head').scroll_into_view_if_needed()
+    capture(page, f"maintenance-historical-{termination}")

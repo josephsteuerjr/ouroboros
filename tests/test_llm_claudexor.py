@@ -770,8 +770,10 @@ def test_gigachat_async_tools_still_refuse_before_provider_io(setup, monkeypatch
 @pytest.mark.parametrize("admission_supported", [False, True])
 def test_catalog_metadata_uses_exact_optional_profile_and_closes(setup, monkeypatch, profile, fails,
                                                                requested_model, admission_supported):
+    from ouroboros import llm_capability_policy
+
     root, gateway, client = setup
-    monkeypatch.setattr(transport, "read_owned_gateway", lambda: gateway)
+    monkeypatch.setattr(llm_capability_policy, "read_owned_gateway", lambda: gateway)
     catalog = {"source": "opaque-source", "route": {"credentialProfileId": profile}, "models": []}
     if admission_supported:
         gateway.operation_catalog = [{"method": "GET", "path": "/v2/model-sources/:id/models",

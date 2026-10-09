@@ -116,6 +116,23 @@ def test_tools_share_service_and_update_crosses_existing_pause_boundary(tmp_path
     assert passed == [ctx, ctx]
 
 
+@pytest.mark.parametrize("arguments", [
+    {"action": "update", "request_id": "missing-harness"},
+    {"action": "update", "harness": "agy"},
+    {"action": "update", "harness": "agy", "request_id": "bad\nkey"},
+    {"action": "update", "harness": "agy", "request_id": "key", "operation_id": "existing"},
+    {"action": "update", "harness": "agy", "request_id": "key", "target": "version"},
+    {"action": "update", "harness": "agy", "request_id": "key", "version": "1.2.3"},
+    {"action": "update", "harness": "agy", "request_id": "key", "target": "unknown"},
+    {"action": "cancel"},
+    {"action": "unknown"},
+])
+def test_flat_schema_keeps_action_requirements_enforced_before_engine(tmp_path, owned, arguments):
+    answer = json.loads(tools._maintain_harness(context(tmp_path), **arguments))
+    assert answer["error"]["code"] == "invalid_request"
+    assert not owned.opened and not owned.calls
+
+
 @pytest.mark.parametrize("profile", ["local_readonly_subagent", "acting_subagent"])
 def test_limited_child_inspection_works_but_mutation_never_reaches_engine(tmp_path, monkeypatch, owned, profile):
     from ouroboros import config

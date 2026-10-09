@@ -200,6 +200,80 @@ test('a fresh view rejoins inventory operation and does not submit work', async 
     assert.equal(controller.view('fixture').operation.phase, 'installing');
 });
 
+test('historical unknown effect keeps a newer inspected version and its warning', async () => {
+    const terminal = operation({ state: 'failed', phase: 'settled', mutation: 'unknown',
+        termination: 'confirmed', finishedAt: '2026-10-09T12:00:00Z' });
+    const row = entry({ selection: { kind: 'managed', version: '3.1.0' }, observedAt: '2026-10-09T12:01:00Z',
+        operation: { id: terminal.id, state: terminal.state, phase: terminal.phase, finishedAt: terminal.finishedAt } });
+    let inspections = 0;
+    const { controller, calls } = setup({
+        harnessMaintenanceInventory: async () => { inspections++; return { harnesses: [row] }; },
+        harnessMaintenanceOperation: async () => terminal,
+    });
+    await controller.refresh(); await flush();
+    for (let read = 0; read < 2; read++) {
+        const view = controller.view('fixture');
+        assert.match(maintenanceVersionLine(view.entry, view), /Program 3\.1\.0/);
+        assert.match(harnessMaintenanceMarkup(view.entry, view), /Update failed · Installed files may have changed/);
+        assert.equal(view.operation.mutation, 'unknown');
+        assert.equal(view.operation.termination, 'confirmed');
+        assert.equal(inspections, 1, 'historical detail needs no second inspection to preserve the newer observation');
+        await controller.readOperation('fixture');
+    }
+    assert.deepEqual(calls, [], 'no start, cancel or task action follows inspection');
+});
+
+test('historical unknown effect cannot borrow stale or absent version evidence', async () => {
+    for (const [observedAt, version, finishedAt] of [
+        ['2026-10-09T11:59:00Z', '2.0.0', '2026-10-09T12:00:00Z'],
+        ['2026-10-09T12:00:00Z', '2.0.0', '2026-10-09T12:00:00Z'],
+        [null, '2.0.0', '2026-10-09T12:00:00Z'],
+        ['unreadable', '2.0.0', '2026-10-09T12:00:00Z'],
+        ['2026-10-09T12:01:00Z', '2.0.0', null],
+        ['2026-10-09T12:01:00Z', null, '2026-10-09T12:00:00Z'],
+        ['2026-10-09T12:01:00Z', undefined, '2026-10-09T12:00:00Z'],
+    ]) {
+        const terminal = operation({ state: 'interrupted', phase: 'settled', mutation: 'unknown',
+            termination: 'confirmed', finishedAt });
+        const row = entry({ observedAt, selection: { kind: 'managed', version },
+            operation: { id: terminal.id, state: terminal.state, phase: terminal.phase, finishedAt } });
+        const { controller } = setup({ harnessMaintenanceInventory: async () => ({ harnesses: [row] }),
+            harnessMaintenanceOperation: async () => terminal });
+        await controller.refresh(); await flush();
+        assert.match(maintenanceVersionLine(row, controller.view('fixture')), /Program version unknown/);
+        await controller.refresh();
+        assert.match(maintenanceVersionLine(row, controller.view('fixture')), /Program version unknown/,
+            `re-reading the same physical evidence cannot prove a current version: ${observedAt} / ${finishedAt}`);
+    }
+});
+
+test('fresh terminal version observation does not release uncertain operation custody', async () => {
+    const terminal = operation({ state: 'cancelled', phase: 'settled', mutation: 'unknown',
+        termination: 'unconfirmed', finishedAt: '2026-10-09T12:00:00Z' });
+    const row = entry({ observedAt: '2026-10-09T12:01:00Z', selection: { kind: 'managed', version: '3.1.0' },
+        operation: { id: terminal.id, state: terminal.state, phase: terminal.phase, finishedAt: terminal.finishedAt } });
+    const { controller } = setup({ harnessMaintenanceInventory: async () => ({ harnesses: [row] }),
+        harnessMaintenanceOperation: async () => terminal });
+    await controller.refresh(); await flush();
+    const view = controller.view('fixture');
+    assert.match(maintenanceVersionLine(row, view), /Program 3\.1\.0/);
+    assert.equal(maintenanceOperationPending(view.operation), true);
+    const html = harnessMaintenanceMarkup(row, view);
+    assert.match(html, /Installer may still be running/);
+    assert.match(html, /data-maintenance-action="cancel"/);
+    assert.doesNotMatch(html, /data-maintenance-action="latest"/);
+});
+
+test('newer timestamps cannot unmask an in-flight install', async () => {
+    const active = operation();
+    const row = entry({ observedAt: '2026-10-09T12:01:00Z', operation: active });
+    const { controller } = setup({ harnessMaintenanceInventory: async () => ({ harnesses: [row] }),
+        harnessMaintenanceOperation: async () => active });
+    await controller.refresh(); await flush();
+    assert.equal(maintenanceOperationPending(controller.view('fixture').operation), true);
+    assert.match(maintenanceVersionLine(row, controller.view('fixture')), /Program version unknown/);
+});
+
 test('active-operation conflict rejoins its typed handle', async () => {
     const { controller, calls } = setup({ startHarnessMaintenance: async () => {
         throw Object.assign(new Error('Already active'), { status: 409,
@@ -247,7 +321,8 @@ test('partial failure hides old version until fresh inventory, retains result an
     const inspect = deferred();
     const { api, intents } = setup({
         harnessMaintenanceInventory: async () => ++reads === 1 ? { harnesses: [entry()] } : inspect.promise,
-        harnessMaintenanceOperation: async () => operation({ state: 'failed', mutation: 'unknown', termination: 'confirmed' }),
+        harnessMaintenanceOperation: async () => operation({ state: 'failed', phase: 'settled', mutation: 'unknown',
+            termination: 'confirmed', finishedAt: '2026-10-09T12:00:00Z' }),
     });
     const controller = createHarnessMaintenanceController({ api, intents, newKey: () => 'key', onSettled: () => { settles++; } });
     await controller.refresh(); await controller.start('fixture', { kind: 'latest' });
@@ -255,7 +330,8 @@ test('partial failure hides old version until fresh inventory, retains result an
     assert.equal(controller.view('fixture').unknownCurrent, true);
     assert.match(maintenanceVersionLine(controller.view('fixture').entry, controller.view('fixture')), /version unknown/);
     assert.equal(settles, 1);
-    inspect.resolve({ harnesses: [entry({ installed: { version: '2.5.0', proved: true } })] });
+    inspect.resolve({ harnesses: [entry({ observedAt: '2026-10-09T12:01:00Z',
+        selection: { kind: 'managed', version: '2.5.0' }, installed: { version: '2.5.0', proved: true } })] });
     await flush();
     assert.equal(controller.view('fixture').unknownCurrent, false);
     assert.equal(controller.view('fixture').entry.installed.version, '2.5.0');

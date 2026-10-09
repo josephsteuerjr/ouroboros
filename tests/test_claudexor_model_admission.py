@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from ouroboros import llm_claudexor as transport
+from ouroboros import llm_capability_policy as metadata
 from ouroboros.gateways.claudexor import ClaudexorUnavailable
 
 
@@ -37,8 +38,8 @@ def test_catalog_negotiation_and_read_share_transport_budget(monkeypatch):
         assert kwargs == {"requested_model": "model", "include_admission": True, "timeout_sec": 1}
         raise ClaudexorUnavailable("catalog_unavailable", "Upstream metadata unavailable")
 
-    monkeypatch.setattr(transport, "time", SimpleNamespace(monotonic=lambda: clock[0]))
-    monkeypatch.setattr(transport, "read_owned_gateway", lambda: SimpleNamespace(
+    monkeypatch.setattr(metadata, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    monkeypatch.setattr(metadata, "read_owned_gateway", lambda: SimpleNamespace(
         operations=operations, list_source_models=read, close=lambda: seen.append("closed")))
     with pytest.raises(ClaudexorUnavailable, match="Upstream metadata unavailable"):
         transport.model_catalog("source", "account", requested_model="model", timeout_sec=3)
