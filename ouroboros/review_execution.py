@@ -914,7 +914,7 @@ def run_delegated_review_session(
                 definite = isinstance(exc, OwnerPauseRefused) or 400 <= status < 500
                 # Only a definite 4xx proves the registration never bound a run.
                 _retire_orphaned_review_registration(
-                    custody, gateway, custody_drive, project_id,
+                    custody, gateway, custody_drive, project_id if not existing_project else "",
                     definite_refusal=definite and not recovering,
                     reason=code, invocation_id=invocation_id, surface=surface, slot_id=slot_id)
                 if definite and not recovering:

@@ -50,8 +50,10 @@ def _sub():
     return review_substrate
 
 
-def _transport_error_status(error: Any) -> str:
+def _transport_error_status(error: Any, *, failure_phase: str = "") -> str:
     """Classify transport failures without depending on a non-empty message."""
+    if failure_phase == "authority":
+        return "authority_error"
     error_type = type(error).__name__ if isinstance(error, BaseException) else ""
     error_text = str(error or "")
     if (
@@ -118,7 +120,7 @@ def _review_actor_projection(actor: Any, surface: str) -> Dict[str, Any]:
         transport = (
             "not_dispatched" if not_dispatched
             else ("success" if str(row.get("status") or "") in {"ok", "empty"}
-                  else _transport_error_status(error))
+                  else _transport_error_status(error, failure_phase=str(usage.get("review_failure_phase") or "")))
         )
     criteria = parsed.get("criteria_used") if isinstance(parsed, dict) else []
     criteria = criteria if isinstance(criteria, list) else []
@@ -294,7 +296,7 @@ def build_review_binding(
 
 def _panel_transport(statuses: List[str]) -> str:
     """One panel's transport word over the words of its collected actors."""
-    for word in ("success", "not_dispatched", "timeout"):
+    for word in ("success", "not_dispatched", "timeout", "authority_error"):
         if statuses and all(status == word for status in statuses):
             return word
     return "partial" if "success" in statuses else "provider_transport_error"

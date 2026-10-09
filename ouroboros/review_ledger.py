@@ -724,7 +724,7 @@ def _apply_raw(seat: Dict[str, Any], raw: Dict[str, Any]) -> None:
             seat["answers"][part] = _blank_answer(part, status if not answered else ANSWER_UNANSWERED)
     seat.update(status=status,
                 parts_answered=[p for p in seat["parts"] if seat["answers"][p]["status"] == ANSWER_RESPONDED],
-                usd=None if status == "pending" else raw.get("cost_usd"),  # an open seat has no cost yet
+                usd=raw.get("cost_usd"),  # reported money and operation completion are separate facts
                 raw_text=str(raw.get("raw_text") or ""),
                 critical_count=sum(int(seat["answers"][p].get("critical") or 0) for p in seat["parts"]),
                 operation_state=str(raw.get("operation_state") or ("settled" if answered else status)))
