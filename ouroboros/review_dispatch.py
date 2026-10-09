@@ -300,17 +300,13 @@ class TaskAcceptanceDispatchUnavailable(RuntimeError):
 
 
 class ReviewPaidStamp:
-    """Idempotent, thread-safe once-only wrapper around one durable write.
+    """Idempotent, thread-safe stamp shared by the seats of one review wave.
 
-    Parallel dispatch means two sides can race to be "the first transport
-    call" (the commit gate dispatches triad and scope concurrently): the first
-    caller performs the durable write-ahead, later callers block on the lock
-    until it lands and then no-op — so EVERY side is guaranteed the paid fact
-    is durable before its own transport begins. A failing default write is not
-    retried and still marks the stamp fired: the terminal record is the primary
-    ledger, and ordinary cost accounting remains fail-open. Task acceptance
-    uses ``fail_closed=True`` for its already-hard shared wallet authority;
-    every parallel caller then observes the same failure and no reviewer
+    The first caller attempts the durable write-ahead; siblings wait for its
+    result. A failed write is not retried here and still marks the stamp fired.
+    Ordinary cost accounting fails open, with the terminal record authoritative.
+    Commit-gate, review_change, acceptance and resumed-skill stamps use
+    ``fail_closed=True``: every caller observes the failure and no reviewer
     transport proceeds.
     """
 
