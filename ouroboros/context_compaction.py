@@ -6,9 +6,9 @@ unfinished Anthropic native unit is ineligible. Selection stops once the predict
 reclaim reaches the goal. A non-empty selection first writes an exact private checkpoint,
 then summarizes complete, gap-free hashed map/fold input into a labelled third-person
 host record (user role), each original restorable from the checkpoint. The automatic
-Main pass takes only never-summarized units whose complete contents appear in the
-persisted physical projection (``exposed_context_units``); unknown exposure keeps a unit
-raw. ``goal_reached`` in the receipt reports whether the measured reclaim met the goal.
+Main pass uses raw units first; typed provider refusal alone permits capsule re-folding.
+Eligible units must appear completely in the persisted physical projection
+(``exposed_context_units``); unknown exposure keeps a unit raw. ``goal_reached`` in the receipt reports whether the measured reclaim met the goal.
 """
 
 from __future__ import annotations
