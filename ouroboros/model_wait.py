@@ -46,7 +46,7 @@ class ModelWaitInterrupted(RuntimeError):
         self.previous_error = cause
         if cause is not None:
             for name in ("physical_attempt_capture", "ledger_attempt_ids", "model_result", "usage",
-                         "model_role_route", "operation_id", "route"):
+                         "model_role_route", "operation_id", "route", "stream_incomplete", "stream_rejected"):
                 if hasattr(cause, name):
                     setattr(self, name, getattr(cause, name))
 
