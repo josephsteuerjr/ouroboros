@@ -78,6 +78,7 @@ D20 = "Presence"
 "ouroboros/launcher_tray.py" = "D18"
 "ouroboros/launcher_tray_macos.py" = "D18"
 "ouroboros/launcher_background.py" = "D18"
+"ouroboros/launcher_appearance.py" = "D18"
 "ouroboros/desktop_notifications.py" = "D18"
 "ouroboros/desktop_autostart.py" = "D18"
 "ouroboros/windows_autostart.py" = "D18"
@@ -872,7 +873,6 @@ allowed = [
   "D11->D18",
   "D11->D19",
   "D11->D20",
-  "D12->D01",
   "D12->D02",
   "D12->D03",
   "D12->D07",
@@ -994,6 +994,7 @@ lazy_only = [
   "D10->D17",
   "D11->D06",
   "D11->D15",
+  "D12->D01",
   "D12->D05",
   "D12->D06",
   "D12->D10",
