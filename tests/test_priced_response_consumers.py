@@ -15,8 +15,12 @@ from ouroboros.transport_custody import (
     attempt_custody_event_fields, is_retryable_transport_death, outcome_unknown_on_chain,
 )
 from tests._usage_store_testing import ledger_rows
-from tests.test_openrouter_transport_evidence import Wire, frame, isolated, run_driver, target
+from tests import test_openrouter_transport_evidence as evidence_fixtures
+from tests.test_openrouter_transport_evidence import Wire, frame, run_driver, target
+
 from tests.test_transport_death_retry import _loop_kwargs, _no_chain, _presence_turn
+
+isolated = evidence_fixtures.isolated
 
 
 class StreamConsumer:
