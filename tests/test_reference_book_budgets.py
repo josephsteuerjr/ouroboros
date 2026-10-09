@@ -7,9 +7,9 @@ book is paid by shortening the same book in the same change.
 
 Official-CI ``size_ratchet`` lane only: local runs exclude the marker and every local surface
 reports the same balance as a fact (BIBLE P3 c5). The workflow sets ``OURO_BOOK_GROWTH_MODE``:
-``block`` for the official repository's owner/member/collaborator pull requests and its
-``ouroboros`` pushes, ``warn`` for outside contributors and any fork's own CI, ``approved``
-when the repository owner applied the ``book-growth`` label. Unset means ``block``, so an
+``block`` for the official repository's owner/member/collaborator pull requests, ``warn``
+for outside contributors, pushes and any fork's own CI, ``approved`` when the repository
+owner applied the ``book-growth`` label (``scripts/book_growth_mode.py``). Unset means ``block``, so an
 operator's explicit local run of the lane gets the hard answer.
 """
 from __future__ import annotations
@@ -160,46 +160,69 @@ def test_the_rule_measures_one_change_not_a_release_range(environ, applies):
     assert measures_one_change(environ) is applies
 
 
-# ------------------------------------------------- the workflow's mode step, run for real
+# ------------------------------------------------------ whom the rule binds, from raw events
 
-OWNER_LABEL = "labeled razzant"
+def _label(event, login, name="book-growth"):
+    return {"event": event, "actor": {"login": login}, "label": {"name": name}}
+
+
+OWNER_ADDS = _label("labeled", "razzant")
+
+
+@pytest.mark.parametrize("repo,event,association,events,mode", [
+    ("razzant/ouroboros", "pull_request", "COLLABORATOR", [], "block"),
+    ("razzant/ouroboros", "pull_request", "OWNER", [], "block"),
+    ("razzant/ouroboros", "pull_request", "MEMBER", [], "block"),
+    ("razzant/ouroboros", "pull_request", "CONTRIBUTOR", [], "warn"),
+    ("razzant/ouroboros", "pull_request", "FIRST_TIME_CONTRIBUTOR", [], "warn"),
+    ("someone/fork", "pull_request", "OWNER", [OWNER_ADDS], "warn"),  # a fork's own CI never blocks
+    ("razzant/ouroboros", "push", "", [], "warn"),  # a merge push reports; its pull request decided
+    ("razzant/ouroboros", "pull_request", "COLLABORATOR", [OWNER_ADDS], "approved"),
+    # Ouroboros's own token can apply the label, but only the repository owner's approves.
+    ("razzant/ouroboros", "pull_request", "COLLABORATOR", [_label("labeled", "ouroboros-agent")], "block"),
+    ("razzant/ouroboros", "pull_request", "COLLABORATOR", [_label("labeled", "razzant", "other")], "block"),
+    ("razzant/ouroboros", "pull_request", "COLLABORATOR", [OWNER_ADDS, _label("unlabeled", "razzant")], "block"),
+    ("razzant/ouroboros", "pull_request", "COLLABORATOR",
+     [_label("labeled", "ouroboros-agent"), _label("unlabeled", "ouroboros-agent"), OWNER_ADDS], "approved"),
+    ("razzant/ouroboros", "pull_request", "COLLABORATOR",
+     [OWNER_ADDS, {"event": "commented", "actor": {"login": "x"}}, _label("labeled", "razzant", "other")], "approved"),
+    ("razzant/ouroboros", "pull_request", "COLLABORATOR", None, "block"),  # unreadable label events
+])
+def test_the_growth_mode_is_decided_from_raw_label_events(repo, event, association, events, mode):
+    from scripts.book_growth_mode import decide
+
+    assert decide(repo, "razzant", event, association, events) == mode
+
+
+def test_the_mode_step_reads_events_only_for_a_binding_pull_request_and_fails_closed(tmp_path):
+    from scripts.book_growth_mode import main
+
+    output, calls = tmp_path / "output", []
+    base = {"REPO": "razzant/ouroboros", "OWNER": "razzant", "EVENT": "pull_request",
+            "ASSOCIATION": "COLLABORATOR", "PR_NUMBER": "7", "GITHUB_OUTPUT": str(output)}
+
+    def read(repo, number, token):
+        calls.append((repo, number))
+        return [OWNER_ADDS]
+
+    def unreadable(repo, number, token):
+        raise OSError("403")
+
+    assert main(base, read) == "approved" and calls == [("razzant/ouroboros", "7")]
+    assert main({**base, "ASSOCIATION": "CONTRIBUTOR"}, read) == "warn" and len(calls) == 1
+    assert main(base, unreadable) == "block"
+    assert output.read_text(encoding="utf-8").splitlines() == ["mode=approved", "mode=warn", "mode=block"]
 
 
 @pytest.mark.parametrize("job", ["quick-test", "full-test"])
-@pytest.mark.parametrize("repo,event,association,events,mode", [
-    ("razzant/ouroboros", "pull_request", "COLLABORATOR", "", "block"),
-    ("razzant/ouroboros", "pull_request", "OWNER", "", "block"),
-    ("razzant/ouroboros", "pull_request", "CONTRIBUTOR", "", "warn"),
-    ("razzant/ouroboros", "pull_request", "FIRST_TIME_CONTRIBUTOR", "", "warn"),
-    ("someone/fork", "pull_request", "OWNER", "", "warn"),  # a fork's own CI never blocks
-    ("someone/fork", "push", "", "", "warn"),
-    ("razzant/ouroboros", "push", "", "", "block"),
-    ("razzant/ouroboros", "push", "", OWNER_LABEL, "approved"),
-    ("razzant/ouroboros", "pull_request", "COLLABORATOR", OWNER_LABEL, "approved"),
-    # Ouroboros's own token can apply the label, but only the repository owner's approves.
-    ("razzant/ouroboros", "pull_request", "COLLABORATOR", "labeled ouroboros-agent", "block"),
-    ("razzant/ouroboros", "pull_request", "COLLABORATOR", OWNER_LABEL + "\nunlabeled razzant", "block"),
-    ("razzant/ouroboros", "pull_request", "COLLABORATOR", "FAIL", "block"),  # unreadable label
-])
-def test_the_workflow_decides_the_growth_mode(tmp_path, job, repo, event, association, events, mode):
-    import shutil
-
+def test_both_ci_jobs_feed_the_size_lane_the_decided_mode(job):
     import yaml
 
-    bash = shutil.which("bash")
-    if bash is None:
-        pytest.skip("workflow shell is unavailable on this host")
     workflow = yaml.safe_load((REPO / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
-    step = next(s for s in workflow["jobs"][job]["steps"] if s.get("id") == "book_mode")
-    size = next(s for s in workflow["jobs"][job]["steps"] if s.get("id") == "tests_size")
+    steps = workflow["jobs"][job]["steps"]
+    mode = next(step for step in steps if step.get("id") == "book_mode")
+    size = next(step for step in steps if step.get("id") == "tests_size")
+    assert mode["run"] == "python scripts/book_growth_mode.py"
+    assert steps.index(mode) < steps.index(size)
     assert size["env"][MODE_ENV] == "${{ steps.book_mode.outputs.mode }}"
-    stub = ('gh() { case "$2" in *"/pulls") echo 7 ;; *) [ "$EVENTS" = FAIL ] && return 1; '
-            '[ -n "$EVENTS" ] && printf "%s\\n" "$EVENTS"; return 0 ;; esac; }\n')
-    output = tmp_path / "output"
-    env = {**os.environ, "REPO": repo, "OWNER": "razzant", "EVENT": event, "ASSOCIATION": association,
-           "PR_NUMBER": "7", "SHA": "abc", "EVENTS": events, "GITHUB_OUTPUT": str(output)}
-    done = subprocess.run([bash, "-e", "-o", "pipefail", "-c", stub + step["run"]], env=env,
-                          capture_output=True, text=True, encoding="utf-8", timeout=20)
-    assert done.returncode == 0, done.stderr
-    assert output.read_text(encoding="utf-8").strip() == f"mode={mode}"
-    assert ("could not read the book-growth label" in done.stdout) is (events == "FAIL")
+    assert workflow["jobs"][job]["permissions"] == {"contents": "read", "pull-requests": "read"}

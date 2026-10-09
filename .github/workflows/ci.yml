@@ -68,6 +68,10 @@ jobs:
       (github.event_name == 'push' && github.ref == 'refs/heads/ouroboros')
       || (github.event_name == 'pull_request' && github.base_ref == 'ouroboros')
       || github.event_name == 'workflow_dispatch'
+    # The growth-mode step reads the pull request's label events.
+    permissions:
+      contents: read
+      pull-requests: read
     runs-on: ubuntu-latest
     env:
       # This job installs pytest-xdist/pytest-timeout below, so the preflight
@@ -141,16 +145,11 @@ jobs:
         timeout-minutes: 60
         if: ${{ !cancelled() && steps.setup_python.outcome == 'success' }}
         run: python -m pytest tests/ -m "serial and not integration and not browser and not ui_browser and not ui_browser_docker and not portable_detail and not skill_smoke and not size_ratchet" -q --tb=short --ci-evidence-dir="${{ runner.temp }}/ci-evidence/serial"
-      # Whom the reference-book rule binds (tests/test_reference_book_budgets.py):
-      # in the official repository an owner/member/collaborator PR and a push to
-      # `ouroboros` block on a grown book, an outside contributor's PR and any fork's
-      # own CI only warn, and the `book-growth` label approves when the repository
-      # owner applied it last (read live, so a re-run sees a label added later). A
-      # label that cannot be read approves nothing.
+      # Whom the reference-book rule binds (scripts/book_growth_mode.py): the size
+      # lane below blocks, warns or passes a grown book by this mode.
       - name: Decide the reference-book growth mode
         id: book_mode
-        if: ${{ !cancelled() }}
-        shell: bash
+        if: ${{ !cancelled() && steps.setup_python.outcome == 'success' }}
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -158,26 +157,7 @@ jobs:
           EVENT: ${{ github.event_name }}
           ASSOCIATION: ${{ github.event.pull_request.author_association }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          SHA: ${{ github.sha }}
-        run: |
-          mode=block pr=""
-          if [ "$REPO" != "razzant/ouroboros" ]; then
-            mode=warn
-          elif [ "$EVENT" = "pull_request" ]; then
-            case "$ASSOCIATION" in OWNER|MEMBER|COLLABORATOR) ;; *) mode=warn ;; esac
-            pr="$PR_NUMBER"
-          elif [ "$EVENT" = "push" ]; then
-            pr=$(gh api "repos/$REPO/commits/$SHA/pulls" --jq '.[0].number // empty' 2>/dev/null || true)
-          fi
-          if [ -n "$pr" ]; then
-            if events=$(gh api --paginate "repos/$REPO/issues/$pr/events" --jq '.[] | select((.event == "labeled" or .event == "unlabeled") and .label.name == "book-growth") | "\(.event) \(.actor.login)"'); then
-              if [ "$(printf '%s\n' "$events" | tail -n 1)" = "labeled $OWNER" ]; then mode=approved; fi
-            else
-              echo "::warning::could not read the book-growth label of #$pr; no exception applied"
-            fi
-          fi
-          echo "reference-book growth mode: $mode"
-          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+        run: python scripts/book_growth_mode.py
       # OFFICIAL-CI-ONLY enforcement of the repository size gates: manifest
       # exactness against this tree plus the pairwise base-vs-tip shrink-only
       # transition. Local runs exclude the `size_ratchet` marker and surface
@@ -258,6 +238,10 @@ jobs:
       || startsWith(github.ref, 'refs/tags/v')
       || (github.event_name == 'pull_request' && github.base_ref == 'ouroboros')
       || (github.event_name == 'push' && github.ref == 'refs/heads/ouroboros' && github.repository == 'razzant/ouroboros')
+    # The growth-mode step reads the pull request's label events.
+    permissions:
+      contents: read
+      pull-requests: read
     strategy:
       fail-fast: false
       matrix:
@@ -322,16 +306,11 @@ jobs:
         timeout-minutes: 60
         if: ${{ !cancelled() && steps.setup_python.outcome == 'success' && (runner.os != 'Windows' || (steps.posix_tools.outcome == 'success' && steps.select_posix_tools.outcome == 'success')) }}
         run: python -m pytest tests/ -m "serial and not integration and not browser and not ui_browser and not ui_browser_docker and not portable_detail and not skill_smoke and not size_ratchet" -q --tb=short --ci-evidence-dir="${{ runner.temp }}/ci-evidence/serial"
-      # Whom the reference-book rule binds (tests/test_reference_book_budgets.py):
-      # in the official repository an owner/member/collaborator PR and a push to
-      # `ouroboros` block on a grown book, an outside contributor's PR and any fork's
-      # own CI only warn, and the `book-growth` label approves when the repository
-      # owner applied it last (read live, so a re-run sees a label added later). A
-      # label that cannot be read approves nothing.
+      # Whom the reference-book rule binds (scripts/book_growth_mode.py): the size
+      # lane below blocks, warns or passes a grown book by this mode.
       - name: Decide the reference-book growth mode
         id: book_mode
-        if: ${{ !cancelled() }}
-        shell: bash
+        if: ${{ !cancelled() && steps.setup_python.outcome == 'success' }}
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -339,26 +318,7 @@ jobs:
           EVENT: ${{ github.event_name }}
           ASSOCIATION: ${{ github.event.pull_request.author_association }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          SHA: ${{ github.sha }}
-        run: |
-          mode=block pr=""
-          if [ "$REPO" != "razzant/ouroboros" ]; then
-            mode=warn
-          elif [ "$EVENT" = "pull_request" ]; then
-            case "$ASSOCIATION" in OWNER|MEMBER|COLLABORATOR) ;; *) mode=warn ;; esac
-            pr="$PR_NUMBER"
-          elif [ "$EVENT" = "push" ]; then
-            pr=$(gh api "repos/$REPO/commits/$SHA/pulls" --jq '.[0].number // empty' 2>/dev/null || true)
-          fi
-          if [ -n "$pr" ]; then
-            if events=$(gh api --paginate "repos/$REPO/issues/$pr/events" --jq '.[] | select((.event == "labeled" or .event == "unlabeled") and .label.name == "book-growth") | "\(.event) \(.actor.login)"'); then
-              if [ "$(printf '%s\n' "$events" | tail -n 1)" = "labeled $OWNER" ]; then mode=approved; fi
-            else
-              echo "::warning::could not read the book-growth label of #$pr; no exception applied"
-            fi
-          fi
-          echo "reference-book growth mode: $mode"
-          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+        run: python scripts/book_growth_mode.py
       # Same size-ratchet enforcement contract as quick-test (see its comment).
       # PRs carry their base SHA; branch pushes carry event.before; dispatch runs leave
       # the env empty and tag pushes carry an all-zeros before — both degrade to
