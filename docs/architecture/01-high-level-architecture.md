@@ -311,7 +311,7 @@ ouroboros/ — agent core and shared runtime (§6)
   extension_process_runner.py — Extension child processes: scrubbed env, per-skill deps, timeouts, graceful host errors
   extension_route_stream.py — Portable stdio response frames and ASGI relay for out-of-process extension routes (§3 Out-of-process extension responses)
   extension_ui_validation.py — The host-owned declarative-schema-v1 widget validator
-  extension_isolated_deps.py — In-process bridge for isolated-dependency extensions; `_ExecutionBarrier` is a non-reentrant reader/writer lease over the shared `sys.path` seam, polled rather than blocking the ASGI loop
+  extension_isolated_deps.py — Non-reentrant reader/writer leases for `sys.path`, polled asynchronously; dependency RLock also serializes owned importer-cache sweeps against double deletion, not plugin execution
   extension_health.py — Durable process-qualified per-skill health at `data/state/skills/<name>/health.json`; server observation is authoritative, worker observation a handoff-qualified view
   extension_plugin_api.py, extension_registry_state.py, extension_liveness.py, extension_child_catalog.py, extension_import_staging.py, extension_surface_names.py — The extension runtime's leaves: the `PluginAPI` handed to `register(api)`, live-surface registries, liveness, child-catalog validation, staged import trees, provider-safe surface naming
   skill_token.py — Opaque Host Service token minting/validation (§12)
