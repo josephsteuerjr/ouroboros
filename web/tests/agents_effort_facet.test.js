@@ -9,7 +9,7 @@ import test from 'node:test';
 
 import { ROUTE_KIND_AGENT_SESSION, ROUTE_KIND_API_MODEL, compoundSessionEffort, compoundSessionEffortConflict } from '../modules/route_editor_primitives.js';
 import {
-    availableSubagentRowMarkup, availableSubagentsSavePayload, createAvailableSubagentsEditor,
+    availableSubagentRowMarkup, availableSubagentsSavePayload, createAvailableSubagentsEditor, validateAvailableSubagentsSetting,
 } from '../modules/subagents_settings.js';
 
 const QUIET = { catalogKnown: false, accountsKnown: false, quotaKnown: false, statusError: '', snapshot: null };
@@ -69,6 +69,16 @@ test('the level in a model name is read for session targets and API-wrapped Clau
     assert.equal(compoundSessionEffort('openai::gpt-5.6-terra-high'), '');
     assert.equal(compoundSessionEffortConflict('claudexor::agy=gemini-3.7-flash-xhigh', 'low'), 'xhigh');
     assert.equal(compoundSessionEffortConflict('claudexor::agy=gemini-3.7-flash-xhigh', 'xhigh'), '', 'the same level is no conflict');
+});
+
+test('a stored pin beside a named model: a session row is refused, an API-wrapped row still saves', () => {
+    const setting = (row) => ({ enabled: true, items: [row] });
+    const sessionNamed = session({ route: { kind: ROUTE_KIND_AGENT_SESSION, target_id: 'cursor=grok-4.7-xhigh-fast' }, effort: 'low' });
+    assert.match(validateAvailableSubagentsSetting(setting(sessionNamed)).join(' '), /conflicts with compound route effort “xhigh”/);
+    // A factory reviewer seat or an older row may carry an explicit level beside `claudexor::cursor=…-xhigh`:
+    // the name wins when it runs, and the rest of the catalog must still save.
+    const apiNamed = api({ route: { kind: ROUTE_KIND_API_MODEL, target_id: 'claudexor::cursor=grok-4.7-xhigh-fast' }, effort: 'low' });
+    assert.deepEqual(validateAvailableSubagentsSetting(setting(apiNamed)), []);
 });
 
 test('markup: Auto reads the chat range, a Reviewer the top of it, a named row the level in the model name', () => {

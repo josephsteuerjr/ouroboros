@@ -204,8 +204,10 @@ function rowErrors(row, index, ids, rows = null, inherited = '') {
         errors.push('has an unsupported reasoning effort.');
     }
     if (row?.processing_preference && !PROCESSING_CHOICES.includes(row.processing_preference)) errors.push('needs Standard, Fast, Economy or inherited processing.');
-    // A level in the model name (a session slug or the API-wrapped `claudexor::cursor=…`) wins; a contradicting pin is refused.
-    const encodedEffort = compoundSessionEffortConflict(route.target_id, row?.effort);
+    // A session slug's level refuses a contradicting pin, as the server does. An API-wrapped
+    // `claudexor::cursor=…` row keeps a stored pin readable: the name wins when it runs.
+    const encodedEffort = route.kind === ROUTE_KIND_AGENT_SESSION
+        ? compoundSessionEffortConflict(route.target_id, row?.effort) : '';
     if (encodedEffort) {
         errors.push(`effort “${row.effort}” conflicts with compound route effort “${encodedEffort}”.`);
     }
