@@ -1226,6 +1226,22 @@
  * @property {SubagentLastDelegation=} subagent_last_delegation
  * @property {string=} error
  */
+/**
+ * @typedef {Object} ClaudexorPassiveReadError
+ * @property {string} code
+ * @property {number=} status_code
+ */
+/**
+ * @typedef {Object} ClaudexorQuotaResponse
+ * @property {'quota'} view
+ * @property {Object} profiles
+ * @property {Array<Object>} quota
+ * @property {Array<Object>} quota_absences
+ * @property {boolean} unified_accounts
+ * @property {ClaudexorStatusReads} reads
+ * @property {Object<'discovery'|'accounts'|'quota', ClaudexorPassiveReadError>} read_errors
+ * @property {Object<string, number>} timings_ms
+ */
 
 /**
  * One required bare daemon job per operation. Create/input/snapshot metadata and deviceCode stay beside it; attach commands need the proven packaged role.

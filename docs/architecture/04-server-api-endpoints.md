@@ -60,7 +60,7 @@ Every path-addressed `/api/files/*` operation resolves its requested `path` and 
 | POST | `/api/settings` | |
 | POST | `/api/settings/secret` | |
 | GET | `/api/review-pool` | |
-| GET | `/api/claudexor/status` | daemon adds nullable `last_exit` and `memory`: a saved host exit observation plus a read of the already-running engine, never a wake (§9) |
+| GET | `/api/claudexor/status` | daemon adds nullable `last_exit`/`memory`, never a wake (§9); `?view=quota`: roster/quota only, no `daemon` |
 | POST | `/api/claudexor/quota/refresh` | |
 | POST | `/api/claudexor/wake` | |
 | GET | `/api/claudexor/maintenance/harnesses` | passive inspection; optional fresh/latest check |
