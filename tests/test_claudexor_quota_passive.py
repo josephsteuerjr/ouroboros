@@ -81,9 +81,11 @@ def passive_engine(monkeypatch, tmp_path):
         calls.append((request.method, path, dict(request.url.params)))
         assert request.headers["Authorization"] == "Bearer fixture-passive-token"
         assert request.headers[wire.PROTOCOL_HEADER] == str(wire.CLAUDEXOR_PROTOCOL_MAJOR)
+        # Hooks judge the request they intercept: roster and quota reads are
+        # concurrent, so the last recorded call may belong to the other read.
         hook = state["hooks"].get(path)
         if hook is not None:
-            hook()
+            hook(request)
         failure = state["errors"].get(path)
         if failure is not None:
             if isinstance(failure, Exception):
@@ -181,7 +183,7 @@ def test_quota_view_preserves_roster_and_one_quota_epoch_without_diagnostics(pas
     # A rendezvous verifies the two required reads are concurrent, independent
     # of the wall-clock values in the response's diagnostic timing fields.
     rendezvous = Barrier(2, timeout=5)
-    engine.state["hooks"] = dict.fromkeys(engine.state["responses"], rendezvous.wait)
+    engine.state["hooks"] = dict.fromkeys(engine.state["responses"], lambda _request: rendezvous.wait())
     engine.provision()
     before = {path: path.read_bytes() for path in engine.config_dir.rglob("*") if path.is_file()}
     with TestClient(_app()) as client:
@@ -351,7 +353,7 @@ def test_quota_consumer_returns_while_full_status_catalog_is_still_blocked(passi
     catalog_entered = Event()
     release_catalog = Event()
 
-    def delayed_catalog():
+    def delayed_catalog(_request):
         catalog_entered.set()
         assert release_catalog.wait(10), "test cleanup did not release catalog"
 
@@ -444,21 +446,41 @@ def test_quota_view_repeated_refusal_stops_after_one_legacy_read(passive_engine)
     assert [params for _, path, params in engine.calls if path == "/v2/quota"] == [QUOTA_VIEW, {}]
 
 
-def test_quota_view_325_selector_refusal_uses_one_passive_legacy_response(passive_engine):
+def test_quota_view_325_selector_refusal_uses_one_passive_legacy_response(passive_engine, monkeypatch):
     engine = passive_engine
     engine.state["responses"]["/v2/quota"] = _without_constraint_freshness(ENGINE_FRESHNESS_QUOTA)
-    def refuse_selector_only():
-        if engine.calls[-1][2]:
+    # Pin the interleaving where the concurrent roster read is recorded after the
+    # selector request and before its refusal is decided.
+    selector_recorded = Event()
+    roster_recorded = Event()
+    read_roster = wire.ClaudexorGateway.credential_profiles
+
+    def roster_after_selector(gateway):
+        assert selector_recorded.wait(5), "quota selector request never reached the engine"
+        return read_roster(gateway)
+
+    def refuse_selector_only(request):
+        if dict(request.url.params) == QUOTA_VIEW:
+            selector_recorded.set()
+            assert roster_recorded.wait(5), "roster read did not overlap the selector request"
             engine.state["errors"]["/v2/quota"] = (400, {"code": "invalid_request", "message": "view must be resources"})
         else:
             engine.state["errors"].pop("/v2/quota", None)
-    engine.state["hooks"]["/v2/quota"] = refuse_selector_only
+
+    monkeypatch.setattr(wire.ClaudexorGateway, "credential_profiles", roster_after_selector)
+    engine.state["hooks"].update({
+        "/v2/credential-profiles": lambda _request: roster_recorded.set(),
+        "/v2/quota": refuse_selector_only,
+    })
     engine.provision()
     with TestClient(_app()) as client:
         payload = _read(client)
-    assert payload["reads"]["quota"] == "ok"
+    assert payload["reads"] == {"catalog": "not_read", "accounts": "ok", "quota": "ok"}
     assert payload["quota"][0]["freshness"] == "stale"
     assert all("freshness" not in c for c in payload["quota"][0]["constraints"])
+    assert engine.calls == [
+        ("GET", "/v2/quota", QUOTA_VIEW), ("GET", "/v2/credential-profiles", {}), ("GET", "/v2/quota", {}),
+    ]
     assert [params for _, path, params in engine.calls if path == "/v2/quota"] == [QUOTA_VIEW, {}]
     assert all(method == "GET" for method, _, _ in engine.calls)
 
