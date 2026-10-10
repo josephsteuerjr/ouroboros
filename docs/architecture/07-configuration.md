@@ -171,12 +171,12 @@ A registry of `config.SETTINGS_DEFAULTS` (defaults canonical in `settings_defaul
 | OUROBOROS_HUB_CATALOG_URL | `https://raw.githubusercontent.com/razzant/OuroborosHub/main/catalog.json` | OuroborosHub catalog URL (automatic fetch limited to catalog JSON; installs verify SHA-256) |
 | OUROBOROS_CLAWHUB_REGISTRY_URL | `https://clawhub.ai/api/v1` | ClawHub registry URL |
 | OUROBOROS_PROMPT_CACHE_TTL | 1h | Prompt-cache tier default/5m/1h for Anthropic-family cache markers, applied at the send boundary and recorded in usage |
-| OUROBOROS_EFFORT_TASK | medium | Task reasoning effort, the start of every ordinary root that names none (§6 Explicit starting effort of a root); also the Light post-task synthesis (reflection, Pattern Register) |
-| OUROBOROS_EFFORT_EVOLUTION | high | Evolution effort |
+| OUROBOROS_EFFORT_MIN | low | Floor of the effort range (`settings_scales.effort_range` reads MIN ≤ TASK ≤ MAX tolerantly; written by `POST /api/owner/effort-range`) |
+| OUROBOROS_EFFORT_TASK | medium | The recommended level: Main's, every ordinary root that names none (§6 Explicit starting effort of a root), an Auto child, the Light post-task synthesis |
+| OUROBOROS_EFFORT_MAX | high | Top of the range: caps Ouroboros's own requests outside Cyber Pro; Auto reviewers, evolution tasks and consciousness wakes start here |
 | OUROBOROS_EFFORT_REVIEW | (migrated) | Retired surface default: at load it becomes the effort of each triad seat's reviewer row that had none; afterwards the row's `effort` is the only effort; env inert |
 | OUROBOROS_EFFORT_SCOPE_REVIEW | (migrated) | Retired surface default: consumed into the scope seats' reviewer rows at load; env inert |
 | OUROBOROS_EFFORT_DEEP_SELF_REVIEW | (migrated) | Retired surface default: consumed into the deep-review helper row at load; env inert |
-| OUROBOROS_EFFORT_CONSCIOUSNESS | "" | Consciousness effort; empty = the Task effort (a wake is an ordinary Main turn) |
 | OUROBOROS_RETURN_REASONING | true | Ask OpenRouter to return reasoning; direct/local request copies strip OpenRouter-only fields |
 | OUROBOROS_REASONING_SUMMARY | auto | Readable reasoning-summary rendering; presentation-only, never added to history or returned to providers |
 | OUROBOROS_TASK_IDLE_TIMEOUT_SEC | 900 | Idle timeout; requires absence of real task/subtree progress (§6 Task lifecycle) |

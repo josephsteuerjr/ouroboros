@@ -43,14 +43,18 @@ def test_initial_effort_invalid_falls_back_to_medium(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_effort_defaults_in_config():
-    """All effort keys have correct defaults in SETTINGS_DEFAULTS."""
+    """The owner's effort range ships low / medium / high; the role keys are retired."""
+    from ouroboros.settings_defaults import EFFORT_RANGE_RETIRED_SETTING_KEYS, RETIRED_SETTING_KEYS
+
+    assert SETTINGS_DEFAULTS.get("OUROBOROS_EFFORT_MIN") == "low"
     assert SETTINGS_DEFAULTS.get("OUROBOROS_EFFORT_TASK") == "medium"
-    assert SETTINGS_DEFAULTS.get("OUROBOROS_EFFORT_EVOLUTION") == "high"
-    assert SETTINGS_DEFAULTS.get("OUROBOROS_EFFORT_CONSCIOUSNESS") == ""  # empty = the Task / Chat effort
+    assert SETTINGS_DEFAULTS.get("OUROBOROS_EFFORT_MAX") == "high"
     # The review surface efforts are retired settings (review pool: effort is a field of
-    # the reviewer row); the resolver keeps its own "high" default for callers.
-    for retired in ("OUROBOROS_EFFORT_REVIEW", "OUROBOROS_EFFORT_SCOPE_REVIEW", "OUROBOROS_EFFORT_DEEP_SELF_REVIEW"):
-        assert retired not in SETTINGS_DEFAULTS
+    # the reviewer row); the evolution/consciousness keys retired with the range.
+    for retired in ("OUROBOROS_EFFORT_REVIEW", "OUROBOROS_EFFORT_SCOPE_REVIEW", "OUROBOROS_EFFORT_DEEP_SELF_REVIEW",
+                    "OUROBOROS_EFFORT_EVOLUTION", "OUROBOROS_EFFORT_CONSCIOUSNESS"):
+        assert retired not in SETTINGS_DEFAULTS and retired in RETIRED_SETTING_KEYS
+    assert set(EFFORT_RANGE_RETIRED_SETTING_KEYS) == {"OUROBOROS_EFFORT_EVOLUTION", "OUROBOROS_EFFORT_CONSCIOUSNESS"}
 
 
 def test_review_effort_default_carriers_stay_in_sync():
@@ -383,11 +387,14 @@ def test_apply_settings_to_env_includes_effort_keys(monkeypatch, tmp_path):
     """apply_settings_to_env propagates all effort keys."""
     settings = {
         "OUROBOROS_EFFORT_TASK": "low",
-        "OUROBOROS_EFFORT_EVOLUTION": "medium",
+        "OUROBOROS_EFFORT_MIN": "none",
+        "OUROBOROS_EFFORT_MAX": "max",
         # Retired review-lane efforts in a stale settings dict are ghosts too (the read
-        # seam migrates them into the reviewer rows): apply must NOT export them.
+        # seam migrates them into the reviewer rows): apply must NOT export them; the
+        # retired role keys neither.
         "OUROBOROS_EFFORT_REVIEW": "high",
         "OUROBOROS_EFFORT_SCOPE_REVIEW": "low",
+        "OUROBOROS_EFFORT_EVOLUTION": "medium",
         "OUROBOROS_EFFORT_CONSCIOUSNESS": "none",
         # ABI-10: retired comma keys in a stale settings dict are ghosts —
         # apply must NOT export them (asserted below).
@@ -400,10 +407,12 @@ def test_apply_settings_to_env_includes_effort_keys(monkeypatch, tmp_path):
     }
     apply_settings_to_env(settings)
     assert os.environ.get("OUROBOROS_EFFORT_TASK") == "low"
-    assert os.environ.get("OUROBOROS_EFFORT_EVOLUTION") == "medium"
+    assert os.environ.get("OUROBOROS_EFFORT_MIN") == "none"
+    assert os.environ.get("OUROBOROS_EFFORT_MAX") == "max"
     assert os.environ.get("OUROBOROS_EFFORT_REVIEW") is None
     assert os.environ.get("OUROBOROS_EFFORT_SCOPE_REVIEW") is None
-    assert os.environ.get("OUROBOROS_EFFORT_CONSCIOUSNESS") == "none"
+    assert os.environ.get("OUROBOROS_EFFORT_EVOLUTION") is None
+    assert os.environ.get("OUROBOROS_EFFORT_CONSCIOUSNESS") is None
     # ABI-10: the retired comma-list INPUT is ignored — the env carries neither the
     # retired value nor a projected floor (the lane projection left with the lanes).
     assert os.environ.get("OUROBOROS_REVIEW_MODELS") is None
@@ -413,9 +422,9 @@ def test_apply_settings_to_env_includes_effort_keys(monkeypatch, tmp_path):
     assert os.environ.get("OUROBOROS_AUTO_GRANT_REVIEWED_SKILLS") == "true"
     assert os.environ.get("OUROBOROS_RETURN_REASONING") == ""
     # cleanup
-    for k in ("OUROBOROS_EFFORT_TASK", "OUROBOROS_EFFORT_EVOLUTION",
+    for k in ("OUROBOROS_EFFORT_TASK", "OUROBOROS_EFFORT_MIN", "OUROBOROS_EFFORT_MAX",
               "OUROBOROS_EFFORT_REVIEW", "OUROBOROS_EFFORT_SCOPE_REVIEW",
-              "OUROBOROS_EFFORT_CONSCIOUSNESS",
+              "OUROBOROS_EFFORT_EVOLUTION", "OUROBOROS_EFFORT_CONSCIOUSNESS",
               "OUROBOROS_REVIEW_MODELS", "OUROBOROS_REVIEW_ENFORCEMENT",
               "OUROBOROS_SCOPE_REVIEW_MODELS", "OUROBOROS_TASK_REVIEW_MODE",
               "OUROBOROS_AUTO_GRANT_REVIEWED_SKILLS", "OUROBOROS_RETURN_REASONING"):

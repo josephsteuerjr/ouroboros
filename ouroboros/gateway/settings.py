@@ -703,7 +703,7 @@ def _review_pool_costs(items: list, snapshot: Dict[str, Any]) -> Dict[str, Dict[
 def review_pool_rows(items: list, slots: list, handles: Dict[str, str],
                      last_executions: Dict[str, Any], costs: Dict[str, Dict[str, Any]]) -> tuple:
     """(pool, excluded) of ``GET /api/review-pool``: pool slots in catalog order, each joined with its row's facts."""
-    from ouroboros.route_spec import ROUTE_KIND_AGENT_SESSION, RouteSpec, compound_session_effort
+    from ouroboros.route_spec import ROUTE_KIND_AGENT_SESSION, ROUTE_KIND_API_MODEL, RouteSpec, model_named_effort
 
     by_id = {str(item.get("subagent_id") or ""): item for item in items}
     pool = []
@@ -713,13 +713,14 @@ def review_pool_rows(items: list, slots: list, handles: Dict[str, str],
         route = item.get("route") or {}
         target = str(route.get("target_id") or "")
         session = route.get("kind") == ROUTE_KIND_AGENT_SESSION
-        compound = session and compound_session_effort(RouteSpec(ROUTE_KIND_AGENT_SESSION, target))
+        named = model_named_effort(RouteSpec(ROUTE_KIND_AGENT_SESSION if session else ROUTE_KIND_API_MODEL, target))
         pool.append({
             "subagent_id": row_id, "handle": handles.get(row_id, row_id),
             "route": {"kind": str(route.get("kind") or ""), "target_id": target,
                       "credential_profile_id": str(route.get("credential_profile_id") or "")},
             "effort": str(getattr(slot, "effort", "") or ""),
-            "effort_source": "row" if item.get("effort") else ("compound" if compound else "default"),
+            # Who decides the level with no order: the model name, the owner's pin, or Auto (the range's top).
+            "effort_source": "model_name" if named else ("pin" if item.get("effort") else "auto"),
             "delivery": "session" if session else ("packet" if item.get("delivery") == "packet" else "native"),
             "processing_preference": str(item.get("processing_preference") or ""),
             "access": str(item.get("access") or ("full" if session else "")),
