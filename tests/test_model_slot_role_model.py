@@ -450,6 +450,11 @@ def test_effort_is_a_request_the_dispatch_decides_inside_the_range(tmp_path, mon
     ctx = _scheduling_ctx(tmp_path / "pinned-cyber")
     out = _schedule_task(ctx, subagent_id=pinned, objective="o", expected_output="e", effort="xhigh")
     assert "effort requested: xhigh (Cyber Pro: it outranks my human's pin low)" in out
+    # A consciousness-origin tree capped below Cyber Pro keeps the pin, as its dispatch does.
+    ctx = _scheduling_ctx(tmp_path / "pinned-capped")
+    ctx.task_metadata = {"runtime_mode_cap": "light"}
+    out = _schedule_task(ctx, subagent_id=pinned, objective="o", expected_output="e", effort="xhigh")
+    assert "effort requested: xhigh; my human pinned the row at low, which stands outside Cyber Pro" in out
 
 
 def test_effort_is_decided_at_dispatch_inside_the_owners_range(tmp_path, monkeypatch):

@@ -327,11 +327,11 @@ def _finalize_schedule_emission(ctx: ToolContext, emission: Dict[str, Any]) -> s
         f"Subagent request queued {task_ids[0]}: {objective} "
         f"(subagent_id={selected_name}, route={route_kind}, {commitment})"
         f"{worker_note}{slot_note}{profile_note}{coop_note}{legacy_note}{access_note}"
-        f"{_effort_request_note(configured, str(emission.get('requested_effort') or ''))}"
+        f"{_effort_request_note(configured, str(emission.get('requested_effort') or ''), getattr(ctx, 'task_metadata', None))}"
     )
 
 
-def _effort_request_note(configured: Dict[str, Any], requested: str) -> str:
+def _effort_request_note(configured: Dict[str, Any], requested: str, task_metadata: Any = None) -> str:
     """What the parent can be told about its effort request BEFORE dispatch decides: the
     request itself and, when the selected row is pinned or model-named, that outside Cyber
     Pro the row's level stands (the dispatched level reaches the parent in the outcome)."""
@@ -348,7 +348,8 @@ def _effort_request_note(configured: Dict[str, Any], requested: str) -> str:
         return f"\neffort requested: {requested} (decided at dispatch inside my human's range)"
     from ouroboros.runtime_mode_policy import effort_range_binds
 
-    if not effort_range_binds():
+    # The parent's effective mode (a consciousness-origin tree's cap included), as dispatch reads it.
+    if not effort_range_binds(task_metadata if isinstance(task_metadata, dict) else None):
         return f"\neffort requested: {requested} (Cyber Pro: it outranks my human's pin {pin})"
     return f"\neffort requested: {requested}; my human pinned the row at {pin}, which stands outside Cyber Pro"
 
