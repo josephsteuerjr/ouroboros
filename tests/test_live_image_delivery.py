@@ -468,7 +468,7 @@ def test_a_reused_original_survives_the_views_age_sweep(tmp_path):
 
 
 # The wait/decision and chat paths are real; only engine/HTTP transport is controlled.
-from tests.test_model_wait import live_wait, setup  # noqa: E402,F401
+from tests.test_model_wait import live_wait as live_wait, setup as setup  # noqa: E402
 
 
 @pytest.mark.parametrize('refused', [False, True])

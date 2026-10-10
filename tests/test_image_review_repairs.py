@@ -9,8 +9,8 @@ import pytest
 from PIL import Image
 
 from tests.test_live_image_delivery import decode_block, image_blocks, pixels
-from tests.test_model_wait import live_wait, setup  # noqa: F401
-from tests.test_vision_model_wait import child_fixture  # noqa: F401
+from tests.test_model_wait import live_wait as live_wait, setup as setup
+from tests.test_vision_model_wait import child_fixture as child_fixture
 
 
 @pytest.mark.parametrize("kind", ["image", "file", "mixed"])
