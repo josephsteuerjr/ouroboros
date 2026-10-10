@@ -305,8 +305,12 @@ def _start_request(ctx: ToolContext, route: "DelegationRoute", authority: "Deleg
     if directory_options:
         request.setdefault("execution", {}).update(directory_options)
     # credentialProfileId is the account pin (D-U5), reviewer-slot wire contract; strict
-    # (D-U6). In the stored canonical body, so a retry_of replay stays byte-identical.
-    for key, value in (("model", target.model_id), ("effort", target.effort), ("credentialProfileId", target.credential_ref)):
+    # (D-U6). In the stored canonical body, so a retry_of replay stays byte-identical. A
+    # level the model slug encodes is the route's identity: no different effort rides beside it.
+    from ouroboros.route_spec import harness_model_named_effort
+
+    effort = harness_model_named_effort(target.provider_route, target.model_id) or target.effort
+    for key, value in (("model", target.model_id), ("effort", effort), ("credentialProfileId", target.credential_ref)):
         if value:
             request[key] = value
     if seconds:
