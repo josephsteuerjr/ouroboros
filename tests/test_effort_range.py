@@ -658,3 +658,67 @@ def test_main_starts_at_the_named_level_or_recommended_and_strong_roles_at_the_t
     assert _initial_effort_for({"id": "r", "reasoning_effort": "xhigh"}, "task") == "low"  # the name wins
     # A child reads back what its dispatch decided, never Main's name.
     assert _initial_effort_for({"id": "c", "delegation_role": "subagent", "reasoning_effort": "high"}, "task") == "high"
+
+
+# --- presets, the mind's facts, onboarding -------------------------------------------------
+
+
+def test_presets_mint_auto_actors_and_keep_reviewer_seats_pinned():
+    from ouroboros.reviewer_slot_config import review_pool_rows
+    from ouroboros.subscription_install_presets import HarnessDiscovery, compile_install_preset
+    from tests.test_subscription_install_presets import LIVE_MODELS
+
+    discoveries = [HarnessDiscovery(h, tuple(LIVE_MODELS[h])) for h in ("claude", "cursor")]
+    preset = compile_install_preset(discoveries, settings={"OPENROUTER_API_KEY": "configured",
+                                                           "OUROBOROS_MODEL": "openai/gpt-5.6-sol",
+                                                           "OUROBOROS_MODEL_LIGHT": "openai/gpt-5.6-luna"})
+    assert preset.ok, preset.refusal
+    items = {row["subagent_id"]: row for row in json.loads(preset.available_subagents)["items"]}
+    assert "effort" not in items["primary-builder"] and items["primary-builder"]["route"]["target_id"] == "claude=claude-opus-5"
+    assert items["independent-perspective"]["route"]["target_id"] == "cursor=cursor-grok-4.6-high"
+    assert items["independent-perspective"]["effort"] == "high"  # the level rides in the model id
+    assert "effort" not in items["fast-scout"]
+    pool = review_pool_rows({"OUROBOROS_SUBAGENTS": preset.available_subagents})
+    assert pool and all(row.effort for row in pool)  # reviewer seats keep their explicit levels
+    assert not any(row.slot_id == "primary-builder" for row in pool)
+
+
+def test_legacy_fast_scout_is_an_auto_row():
+    from ouroboros.configured_subagents import resolve_settings_subagent_candidate
+
+    resolution, _diagnostics = resolve_settings_subagent_candidate({
+        "OUROBOROS_MODEL": "openai/gpt-5.6-sol", "OUROBOROS_MODEL_LIGHT": "openai/gpt-5.6-luna",
+        "OPENROUTER_API_KEY": "configured"})
+    rows = {row.subagent_id: row for row in resolution.config.items}
+    assert rows["fast-scout"].effort == ""
+
+
+def test_the_runtime_block_names_the_range_and_whether_it_binds(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    from ouroboros.context import build_runtime_section
+
+    _env(monkeypatch, OUROBOROS_EFFORT_TASK="medium", OUROBOROS_EFFORT_MAX="xhigh")
+    monkeypatch.setattr("ouroboros.config._BOOT_RUNTIME_MODE", "pro")
+    env = SimpleNamespace(repo_dir=tmp_path, drive_root=tmp_path, budget_drive_root=tmp_path)
+    section = build_runtime_section(env, {"id": "t", "type": "task"})
+    data = json.loads(section.split("## Runtime context\n\n", 1)[1])
+    assert data["effort_range"] == {"min": "low", "recommended": "medium", "max": "xhigh", "binds": True}
+    monkeypatch.setattr("ouroboros.config._BOOT_RUNTIME_MODE", "cyber_pro")
+    section = build_runtime_section(env, {"id": "t", "type": "task"})
+    assert json.loads(section.split("## Runtime context\n\n", 1)[1])["effort_range"]["binds"] is False
+
+
+def test_review_rows_on_a_named_main_keep_the_names_level(monkeypatch):
+    from ouroboros.gateway.onboarding import review_rows_on_main
+
+    catalog = {"enabled": True, "items": [
+        {"subagent_id": "r1", "recommended_use": "x", "review_eligible": True, "effort": "medium",
+         "route": {"kind": "api_model", "target_id": "openai/gpt-5.6-sol"}},
+        {"subagent_id": "r2", "recommended_use": "y", "review_eligible": True,
+         "route": {"kind": "agent_session", "target_id": "cursor=grok-4.7-xhigh-fast"}}]}
+    plain = review_rows_on_main(catalog, {"OPENROUTER_API_KEY": "configured", "OUROBOROS_MODEL": "openai/gpt-5.6-sol"})
+    assert [row.get("effort") for row in plain["items"]] == ["medium", "xhigh"]
+    named = review_rows_on_main(catalog, {"CLAUDEXOR_MODELS_ENABLED": "true",
+                                          "OUROBOROS_MODEL": "claudexor::cursor=grok-4.7-max-fast"})
+    assert [row.get("effort") for row in named["items"]] == [None, None]
