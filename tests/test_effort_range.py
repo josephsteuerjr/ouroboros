@@ -885,3 +885,48 @@ def test_the_endpoint_is_indexed_mirrored_and_owner_only_for_the_browser():
     assert _is_effort_range_owner_post(SimpleNamespace(method="POST", url="http://127.0.0.1:8765/api/owner/effort-range"))
     assert _is_effort_range_owner_post(SimpleNamespace(method="POST", url="http://127.0.0.1:8765/api/owner/effort%2Drange/"))
     assert not _is_effort_range_owner_post(SimpleNamespace(method="GET", url="http://127.0.0.1:8765/api/owner/effort-range"))
+
+
+@pytest.mark.parametrize("role", ["evolution", "consciousness"])
+@pytest.mark.parametrize("mode", ["pro", "cyber_pro"])
+def test_an_owner_task_pin_holds_against_an_evolution_or_wake_self_switch(tmp_path, monkeypatch, role, mode):
+    """Evolution tasks and wakes may move their own level inside the range, but an explicit
+    effort the owner gave the task (API, CLI, schedule) is a pin outside Cyber Pro."""
+    from ouroboros.tools.control_runtime import _switch_model
+
+    _env(monkeypatch, OUROBOROS_EFFORT_MIN="low", OUROBOROS_EFFORT_TASK="medium", OUROBOROS_EFFORT_MAX="high")
+    monkeypatch.setenv("OUROBOROS_MODEL", "openai::gpt-5.6-sol")
+    monkeypatch.setattr("ouroboros.config._BOOT_RUNTIME_MODE", mode)
+    metadata = {"model_role": "consciousness"} if role == "consciousness" else {}
+    pinned = _main_ctx(tmp_path, monkeypatch, **metadata, reasoning_effort="xhigh")
+    pinned.current_task_type = "evolution" if role == "evolution" else "task"
+    out = _switch_model(pinned, effort="low")
+    if mode == "cyber_pro":
+        assert pinned.active_effort_override == "low"
+    else:
+        assert pinned.active_effort_override is None
+        assert "pinned this task at xhigh" in out
+    free = _main_ctx(tmp_path, monkeypatch, **metadata)
+    free.current_task_type = pinned.current_task_type
+    _switch_model(free, effort="low")
+    assert free.active_effort_override == "low", "without a pin the role still moves inside the range"
+
+
+def test_a_session_start_failure_keeps_the_rows_configured_effort_as_identity(tmp_path):
+    """An Auto row whose leaf was started at high and refused must not read as "Earlier
+    settings": the receipt identity is the row's pin ('' = Auto) on both terminal paths."""
+    from ouroboros import delegate_custody as custody
+    from ouroboros.subagent_history import session_request_facts, subagent_last_delegation
+
+    start = {"model": "m", "effort": "high", "access": "full"}
+    facts = session_request_facts(start, selected_subagent_id="worker", task_id="task", route="codex",
+                                  processing={"requested": ""}, row_effort="")
+    assert custody.emit(tmp_path, custody.START_FAILED, {
+        **facts, "invocation_id": "failed-attempt", "definite": True, "reason": "start_refused"})
+    assert subagent_last_delegation(tmp_path)["identity"]["effort"] == ""
+    # A recovery fact without the row's pin keeps the level it always recorded.
+    legacy = session_request_facts(start, selected_subagent_id="worker", task_id="task", route="codex",
+                                   processing={"requested": ""})
+    assert custody.emit(tmp_path, custody.START_FAILED, {
+        **legacy, "invocation_id": "legacy-attempt", "definite": True, "reason": "start_refused"})
+    assert subagent_last_delegation(tmp_path)["identity"]["effort"] == "high"

@@ -6,7 +6,7 @@ import json
 import logging
 import pathlib
 from datetime import datetime, timezone
-from typing import Any, Mapping
+from typing import Any, Mapping, Optional
 
 from ouroboros.utils import utc_now_iso, write_text_atomic
 
@@ -212,12 +212,16 @@ def _api_observed_facts(call: Mapping[str, Any], *, failed: bool = False) -> dic
 
 
 def session_request_facts(request: Mapping[str, Any], *, selected_subagent_id: str,
-                          task_id: str, route: str, processing: Mapping[str, Any]) -> dict:
-    """Compact original intent for existing custody rows, without copying the work order."""
+                          task_id: str, route: str, processing: Mapping[str, Any],
+                          row_effort: Optional[str] = None) -> dict:
+    """Compact original intent for existing custody rows, without copying the work order.
+    ``row_effort`` is the configured row's pin ('' = Auto): a start failure's receipt
+    identity, like a settled run's, never the level the leaf was started at."""
     return {"selected_subagent_id": selected_subagent_id, "task_id": task_id, "route": route,
             "model": str(request.get("model") or ""), "profile_id": str(request.get("credentialProfileId") or ""),
             "access": str(request.get("access") or ""),
             **({"effort": request["effort"]} if isinstance(request.get("effort"), str) else {}),
+            **({"row_effort": row_effort} if isinstance(row_effort, str) else {}),
             **({"processing_preference": processing["requested"]}
                if isinstance(processing.get("requested"), str) else {})}
 
@@ -265,4 +269,6 @@ def record_session_start_failure(drive_root, event: Mapping[str, Any]) -> None:
         failure_code=str(event.get("reason") or ""), identity={
             "kind": "agent_session", "target_id": route + ("=" + model if model else ""),
             "access": str(event.get("access") or ""), "credential_profile_id": pin,
-            **{key: event[key] for key in ("effort", "processing_preference") if key in event}})
+            **({"effort": event["row_effort"]} if isinstance(event.get("row_effort"), str)
+               else {"effort": event["effort"]} if "effort" in event else {}),
+            **({"processing_preference": event["processing_preference"]} if "processing_preference" in event else {})})

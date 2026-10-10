@@ -480,7 +480,8 @@ def _delegate_start(ctx: ToolContext, prompt: str, max_seconds: Optional[int] = 
         request_body if recovering else {"model": route.model, "credentialProfileId": route.profile_id,
                                         "effort": route.effort, "access": authority.access},
         selected_subagent_id=actor_facts["selected_subagent_id"], task_id=str(getattr(ctx, "task_id", "") or ""),
-        route=route.route_id, processing=processing_info if recovering else {"requested": actor.get("processing_preference")})
+        route=route.route_id, processing=processing_info if recovering else {"requested": actor.get("processing_preference")},
+        row_effort=None if recovering else actor.get("row_effort"))
     try:
         # Health checks the stored route/confinement shape on retries, never current
         # environment defaults; blockers stay typed instead of falling through to API spend.

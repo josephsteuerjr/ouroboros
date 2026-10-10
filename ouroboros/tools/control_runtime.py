@@ -787,7 +787,9 @@ def _effort_switch(ctx: ToolContext, requested: str) -> tuple[str, str]:
     if named:
         return "", f"effort={requested} not applied: the level in the model name ({named}) holds in every mode."
     if strong_role:
-        level, _source = choose_effort(requested, binds=binds, rng=rng)
+        level, source = choose_effort(requested, pin=str(metadata.get("reasoning_effort") or ""), binds=binds, rng=rng)
+        if source == "pin":
+            return "", f"effort={requested} not applied: my human pinned this task at {level}; it holds outside Cyber Pro."
         moved = f" (requested {requested}, moved into my human's range {rng['min']}..{rng['max']})" if level != requested else ""
         return level, moved.strip()
     if not binds:
