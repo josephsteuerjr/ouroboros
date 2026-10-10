@@ -1201,6 +1201,14 @@ def actual_substrate(evidence: Mapping[str, Any] | None) -> str:
     return SUBSTRATE_NATIVE_ONLY
 
 
+def effort_result_fields(task: Mapping[str, Any]) -> Dict[str, str]:
+    """The dispatch's effort decision (``record_fields``) as the task carries it, for every
+    task-result write — running, completion, exception: the parent's projections and the
+    terminal chat frame read it from the result, not from the worker's memory."""
+    return {key: task[key] for key in ("effort_level", "effort_requested", "effort_source")
+            if isinstance(task.get(key), str)}
+
+
 def substrate_result_fields(envelope: Mapping[str, Any]) -> Dict[str, Any]:
     """Top-level durable-result mirror of the substrate FACT plus its raw counts.
 

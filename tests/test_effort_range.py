@@ -507,6 +507,39 @@ def test_the_effort_fact_reaches_the_child_prompt_the_parent_and_the_chat_frames
         assert key in SUBAGENT_MESSAGE_FIELDS and key in _PROGRESS_META_FIELDS and key in ChatOutbound.__annotations__
 
 
+def test_the_dispatch_effort_fact_reaches_the_durable_result_through_the_real_writers(tmp_path, monkeypatch):
+    """The completion write and the exception write carry the dispatch's effort decision, so
+    the parent's projections and the terminal frame read it from the result file; a task that
+    was never dispatched carries no effort keys (unknown stays unknown)."""
+    from types import SimpleNamespace
+
+    import ouroboros.agent_task_pipeline as pipeline
+    from ouroboros.agent import _task_exception_terminal
+    from ouroboros.task_results import load_task_result
+    from ouroboros.tools.control import _get_task_result
+    from tests.test_model_slot_role_model import _scheduling_ctx
+
+    _env(monkeypatch, OUROBOROS_EFFORT_MAX="high")
+    monkeypatch.setattr(pipeline, "_run_post_task_processing_async", lambda *a, **k: None)
+    env = SimpleNamespace(drive_root=tmp_path, repo_dir=tmp_path)
+    (tmp_path / "logs").mkdir()
+    fact = {"effort_level": "high", "effort_requested": "ultra", "effort_source": "auto"}
+    child = {"id": "child-done", "type": "task", "chat_id": 1, "text": "inspect", "delegation_role": "subagent",
+             "parent_task_id": "parent1", "root_task_id": "parent1", **fact}
+    pipeline.emit_task_results(env, None, None, [], child, "Findings.", {"rounds": 1},
+                               {"tool_calls": [], "reasoning_notes": []}, 0.0, tmp_path / "logs")
+    assert {key: load_task_result(tmp_path, "child-done").get(key) for key in fact} == fact
+    assert '"requested": "ultra"' in _get_task_result(_scheduling_ctx(tmp_path), "child-done")
+
+    _task_exception_terminal(env, {**child, "id": "child-crash"}, RuntimeError("boom"), tmp_path / "logs")
+    assert {key: load_task_result(tmp_path, "child-crash").get(key) for key in fact} == fact
+
+    root = {"id": "root-done", "type": "task", "chat_id": 1, "text": "x"}
+    pipeline.emit_task_results(env, None, None, [], root, "Done.", {"rounds": 1},
+                               {"tool_calls": [], "reasoning_notes": []}, 0.0, tmp_path / "logs")
+    assert not set(fact) & set(load_task_result(tmp_path, "root-done"))
+
+
 def test_session_receipt_identity_keeps_the_rows_pin_not_the_leaf_level(tmp_path, monkeypatch):
     from ouroboros import delegate_custody as custody
     from ouroboros.subagent_history import record_session_execution, subagent_last_delegation
