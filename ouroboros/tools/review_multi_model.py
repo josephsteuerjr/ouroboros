@@ -13,6 +13,7 @@ import logging
 import os
 from typing import Any, Optional, TYPE_CHECKING
 
+from ouroboros.settings_integrity import live_effort_range
 from ouroboros.configured_subagents import MAX_CONFIGURED_SUBAGENTS
 from ouroboros.review_substrate import SLOT_ID_PREFIX
 
@@ -88,6 +89,15 @@ def _review_output_budget() -> int:
     except (TypeError, ValueError):
         raw = 65536
     return max(8192, min(raw, 65536))
+
+
+def review_output_allowance(model: str, window: int = 0, **binding) -> int:
+    """The review reservation within the exact route's known maximum response; unknown keeps it.
+    A ``window`` from ``reviewer_context_window`` supplies the account it was observed on."""
+    from ouroboros.response_limits import response_allowance
+    from ouroboros.reviewer_window import observed_binding
+
+    return response_allowance(str(model or ""), _review_output_budget(), **observed_binding(window, binding))
 
 
 def triad_api_messages(prompt: str, stable_prefix_len: int, content: str,
@@ -242,7 +252,7 @@ async def _query_model(
             slot = ReviewSlot(
                 slot_id=slot_id,
                 model=model,
-                effort=effort or _rev()._cfg.REVIEW_POOL_DEFAULT_EFFORT,
+                effort=effort or live_effort_range()["max"],  # an absent vector tail: an Auto reviewer's level
                 max_tokens=_out_budget,
                 default_temperature=0.2,
                 role_hint=TRIAD_ROLE_HINT,
