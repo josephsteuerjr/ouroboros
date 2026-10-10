@@ -229,12 +229,16 @@ def record_session_execution(drive_root, custody, detail: Mapping[str, Any], obs
     from ouroboros.delegate_custody import summary_of
     summary = summary_of(detail)
     failure = summary.get("failure") if isinstance(summary.get("failure"), dict) else {}
+    # Identity is the CONFIGURED row (its pin, '' for Auto), never the level the leaf ran at —
+    # that is the effort fact; a row without the pin keeps the leaf level as it always did.
+    effort = custody.row_effort if custody.row_effort is not None else custody.effort
     identity = {"kind": "agent_session",
                 "target_id": custody.route_id + ("=" + custody.model if custody.model else ""),
                 "credential_profile_id": custody.profile_id,
                 "access": custody.access,
-                **{key: getattr(custody, key) for key in ("effort", "processing_preference")
-                   if getattr(custody, key) is not None}}
+                **({"effort": effort} if effort is not None else {}),
+                **({"processing_preference": custody.processing_preference}
+                   if custody.processing_preference is not None else {})}
     record_last_delegation(
         route=custody.route_id, requested_model=custody.model,
         applied_model=str(observed.get("model") or ""), run_id=custody.run_id,

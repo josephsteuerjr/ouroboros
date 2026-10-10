@@ -157,6 +157,11 @@ class ChatOutbound(TypedDict):
     # Opaque delegated route stamped once by resolve_subagent_dispatch; absent/empty = native/no chip.
     # Dispatch intent is not a landing receipt: a reduction belongs in capability_delta, never rewrites this route.
     executor_route: NotRequired[str]
+    # The effort decision at dispatch (a session row: its leaf's): level, the parent's request,
+    # source auto|pin|model_name|cyber. Empty/absent = unknown, no chip.
+    effort_level: NotRequired[str]
+    effort_requested: NotRequired[str]
+    effort_source: NotRequired[str]
     # Latest observed progress actor, NOT terminal evidence or current liveness. Own task_id/task_attempt/run_id/
     # attempt_id, harness_id, phase, revision; optional model has explicit model_source (requested or observed).
     executor_observation: NotRequired[Dict[str, Any]]

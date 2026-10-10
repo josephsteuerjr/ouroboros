@@ -46,6 +46,7 @@ _ADDED_OWNERS = {
     "clamp_effort_into": settings_scales,
     "choose_effort": settings_scales,
     "effort_fact": settings_scales,
+    "effort_fact_says": settings_scales,
     "effort_fact_phrase": settings_scales,
     # The retired role effort keys the range replaced (the RC auditor's note class).
     "EFFORT_RANGE_RETIRED_SETTING_KEYS": settings_defaults,

@@ -454,16 +454,19 @@ def test_a_control_seeding_an_absent_row_keeps_the_queued_explicit_effort(tmp_pa
     assert not ensure_control_task_result("queued-2").get("reasoning_effort")
 
 
-def test_configured_children_keep_their_profile_and_the_root_effort_is_not_a_child_axis():
+def test_configured_children_keep_their_profile_and_ask_for_effort_through_their_own_argument():
     from ouroboros.subagents import LEGACY_SUBAGENT_FIELDS
     from ouroboros.tools.control import get_tools
 
     schemas = {entry.name: entry.schema for entry in get_tools()}
     assert "reasoning_effort" in schemas["promote_chat_to_task"]["parameters"]["properties"]
     assert "reasoning_effort" in schemas["route_to_project"]["parameters"]["properties"]
-    assert "reasoning_effort" not in schemas["schedule_subagent"]["parameters"]["properties"]
-    assert "reasoning_effort" in LEGACY_SUBAGENT_FIELDS  # a stored child value stays ignored
+    child = schemas["schedule_subagent"]["parameters"]["properties"]
+    assert "reasoning_effort" not in child and child["effort"]["default"] == "auto"
+    assert "reasoning_effort" in LEGACY_SUBAGENT_FIELDS  # a pre-record stored child value stays ignored
     from ouroboros.config import EFFORT_SCALE
+
+    assert child["effort"]["enum"] == ["auto", *EFFORT_SCALE]
 
     assert schemas["promote_chat_to_task"]["parameters"]["properties"]["reasoning_effort"]["enum"] == \
         list(EFFORT_SCALE)

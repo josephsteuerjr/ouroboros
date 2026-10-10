@@ -134,21 +134,21 @@ def test_the_decision_binds_by_the_runtime_mode(monkeypatch):
     assert effort_range_binds({"initiator": "consciousness", "runtime_mode_cap": "light"}) is True
 
 
-def test_the_phrase_speaks_only_when_a_decision_is_worth_saying():
+def test_the_phrase_speaks_only_when_a_request_was_moved_or_set_aside():
     rng = {"min": "low", "recommended": "medium", "max": "high"}
     assert effort_fact_phrase(effort_fact("", "medium", "auto"), rng) == ""
     assert effort_fact_phrase(effort_fact("high", "high", "auto"), rng) == ""
+    assert effort_fact_phrase(effort_fact("", "xhigh", "pin"), rng) == ""  # a pin deciding alone is the row's own
+    assert effort_fact_phrase(effort_fact("", "max", "model_name"), rng) == ""
+    assert effort_fact_phrase(effort_fact("ultra", "ultra", "cyber"), rng) == ""
     assert effort_fact_phrase(effort_fact("ultra", "high", "auto"), rng) == (
         "effort high: your request ultra moved into my human's range low..high")
     assert effort_fact_phrase(effort_fact("none", "low", "auto"), rng) == (
         "effort low: your request none moved into my human's range low..high")
     assert effort_fact_phrase(effort_fact("low", "xhigh", "pin"), rng) == (
         "effort xhigh: pinned by my human; requested low not applied")
-    assert effort_fact_phrase(effort_fact("", "xhigh", "pin"), rng) == "effort xhigh: pinned by my human"
     assert effort_fact_phrase(effort_fact("low", "max", "model_name"), rng) == (
         "effort max: the level in the model name; requested low not applied")
-    assert effort_fact_phrase(effort_fact("ultra", "ultra", "cyber"), rng) == (
-        "effort ultra: your request, unclamped under Cyber Pro")
 
 
 def test_resolve_effort_keeps_its_signature_over_the_range(monkeypatch):
@@ -311,3 +311,213 @@ def test_a_wave_order_discloses_the_effective_weaker_level_not_the_raw_order(mon
     assert facts == {"order": "none", "applied": ["auto"], "not_applied": ["pinned"], "weaker_than_configured": ["auto"]}
     seats = [(SimpleNamespace(slot_id="auto", effort="high", declared_effort="ultra"), (), False)]
     assert _effort_facts("ultra", seats, {"auto": "high"})["weaker_than_configured"] == []
+
+
+# --- children: the request, the decision, the carrier to the first start, the disclosure -----
+
+
+def _session_snapshot(target="codex=gpt-5.6-sol", effort=""):
+    return {"schema": 1, "selected_subagent_id": "builder", "config_fingerprint": "fp", "effort": effort,
+            "route": {"kind": "agent_session", "target_id": target, "credential_profile_id": ""},
+            "processing_preference": "", "access": "full", "selected_at": "2026-10-10T00:00:00Z"}
+
+
+def _api_snapshot(target="openai::gpt-5.6-sol", effort=""):
+    return {"schema": 1, "selected_subagent_id": "builder", "config_fingerprint": "fp", "effort": effort,
+            "route": {"kind": "api_model", "target_id": target, "credential_profile_id": ""},
+            "processing_preference": "", "selected_at": "2026-10-10T00:00:00Z"}
+
+
+def _stub_session_route(monkeypatch):
+    import ouroboros.claudexor_daemon as daemon
+    import ouroboros.subagents as subagents
+
+    class Gateway:
+        def close(self):
+            pass
+
+    monkeypatch.setattr(daemon, "ensure_owned_gateway", lambda: Gateway())
+    monkeypatch.setattr(subagents, "route_health", lambda *_a, **_k: ("", ""))
+    monkeypatch.setattr("ouroboros.provider_models.model_has_credentials", lambda _model: True)
+
+
+@pytest.mark.parametrize("cyber", [False, True])
+def test_dispatch_decides_a_childs_effort_from_the_row_and_the_request(monkeypatch, cyber):
+    """Auto row: the request clamped into the range (unclamped in Cyber Pro), recommended with
+    none; pinned row: the pin, which a request beats only in Cyber Pro; a level in the model
+    name (session slug or API-wrapped) always wins. The decision is written as three scalars;
+    a session row's decision is its LEAF's while the nanny inherits the parent's effort."""
+    from ouroboros.subagent_runtime import resolve_configured_actor_dispatch
+
+    _env(monkeypatch, OUROBOROS_EFFORT_MIN="low", OUROBOROS_EFFORT_TASK="medium", OUROBOROS_EFFORT_MAX="high")
+    monkeypatch.setattr("ouroboros.config._BOOT_RUNTIME_MODE", "cyber_pro" if cyber else "pro")
+    _stub_session_route(monkeypatch)
+    nanny = {"model": "openai::parent", "effort": "ultra"}
+
+    def dispatch(snapshot, requested=""):
+        task = {"id": "c", "configured_subagent": snapshot, "requested_effort": requested,
+                "parent_cognitive_route": nanny, "task_constraint": {}}
+        d = resolve_configured_actor_dispatch(task, task_type="task")
+        return d, d.record_fields()
+
+    d, rec = dispatch(_api_snapshot())
+    assert (rec["effort_level"], rec["effort_requested"], rec["effort_source"]) == ("medium", "", "auto") == (d.effort, "", "auto")
+    d, rec = dispatch(_api_snapshot(), "high")
+    assert (d.effort, rec["effort_source"]) == ("high", "cyber" if cyber else "auto")
+    d, rec = dispatch(_api_snapshot(), "ultra")
+    assert (d.effort, rec["effort_requested"], rec["effort_source"]) == (("ultra", "ultra", "cyber") if cyber else ("high", "ultra", "auto"))
+    d, rec = dispatch(_api_snapshot(), "none")
+    assert d.effort == ("none" if cyber else "low")
+    d, rec = dispatch(_api_snapshot(effort="xhigh"), "low")
+    assert (d.effort, rec["effort_source"]) == (("low", "cyber") if cyber else ("xhigh", "pin"))
+    d, rec = dispatch(_api_snapshot(effort="xhigh"))
+    assert (d.effort, rec["effort_source"]) == ("xhigh", "pin")
+    d, rec = dispatch(_api_snapshot("claudexor::cursor=grok-4.7-max-fast", effort="low"), "none")
+    assert (d.effort, rec["effort_source"], rec["effort_requested"]) == ("max", "model_name", "none")
+    # A session row: the leaf's decision rides the exact route; the nanny keeps the parent's level.
+    d, rec = dispatch(_session_snapshot(), "ultra")
+    leaf = d.executor_resolution.route
+    assert leaf.effort == rec["effort_level"] == ("ultra" if cyber else "high") and rec["effort_requested"] == "ultra"
+    assert d.effort == d.delta.derived_effort == d.delta.effective_effort == rec["reasoning_effort"] == "ultra"
+    d, rec = dispatch(_session_snapshot("cursor=grok-4.7-xhigh-fast"), "low")
+    assert d.executor_resolution.route.effort == rec["effort_level"] == "xhigh" and rec["effort_source"] == "model_name"
+    d, rec = dispatch(_session_snapshot(effort="medium"), "ultra")
+    assert d.executor_resolution.route.effort == ("ultra" if cyber else "medium")
+
+
+def test_the_leaf_effort_rides_one_carrier_from_the_record_to_the_start_body(monkeypatch, tmp_path):
+    """Record -> bootstrap -> bound start -> exact start -> the route the start body is built from,
+    before the nanny's first model call; the row's pin stays beside it for the receipt identity."""
+    import ouroboros.subagent_runtime as runtime
+    import ouroboros.tools.delegate as delegate
+    from ouroboros.delegate_shared import delegate_result
+    from ouroboros.subagent_bootstrap import _prepare_actor_first_bootstrap
+    from ouroboros.subagents import DelegationRoute, delegated_run_shape
+    from ouroboros.tools.registry import ToolContext
+
+    task = {"id": "child", "configured_subagent": _session_snapshot(), "task_contract": {"objective": "Build"},
+            "effort_level": "high", "effort_requested": "ultra", "effort_source": "auto"}
+    ctx = ToolContext(repo_dir=tmp_path, drive_root=tmp_path)
+    ctx.task_id = "child"
+    _prepare_actor_first_bootstrap(ctx, task, None)
+    assert ctx._configured_actor_bootstrap["effort_fact"] == {"requested": "ultra", "applied": "high", "source": "auto"}
+    seen = {}
+
+    def _start(_ctx, prompt, *_a, **_k):
+        actor, refusal = runtime.prepare_delegate_start_actor(
+            _ctx, tmp_path, recovering=False, invocation_id="", work_order_fingerprint="w", authority_fingerprint="a")
+        assert refusal is None
+        seen.update(actor)
+        body = delegate._start_request(_ctx, actor["route"], delegated_run_shape(False), str(tmp_path), prompt, 60, "")
+        seen["body"] = body
+        return delegate_result({"status": "started", "run_id": "run-1"})
+
+    monkeypatch.setattr(delegate, "_delegate_start", _start)
+    out = json.loads(runtime.delegate_start_entry(ctx, "").text)
+    assert out["status"] == "started"
+    assert seen["route"].effort == seen["body"]["effort"] == "high" and seen["row_effort"] == ""
+    assert seen["effort_fact"] == {"requested": "ultra", "applied": "high", "source": "auto"}
+    # The wire never contradicts a level the model slug carries.
+    named = DelegationRoute(route_id="cursor", model="grok-4.7-xhigh-fast", effort="low")
+    assert delegate._start_request(ctx, named, delegated_run_shape(False), str(tmp_path), "p", 60, "")["effort"] == "xhigh"
+
+
+def test_a_direct_delegate_start_decides_now_against_the_current_range(monkeypatch, tmp_path):
+    """``delegate_start(effort=…)``: a pinned row keeps its pin outside Cyber Pro (the request
+    set aside and said so), in Cyber Pro the request wins; an unknown tier is a typed refusal;
+    ``auto`` and omission ask nothing."""
+    import ouroboros.subagent_runtime as runtime
+    import ouroboros.tools.delegate as delegate
+    from ouroboros.tools.tool_result import ToolResult
+    from tests.test_delegate_start_root_selector import _registry
+    from tests.test_delegated_skill_payload import _payload_ctx
+
+    _env(monkeypatch, OUROBOROS_EFFORT_MAX="high")
+    ctx = _payload_ctx(tmp_path, monkeypatch)  # the payload-session row is pinned low
+    seen = []
+    monkeypatch.setattr(delegate, "_delegate_start", lambda *_a, **_k: (
+        seen.append(runtime._EXACT_START_SELECTION.get()) or ToolResult(status="ok", code="OK", text=json.dumps({"status": "started"}))))
+    registry = _registry(tmp_path, monkeypatch, ctx)
+    monkeypatch.setattr("ouroboros.config._BOOT_RUNTIME_MODE", "pro")
+    assert json.loads(registry.execute("delegate_start", {"subagent_id": "payload-session", "prompt": "p", "effort": "ultra"}))["status"] == "started"
+    assert seen[-1]["effort_fact"] == {"requested": "ultra", "applied": "low", "source": "pin"}
+    assert json.loads(registry.execute("delegate_start", {"subagent_id": "payload-session", "prompt": "p", "effort": "auto"}))["status"] == "started"
+    assert seen[-1]["effort_fact"] == {"requested": "", "applied": "low", "source": "pin"}
+    refused = json.loads(registry.execute("delegate_start", {"subagent_id": "payload-session", "prompt": "p", "effort": "turbo"}))
+    assert refused["status"] == "refused" and refused["reason"] == "effort_invalid" and len(seen) == 2
+    monkeypatch.setattr("ouroboros.config._BOOT_RUNTIME_MODE", "cyber_pro")
+    assert json.loads(registry.execute("delegate_start", {"subagent_id": "payload-session", "prompt": "p", "effort": "ultra"}))["status"] == "started"
+    assert seen[-1]["effort_fact"] == {"requested": "ultra", "applied": "ultra", "source": "cyber"}
+
+
+def test_a_retry_replays_its_recorded_effort(monkeypatch, tmp_path):
+    import ouroboros.subagent_runtime as runtime
+    from ouroboros import delegate_custody as custody
+    from ouroboros.tools.registry import ToolContext
+
+    ctx = ToolContext(repo_dir=tmp_path, drive_root=tmp_path)
+    ctx.task_id = "t"
+    monkeypatch.setattr(custody, "invocation_record", lambda _root, _token: {"request": {"effort": "high"}})
+    assert runtime._leaf_effort_choice(ctx, None, "auto", None, "inv-1") == {}
+    assert runtime._leaf_effort_choice(ctx, None, "high", None, "inv-1") == {}
+    with pytest.raises(runtime.SubagentSelectionError, match="retry_selector_conflict"):
+        runtime._leaf_effort_choice(ctx, None, "low", None, "inv-1")
+
+
+def test_the_effort_fact_reaches_the_child_prompt_the_parent_and_the_chat_frames(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    from ouroboros.agent_dispatch import capability_delta_prompt_block
+    from ouroboros.gateway.contracts import ChatOutbound
+    from ouroboros.gateway.history import _PROGRESS_META_FIELDS
+    from ouroboros.subagent_messages import SUBAGENT_MESSAGE_FIELDS, subagent_message_meta
+    from ouroboros.subagents import CapabilityDelta
+    from ouroboros.task_results import write_task_result
+    from ouroboros.tools.control import _get_task_result, _wait_for_tasks
+    from tests.test_model_slot_role_model import _scheduling_ctx
+
+    _env(monkeypatch, OUROBOROS_EFFORT_MAX="high")
+    moved = {"requested": "ultra", "applied": "high", "source": "auto"}
+    native = SimpleNamespace(delta=CapabilityDelta(), executor_resolution=None, effort_fact=moved)
+    assert capability_delta_prompt_block(native) == (
+        "[CAPABILITY DELTA]\nYour effort high: your request ultra moved into my human's range low..high.")
+    harness = SimpleNamespace(delta=CapabilityDelta(effective_executor="harness"), executor_resolution=None,
+                              effort_fact={"requested": "low", "applied": "xhigh", "source": "pin"})
+    assert "Your delegated run's effort xhigh: pinned by my human; requested low not applied." in capability_delta_prompt_block(harness)
+    quiet = SimpleNamespace(delta=CapabilityDelta(), executor_resolution=None,
+                            effort_fact={"requested": "", "applied": "xhigh", "source": "pin"})
+    assert capability_delta_prompt_block(quiet) == ""
+
+    ctx = _scheduling_ctx(tmp_path / "parent")
+    write_task_result(tmp_path / "parent", "moved", "completed", result="done",
+                      effort_level="high", effort_requested="ultra", effort_source="auto")
+    write_task_result(tmp_path / "parent", "plain", "completed", result="done",
+                      effort_level="high", effort_requested="high", effort_source="auto")
+    full = _get_task_result(ctx, "moved")
+    assert '"effort": {\n    "level": "high",\n    "requested": "ultra",\n    "source": "auto"\n  }' in full
+    assert '"effort"' not in _get_task_result(ctx, "plain")
+    batch = json.loads(_wait_for_tasks(ctx, ["moved", "plain"], timeout_sec=1))["tasks"]
+    assert batch["moved"]["effort"] == {"level": "high", "requested": "ultra", "source": "auto"} and "effort" not in batch["plain"]
+
+    task = {"id": "c", "delegation_role": "subagent", "effort_level": "high", "effort_requested": "ultra", "effort_source": "auto"}
+    meta = subagent_message_meta(task, task_id="c", event="running")
+    assert (meta["effort_level"], meta["effort_requested"], meta["effort_source"]) == ("high", "ultra", "auto")
+    assert subagent_message_meta({"id": "old", "delegation_role": "subagent"}, task_id="old")["effort_level"] == ""
+    for key in ("effort_level", "effort_requested", "effort_source"):
+        assert key in SUBAGENT_MESSAGE_FIELDS and key in _PROGRESS_META_FIELDS and key in ChatOutbound.__annotations__
+
+
+def test_session_receipt_identity_keeps_the_rows_pin_not_the_leaf_level(tmp_path, monkeypatch):
+    from ouroboros import delegate_custody as custody
+    from ouroboros.subagent_history import record_session_execution, subagent_last_delegation
+
+    def settle(**fields):
+        monkeypatch.setattr(custody, "_CUSTODY", {})
+        entry = custody.RunCustody(run_id=fields.pop("run_id"), selected_subagent_id="worker", task_id="task",
+                                   route_id="codex", model="m", **fields)
+        record_session_execution(tmp_path, entry, {"summary": {"state": "succeeded", "finishedAt": "2099-01-01T00:00:00Z"}}, {})
+        return subagent_last_delegation(tmp_path)["identity"]
+
+    assert settle(run_id="auto", effort="high", row_effort="")["effort"] == ""  # Auto row, leaf high
+    assert settle(run_id="cyber", effort="ultra", row_effort="high")["effort"] == "high"  # Cyber: pin high, leaf ultra
+    assert settle(run_id="legacy", effort="high")["effort"] == "high"  # no pin recorded: today's copy

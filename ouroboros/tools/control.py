@@ -499,10 +499,10 @@ from ouroboros.tools.control_runtime import (  # noqa: E402, F401 -- intentional
 # v7next F2 (D07): moved spans live in their owner leaves; re-exported here
 # so this facade stays the single import surface for callers and tests.
 from ouroboros.tools.control_subagent_spec import (  # noqa: E402, F401 -- intentional public re-exports
-    RETIRED_SCHEDULE_PARAMS,
     VALID_SUBTASK_MEMORY_MODES,
     _INTERNAL_SCHEDULE_OPTIONS,
     _validated_schedule_fields,
+    requested_child_effort,
     schedule_subagent_param_names,
     schedule_subagent_properties,
 )

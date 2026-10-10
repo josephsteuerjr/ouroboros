@@ -140,26 +140,26 @@ def effort_fact(requested: Any, level: str, source: str) -> dict[str, str]:
     return {"requested": _tier(requested), "applied": str(level or ""), "source": str(source or "")}
 
 
+def effort_fact_says(fact: Mapping[str, Any]) -> bool:
+    """Whether a decision is worth a line: a request that was moved into the range or set
+    aside by a pin or a model name. A request that simply applied, a pin or a name deciding
+    with nothing asked, and the plain default are noise (the fact's fields still ride)."""
+    requested = _tier(fact.get("requested"))
+    return bool(requested) and requested != str(fact.get("applied") or "")
+
+
 def effort_fact_phrase(fact: Mapping[str, Any], rng: Optional[Mapping[str, str]] = None) -> str:
-    """The one clause a decision worth saying gets: a request moved into the range, a request a
-    pin or a model name set aside, a pin or name deciding, a Cyber Pro request; '' when a
-    request simply applied or nothing was asked beyond the role default."""
+    """The one clause for a decision worth saying (``effort_fact_says``); '' otherwise."""
+    if not effort_fact_says(fact):
+        return ""
     requested = _tier(fact.get("requested"))
     applied, source = str(fact.get("applied") or ""), str(fact.get("source") or "")
-    moved = bool(requested) and requested != applied
     if source == "model_name":
-        why = "the level in the model name"
-    elif source == "pin":
-        why = "pinned by my human"
-    elif source == "cyber":
-        why = "your request, unclamped under Cyber Pro"
-    elif moved:
-        bounds = dict(rng) if rng is not None else effort_range()
-        why = f"your request {requested} moved into my human's range {bounds['min']}..{bounds['max']}"
-    else:
-        return ""
-    tail = f"; requested {requested} not applied" if moved and source != "auto" else ""
-    return f"effort {applied}: {why}{tail}"
+        return f"effort {applied}: the level in the model name; requested {requested} not applied"
+    if source == "pin":
+        return f"effort {applied}: pinned by my human; requested {requested} not applied"
+    bounds = dict(rng) if rng is not None else effort_range()
+    return f"effort {applied}: your request {requested} moved into my human's range {bounds['min']}..{bounds['max']}"
 
 
 def resolve_effort(task_type: str) -> str:

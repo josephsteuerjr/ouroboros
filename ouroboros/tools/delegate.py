@@ -666,6 +666,7 @@ def _delegate_start(ctx: ToolContext, prompt: str, max_seconds: Optional[int] = 
         capture_mode=("engine_directory" if resource_ref.get("workspace_kind") == "directory" else
                       _CAPTURE_DELEGATED_SNAPSHOT if snapshot_id else ""),
         max_seconds_basis=seconds_basis,
+        row_effort=(None if recovering else actor.get("row_effort")),
     )
     from ouroboros.tools.control import maybe_emit_delegated_run_fanout
     maybe_emit_delegated_run_fanout(ctx, run_id=run_id, route_id=route.route_id, objective=text, durable=durable)
@@ -675,14 +676,16 @@ def _delegate_start(ctx: ToolContext, prompt: str, max_seconds: Optional[int] = 
                             resource_ref=resource_ref, processing=processing_info, continuation=continuation.facts,
                             max_seconds=seconds, max_seconds_basis=seconds_basis,
                             engine_version=str(getattr(gateway, "engine_version", "") or ""),
-                            snapshot_facts=_snapshot_facts(snapshot))
+                            snapshot_facts=_snapshot_facts(snapshot),
+                            effort_fact=({} if recovering else actor.get("effort_fact")))
 
 
 def _started_payload(handle: Dict[str, Any], run_id: str, route: Any, access: str,
                      authority: "DelegatedRunShape", root: str, *, durable: bool,
                      recovering: bool, invocation_id: str, snapshot_id: str, target_root: str,
                      baseline_sha: str, engine_version: str = "", resource_ref=None, processing=None,
-                     continuation=None, max_seconds: int = 0, max_seconds_basis: str = "", snapshot_facts=None) -> ToolResult:
+                     continuation=None, max_seconds: int = 0, max_seconds_basis: str = "", snapshot_facts=None,
+                     effort_fact=None) -> ToolResult:
     """The one author of delegate_start's started result (note + payload).
 
     The AUTHORITY guidance and the CUSTODY warning are independent facts about the same
@@ -718,6 +721,9 @@ def _started_payload(handle: Dict[str, Any], run_id: str, route: Any, access: st
         "route": route.route_id,
         "model": route.model,
         "effort": route.effort,
+        # The effort decision beside the level sent (``settings_scales.choose_effort``).
+        **({"effort_requested": str(effort_fact.get("requested") or ""),
+            "effort_source": str(effort_fact.get("source") or "")} if effort_fact else {}),
         "access": access,
         "mode": authority.mode,
         "isolation": authority.isolation or "envelope",
@@ -1318,7 +1324,7 @@ def _published_entry(core: Any) -> Any:
 
 
 def get_tools() -> List[ToolEntry]:
-    from ouroboros.config import get_task_abs_ceiling_sec, operation_window_sec
+    from ouroboros.config import EFFORT_SCALE, get_task_abs_ceiling_sec, operation_window_sec
 
     return [
         ToolEntry("delegate_start", {
@@ -1366,6 +1372,10 @@ def get_tools() -> List[ToolEntry]:
                 "access": {"type": "string", "enum": list(SESSION_ACCESS_LOWERING), "description":
                     "Lower native access to readonly or workspace_write; omit to inherit the captured profile "
                     "(new mutating sessions default full). Explicit readonly authority wins. Omit on retry_of."},
+                "effort": {"type": "string", "enum": ["auto", *EFFORT_SCALE], "default": "auto", "description":
+                    "The run's reasoning effort inside my human's effort range: auto/omitted = the recommended "
+                    "level; outside the range it runs at the nearest bound. A row my human pinned or a level in "
+                    "its model name keeps that level outside Cyber Pro; the receipt says so. Omit on retry_of."},
                 "root": {"type": "string", "enum": ["active_workspace", "skill_payload"],
                     "default": "active_workspace", "description":
                     "active_workspace (default/omitted): ordinary delegation. skill_payload: one installed "

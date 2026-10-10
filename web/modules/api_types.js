@@ -311,6 +311,9 @@
  * @property {string=} model_lane
  * @property {string=} requested_model_lane
  * @property {string=} effective_model_lane
+ * @property {string=} effort_level  The effort decided at dispatch (a session row: its leaf's); empty = unknown, no chip.
+ * @property {string=} effort_requested  The parent's request when it made one.
+ * @property {string=} effort_source  auto | pin | model_name | cyber.
  * @property {string=} executor_route
  *   Phase 6: the OPAQUE harness route RESOLVED AT DISPATCH for this bubble /
  *   subagent (delegated routes only) — the route it was sent to, not a receipt
