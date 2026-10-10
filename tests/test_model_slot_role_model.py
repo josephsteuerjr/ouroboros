@@ -1707,6 +1707,7 @@ def test_switch_model_refuses_an_unknown_effort_instead_of_coercing(monkeypatch,
         "ouroboros.llm.LLMClient.available_models",
         lambda self: ["provider::main"],
     )
+    monkeypatch.setattr("ouroboros.config._BOOT_RUNTIME_MODE", "cyber_pro")  # Main applies a switch here only
     ctx = ToolContext(repo_dir=tmp_path, drive_root=tmp_path)
 
     out = _switch_model(ctx, model="provider::main", effort="enormous")

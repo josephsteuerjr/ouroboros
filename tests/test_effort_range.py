@@ -521,3 +521,140 @@ def test_session_receipt_identity_keeps_the_rows_pin_not_the_leaf_level(tmp_path
     assert settle(run_id="auto", effort="high", row_effort="")["effort"] == ""  # Auto row, leaf high
     assert settle(run_id="cyber", effort="ultra", row_effort="high")["effort"] == "high"  # Cyber: pin high, leaf ultra
     assert settle(run_id="legacy", effort="high")["effort"] == "high"  # no pin recorded: today's copy
+
+
+# --- Main and the roots Ouroboros creates itself -------------------------------------------
+
+
+def _main_ctx(tmp_path, monkeypatch, **metadata):
+    from ouroboros.tools.registry import ToolContext
+
+    monkeypatch.setattr("ouroboros.llm.LLMClient.available_models", lambda self: ["provider::main"])
+    ctx = ToolContext(repo_dir=tmp_path, drive_root=tmp_path)
+    ctx.task_metadata = dict(metadata)
+    return ctx
+
+
+def test_switch_model_keeps_main_at_the_level_it_works_at_outside_cyber_pro(tmp_path, monkeypatch):
+    from ouroboros.tools.control_runtime import _switch_model
+
+    _env(monkeypatch, OUROBOROS_EFFORT_TASK="medium", OUROBOROS_EFFORT_MAX="high")
+    monkeypatch.setenv("OUROBOROS_MODEL", "openai::gpt-5.6-sol")
+    monkeypatch.setattr("ouroboros.config._BOOT_RUNTIME_MODE", "pro")
+    ctx = _main_ctx(tmp_path, monkeypatch)
+    ctx.active_effort = "medium"
+    out = _switch_model(ctx, effort="ultra")
+    assert out == ("effort=ultra not applied: Main works at my human's recommended level (medium); "
+                   "deeper thinking is delegated — schedule_subagent(effort=…).")
+    assert ctx.active_effort_override is None
+    # Model switching keeps working beside the kept level.
+    out = _switch_model(ctx, model="provider::main", effort="low")
+    assert out.startswith("OK: switching to model=provider::main on next round. effort=low not applied")
+    assert ctx.active_model_override == "provider::main" and ctx.active_effort_override is None
+    # A root the owner pinned works at the pin; a model-named Main at the name's level, in every mode.
+    pinned = _main_ctx(tmp_path, monkeypatch, reasoning_effort="xhigh")
+    pinned.active_effort = "xhigh"
+    assert "the level my human pinned for this task (xhigh)" in _switch_model(pinned, effort="low")
+    monkeypatch.setenv("OUROBOROS_MODEL", "claudexor::cursor=grok-4.7-xhigh-fast")
+    assert "the level in the model name (xhigh) holds in every mode" in _switch_model(_main_ctx(tmp_path, monkeypatch), effort="low")
+    monkeypatch.setattr("ouroboros.config._BOOT_RUNTIME_MODE", "cyber_pro")
+    assert "not applied" in _switch_model(_main_ctx(tmp_path, monkeypatch), effort="low")
+    monkeypatch.setenv("OUROBOROS_MODEL", "openai::gpt-5.6-sol")
+    cyber = _main_ctx(tmp_path, monkeypatch)
+    assert _switch_model(cyber, effort="ultra") == "OK: switching to effort=ultra on next round."
+    assert cyber.active_effort_override == "ultra"
+
+
+def test_switch_model_moves_children_evolution_and_wakes_inside_the_range(tmp_path, monkeypatch):
+    from ouroboros.tools.control_runtime import _switch_model
+
+    _env(monkeypatch, OUROBOROS_EFFORT_MIN="low", OUROBOROS_EFFORT_TASK="medium", OUROBOROS_EFFORT_MAX="high")
+    monkeypatch.setenv("OUROBOROS_MODEL", "openai::gpt-5.6-sol")
+    monkeypatch.setattr("ouroboros.config._BOOT_RUNTIME_MODE", "pro")
+    auto = _main_ctx(tmp_path, monkeypatch, delegation_role="subagent", configured_subagent=_api_snapshot())
+    assert _switch_model(auto, effort="ultra") == (
+        "OK: switching to effort=high on next round. (requested ultra, moved into my human's range low..high)")
+    assert auto.active_effort_override == "high"
+    assert _switch_model(auto, effort="low") == "OK: switching to effort=low on next round."
+    pinned = _main_ctx(tmp_path, monkeypatch, delegation_role="subagent", configured_subagent=_api_snapshot(effort="xhigh"))
+    assert _switch_model(pinned, effort="low") == (
+        "effort=low not applied: my human pinned your row at xhigh; it holds outside Cyber Pro.")
+    assert pinned.active_effort_override is None
+    named = _main_ctx(tmp_path, monkeypatch, delegation_role="subagent",
+                      configured_subagent=_session_snapshot("cursor=grok-4.7-max-fast"), effective_executor="harness")
+    out = _switch_model(named, effort="low")
+    assert "your row's model name carries max, which holds in every mode" in out and "delegated run keeps" in out
+    nanny = _main_ctx(tmp_path, monkeypatch, delegation_role="subagent", configured_subagent=_session_snapshot(),
+                      effective_executor="harness")
+    out = _switch_model(nanny, effort="ultra")
+    assert out.startswith("OK: switching to effort=high on next round.") and "Your delegated run keeps the level it started at" in out
+    evolution = _main_ctx(tmp_path, monkeypatch)
+    evolution.current_task_type = "evolution"
+    assert _switch_model(evolution, effort="none") == (
+        "OK: switching to effort=low on next round. (requested none, moved into my human's range low..high)")
+    wake = _main_ctx(tmp_path, monkeypatch, model_role="consciousness")
+    assert _switch_model(wake, effort="medium") == "OK: switching to effort=medium on next round."
+    monkeypatch.setattr("ouroboros.config._BOOT_RUNTIME_MODE", "cyber_pro")
+    assert _switch_model(pinned, effort="low") == "OK: switching to effort=low on next round."
+    assert _switch_model(evolution, effort="ultra") == "OK: switching to effort=ultra on next round."
+
+
+def test_roots_ouroboros_creates_itself_start_at_recommended_outside_cyber_pro(tmp_path, monkeypatch):
+    from ouroboros.tools.control_routing import _root_effort_arg
+
+    _env(monkeypatch, OUROBOROS_EFFORT_TASK="medium")
+    monkeypatch.setattr("ouroboros.config._BOOT_RUNTIME_MODE", "pro")
+    fields, error, note = _root_effort_arg("ultra", "promote_chat_to_task")
+    assert fields == {} and error == "" and note == (
+        "reasoning_effort='ultra' ignored: outside Cyber Pro a root I create starts at my human's recommended "
+        "level (medium); deeper thinking is delegated with schedule_subagent(effort=...)")
+    assert _root_effort_arg(None, "promote_chat_to_task") == ({}, "", "")
+    _fields, error, _note = _root_effort_arg("turbo", "route_to_project")
+    assert error.startswith("⚠️ TOOL_ARG_ERROR (route_to_project): reasoning_effort must be one of")
+    monkeypatch.setattr("ouroboros.config._BOOT_RUNTIME_MODE", "cyber_pro")
+    assert _root_effort_arg("ultra", "promote_chat_to_task") == ({"reasoning_effort": "ultra"}, "", "")
+
+
+def test_a_followup_outside_cyber_pro_starts_at_recommended_and_says_so(tmp_path, monkeypatch):
+    import types
+
+    from ouroboros.tools import followup
+    from supervisor import queue_schedules
+    from tests.test_root_effort_ingress import _install_queue, _pool_ready
+
+    _env(monkeypatch, OUROBOROS_EFFORT_TASK="medium")
+    monkeypatch.setattr("ouroboros.config._BOOT_RUNTIME_MODE", "pro")
+    _q, _state, workers = _install_queue(tmp_path, monkeypatch)
+    _pool_ready(monkeypatch, workers)
+    monkeypatch.setattr(followup, "_is_delegated_subagent", lambda _ctx: False)
+    ctx = types.SimpleNamespace(task_id="origin-root", root_task_id="origin-root", current_chat_id=7,
+                                drive_root=tmp_path, budget_drive_root=tmp_path, project_id="",
+                                task_metadata={"root_task_id": "origin-root"},
+                                task_contract={}, is_direct_chat=False, workspace_root=None)
+    from ouroboros.task_results import write_task_result
+
+    write_task_result(tmp_path, "origin-root", "running", root_task_id="origin-root", chat_id=7)
+    out = followup._handle_schedule_followup(ctx, relation="independent", run_at="2099-01-01T00:00:00Z",
+                                             objective="look again", reasoning_effort="xhigh")
+    assert out.startswith("FOLLOWUP_SCHEDULED") and "reasoning_effort='xhigh' ignored: outside Cyber Pro" in out
+    [row] = queue_schedules.load_schedule_store(tmp_path)["tasks"]
+    assert "reasoning_effort" not in row["task"]
+    refused = followup._handle_schedule_followup(ctx, relation="independent", run_at="2099-01-01T00:00:00Z",
+                                                 objective="again", reasoning_effort="turbo")
+    assert "FOLLOWUP_EFFORT_INVALID" in refused
+
+
+def test_main_starts_at_the_named_level_or_recommended_and_strong_roles_at_the_top(monkeypatch):
+    from ouroboros.agent_dispatch import _initial_effort_for
+
+    _env(monkeypatch, OUROBOROS_EFFORT_TASK="medium", OUROBOROS_EFFORT_MAX="ultra")
+    monkeypatch.setenv("OUROBOROS_MODEL", "openai::gpt-5.6-sol")
+    monkeypatch.delenv("OUROBOROS_MODEL_CONSCIOUSNESS", raising=False)
+    assert _initial_effort_for({"id": "r"}, "task") == "medium"
+    assert _initial_effort_for({"id": "r", "reasoning_effort": "xhigh"}, "task") == "xhigh"  # the owner's pin
+    assert _initial_effort_for({"id": "e"}, "evolution") == "ultra"
+    assert _initial_effort_for({"id": "w", "metadata": {"model_role": "consciousness"}}, "task") == "ultra"
+    monkeypatch.setenv("OUROBOROS_MODEL", "claudexor::agy=gemini-3.1-pro-low")
+    assert _initial_effort_for({"id": "r", "reasoning_effort": "xhigh"}, "task") == "low"  # the name wins
+    # A child reads back what its dispatch decided, never Main's name.
+    assert _initial_effort_for({"id": "c", "delegation_role": "subagent", "reasoning_effort": "high"}, "task") == "high"
