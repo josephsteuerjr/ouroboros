@@ -485,6 +485,12 @@ function restoreFocus(host, saved) {
     host.scrollTop = saved.scrollTop;
 }
 
+// Account evidence for a saved model's availability qualifier: only a confirmed
+// Accounts read narrows the catalog's carriers; the catalog read still labels it.
+function verifiedAccountSnapshot(state) {
+    return state.accountsKnown ? state.snapshot : null;
+}
+
 // Session access choices; one list, so a further native profile lands in one place.
 const ACCESS_CHOICES = [
     { value: 'full', label: 'Full system access' },
@@ -528,7 +534,7 @@ export function availableSubagentRowMarkup(row, state, index = 0) {
         catalogKnown: state.catalogKnown, accountsKnown: state.accountsKnown,
     });
     const modelOptions = sessionModelOptions(accountScopedModelCatalog(harnesses[split.harness], row.route.credential_profile_id), split.model, {
-        catalogKnown: state.catalogKnown,
+        catalogKnown: state.catalogKnown, snapshot: verifiedAccountSnapshot(state), pin: row.route.credential_profile_id,
     });
     const profileOptions = profileOptionsFor(
         (indexProfilesByHarness(state.snapshot)[split.harness]) || [],
@@ -583,7 +589,7 @@ export function availableSubagentRowMarkup(row, state, index = 0) {
             <label class="available-subagent-purpose ui-field">Description
                 <textarea class="ui-control" data-subagent-field="recommended_use" rows="1" aria-label="Description for Subagent ${ordinal}" placeholder="When should Ouroboros choose this subagent?">${escapeHtml(row.recommended_use)}</textarea>
             </label>
-            <div id="actor-${escapeHtml(rowKey)}-meta" class="available-subagent-meta ui-field-help" data-subagent-meta${meta.tone ? ` data-tone="${escapeHtml(meta.tone)}"` : ''}${meta.text ? '' : ' hidden'}>${escapeHtml(meta.text)}</div>
+            <div id="actor-${escapeHtml(rowKey)}-meta" class="available-subagent-meta ui-field-help" data-subagent-meta${meta.qualifier ? ' data-availability-qualifier' : ''}${meta.tone ? ` data-tone="${escapeHtml(meta.tone)}"` : ''}${meta.text ? '' : ' hidden'}>${escapeHtml(meta.text)}</div>
             ${processingDetailsHtml(`data-subagent-field="processing_preference" aria-label="Processing for Subagent ${ordinal}"`, row.processing_preference, state.processingPreference)}
             ${rowDetailsHtml(row, state, rowKey)}
         </article>`;
@@ -786,6 +792,7 @@ export function createAvailableSubagentsEditor({
             const metaEl = el.querySelector('[data-subagent-meta]');
             if (!metaEl) return;
             Object.assign(metaEl, { hidden: !meta.text, textContent: meta.text });
+            metaEl.toggleAttribute('data-availability-qualifier', Boolean(meta.qualifier));
             if (meta.tone) metaEl.dataset.tone = meta.tone;
             else delete metaEl.dataset.tone;
         });
