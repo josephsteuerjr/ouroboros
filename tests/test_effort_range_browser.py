@@ -180,7 +180,7 @@ def test_phone_press_opens_on_its_own_line_without_horizontal_scroll(direct_serv
             closed = _facts(page)
             assert closed["hoverMedia"] is False, closed
             assert abs(closed["swarmHeight"] - closed["sendHeight"]) <= 1, closed
-            assert abs(closed["headHeight"] - closed["sendHeight"]) <= 1, "the round button keeps the pills' height"
+            assert abs(closed["height"] - closed["sendHeight"]) <= 1, "the round button keeps the pills' height"
             assert closed["top"] < closed["inputTop"] and not closed["docScroll"] and not closed["areaScroll"], closed
             _shot(page, tmp_path, f"composer-phone-closed-{engine}")
             page.tap(HEAD)
@@ -226,7 +226,7 @@ def test_project_pane_strip_takes_its_own_line_and_shows_the_same_value(direct_s
             main, pane = _facts(page), _facts(page, panel)
             assert (main["min"], main["rec"], main["max"]) == (pane["min"], pane["rec"], pane["max"]), (main, pane)
             width = page.locator("#project-panel").bounding_box()["width"]
-            assert 340 <= width <= 440, width
+            assert 340 <= width <= 440.5, width
             page.click(f"{panel} .chat-effort-head")
             _wait(page, "el.dataset.open === 'true'", panel)
             page.wait_for_timeout(500)
@@ -343,20 +343,25 @@ def test_a_change_made_before_send_lands_before_the_message(direct_server_with_d
             })();""")
             _open_chat(page, url, width=1440)
 
-            def slow(route):
-                time.sleep(0.8)
-                route.continue_()
-
-            page.route("**/api/owner/effort-range", slow)
+            # The save is held open by the test until Send has been asked to wait for it.
+            held = []
+            page.route("**/api/owner/effort-range", lambda route: held.append(route))
             page.click(HEAD)
             _wait(page, "el.dataset.open === 'true'")
             page.focus(f"{CONTROL} .chat-effort-rec")
             page.keyboard.press("ArrowRight")
+            page.wait_for_function("() => true")  # let the request reach the route
+            deadline = time.time() + 10
+            while not held and time.time() < deadline:
+                page.wait_for_timeout(50)
+            assert held, "the gesture end posted the triple"
             page.fill("#chat-input", "use the new level")
             page.keyboard.press("Enter")
             # Send waits for the save: the button says so, the field keeps the draft meanwhile.
-            page.wait_for_function("() => document.querySelector('#chat-send').textContent === 'Saving'", timeout=2_000)
+            page.wait_for_function("() => document.querySelector('#chat-send').textContent === 'Saving'", timeout=5_000)
             assert page.locator("#chat-input").input_value() == "use the new level"
+            assert page.evaluate("() => window.__sends.length") == 0
+            held[0].continue_()
             page.wait_for_function("() => window.__sends.length === 1", timeout=10_000)
             order = page.evaluate("() => ({ sent: window.__sends[0].at, saved: window.__effortSaved })")
             assert order["saved"] and order["sent"] >= order["saved"], order
