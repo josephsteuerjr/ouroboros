@@ -310,6 +310,7 @@ export function createChatInstance({
     const scrollActivityDot = scrollBottomBtn?.querySelector('.chat-scroll-activity-dot');
     let nestedSubagentsExpanded = false;
     let _remoteActivityDepth = 0;
+    let ownerControls = null;
 
     // Instance lifecycle (P3): destroy() flips this so rAF loops and late async
     // continuations become no-ops instead of touching a removed DOM subtree.
@@ -560,6 +561,7 @@ export function createChatInstance({
         if (ctxBtn && typeof data?.context_mode === 'string') {
             ctxBtn.dataset.contextMode = ['nano', 'low', 'max'].includes(data.context_mode) ? data.context_mode : 'max';
         }
+        ownerControls?.syncState(data);
         const budget = headerBudgetPresentation(data);
         const budgetText = byId('budget-text');
         const budgetFill = byId('budget-bar-fill');
@@ -2892,6 +2894,10 @@ export function createChatInstance({
 
     async function sendMessage(planMode = false) {
         if (sendBtn.disabled) return;  // guard against Enter re-entry during async upload
+        if (ownerControls.hasPendingSave()) {  // an effort change lands before the message it would govern
+            setSendBusy(true, 'Saving');
+            try { if (!(await ownerControls.pendingSave())) return; } finally { setSendBusy(false); }
+        }
         let text = input.value.trim();
         const hasAttachments = composer.count > 0;
         let uploadedAttachments = [];
@@ -2996,7 +3002,8 @@ export function createChatInstance({
     swarmBtn?.addEventListener('click', () => setSwarm(!swarmArmed()));
 
     // Nano/Low/Max and the effort range write global owner settings; one module owns them.
-    const ownerControls = createComposerOwnerControls({ byId, apiFetch, showToast, refreshState: refreshHeaderControlState });
+    ownerControls = createComposerOwnerControls({ row: page.querySelector('.chat-toolbar-row'), byId, apiFetch, showToast,
+        saveEffortRange: apiClient.ownerEffortRange, refreshState: refreshHeaderControlState, onLayout: () => updateMessagesPadding() });
 
     // Arrow wrappers avoid MouseEvent leaking into sendMessage(planMode).
     sendBtn.addEventListener('click', () => sendMessage(swarmArmed()));
