@@ -5,6 +5,8 @@ current exceptions stay visible. Settings and the first-run wizard consume the o
 editor; controlled API responses, no runtime, no model calls."""
 from __future__ import annotations
 
+import json
+
 import pytest
 from tests import test_subscription_role_routes_browser as roles
 
@@ -64,6 +66,10 @@ def _open(ui, size, scheme="light"):
     page.emulate_media(color_scheme=scheme)
     page = roles.open_agents(ui)
     page.wait_for_function("() => document.querySelector('[data-subagent-last-review]:not([hidden])')")
+    page.evaluate("""async () => {
+        await document.fonts.ready;
+        for (let i = 0; i < 8; i++) await new Promise(requestAnimationFrame);
+    }""")
     return page
 
 
@@ -100,7 +106,8 @@ def test_reviewer_keeps_its_place_and_node_under_pointer_and_keyboard(role_ui, v
     # Pointer path: WebKit need not focus a clicked checkbox, so geometry is the claim here.
     box.click()
     assert box.is_checked() and _box(box) == start and _box(card) == card_top
-    assert intent.inner_text() == "Unsaved changes"
+    assert intent.inner_text() == ""
+    assert page.locator("#settings-unsaved-indicator").is_visible()
     roles.capture(page, f"quiet-{viewport}-{scheme}-marked")
     box.click()
     assert not box.is_checked() and _box(box) == start and _box(card) == card_top
@@ -215,6 +222,69 @@ def test_delegation_switch_names_what_it_stops(role_ui):
     assert stays.inner_text() == "Delegation is off; rows marked Reviewer still review."
     assert _box(toggle) == before
     roles.capture(page, "quiet-delegation-off")
+
+
+@pytest.mark.parametrize("long_labels", [False, True])
+@pytest.mark.parametrize("consumer,width,tracks", [("settings", 700, 1), ("settings", 740, 2), ("wizard", 700, 3)])
+def test_narrow_consumers_use_card_columns_and_one_dirty_indicator(role_ui, long_labels, consumer, width, tracks, record_property):
+    ui = role_ui
+    rows = _roster(ui)
+    if consumer == "settings":
+        page = _open(ui, (width, 900))
+    else:
+        ui["fixture"]["preview"]["available_subagents"] = {"enabled": True, "items": rows}
+        page = ui["page"]
+        page.set_viewport_size({"width": width, "height": 900})
+        page.goto(ui["url"] + "/onboarding")
+        page.wait_for_selector("#quick-start-btn:not([hidden])")
+        page.click("#next-btn")
+        page.locator("details:has(#onboarding-available-subagents) > summary").click()
+        page.locator("[data-subagent-row]").first.wait_for()
+        page.evaluate("""async () => {
+            await document.fonts.ready;
+            for (let i = 0; i < 8; i++) await new Promise(requestAnimationFrame);
+        }""")
+    card = page.locator("[data-subagent-row]").first
+    if long_labels:
+        card.locator(".available-subagent-route > .available-subagent-field").evaluate_all("""labels => {
+            const words = ['Modellquelle auswählen', 'Sprachmodell und Kontextfenster',
+                'Verbindung und Benutzerkonto', 'Intensität der Schlussfolgerung', 'Zugriffsberechtigungen'];
+            labels.forEach((label, i) => { label.firstChild.textContent = words[i] + ' '; });
+        }""")
+        card.locator(".available-subagent-reviewer").evaluate("""label => {
+            [...label.childNodes].filter(n => n.nodeType === 3 && n.textContent.trim())
+                .forEach(n => { n.textContent = ' Als Gutachter verwenden '; });
+        }""")
+    card.evaluate("e => e.scrollIntoView({block: 'start'})")
+    shape = card.evaluate("""card => {
+        const route = card.querySelector('.available-subagent-route');
+        const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);
+        const style = getComputedStyle(card);
+        const width = card.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+        const bounds = route.getBoundingClientRect();
+        return {width, expected: width <= 22 * rem ? 1 : width <= 34 * rem ? 2 : 3,
+            tracks: getComputedStyle(route).gridTemplateColumns.split(' ').length,
+            overflow: [...route.querySelectorAll('select, label')].some(e =>
+                e.getBoundingClientRect().right > bounds.right + 1),
+            pageOverflow: document.documentElement.scrollWidth > innerWidth};
+    }""")
+    record_property("card_columns", json.dumps(shape))
+    # At 740px Settings has room for two columns despite the old <=760px override.
+    # At 700px its sidebar leaves one, while the wizard's wider card holds three.
+    assert shape["expected"] == tracks, shape
+    assert shape["tracks"] == shape["expected"], shape
+    assert not shape["overflow"] and not shape["pageOverflow"], shape
+    box = card.locator('[data-subagent-field="review_eligible"]')
+    box.focus()
+    start, card_top = _box(box), _box(card)
+    page.keyboard.press("Space")
+    assert box.is_checked() and _box(box) == start and _box(card) == card_top
+    assert box.evaluate("e => e === document.activeElement")
+    assert page.locator("[data-subagents-intent]").inner_text() == ("" if consumer == "settings" else "Unsaved changes")
+    if consumer == "settings":
+        assert page.locator("#settings-unsaved-indicator").is_visible()
+    assert card.locator('[data-subagent-field="recommended_use"]').input_value() == DESCRIPTION
+    roles.capture(page, f"quiet-{width}-{consumer}-{'long-labels' if long_labels else 'english'}")
 
 
 def test_wizard_consumer_keeps_the_reviewer_box_in_place(role_ui):

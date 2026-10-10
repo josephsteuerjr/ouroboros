@@ -76,7 +76,8 @@ def test_settings_grid_tracks_never_scroll_the_body_sideways(direct_server_with_
     """At 780x680 the Agents route grid and a custom secret row stay inside the
     Settings column: the scroll body does not scroll sideways and no control (a route
     select, the secret row's Remove) is pushed past its right edge. At 1280x800 the
-    five route controls still share one row. Every measurement is taken before the
+    five route controls use Source + Model above Account / Effort / Access.
+    Every measurement is taken before the
     first assertion, so one failing run reports both grids."""
     pytest.importorskip("playwright.sync_api", reason="Playwright is not installed")
     from playwright.sync_api import Error as PlaywrightError

@@ -503,6 +503,7 @@ export function initSettings({ state, setBeforePageLeave, ws } = {}) {
     modelRoles.mount();
     initMcpSettings({ onChange: onSettingsEdited });
     initSubagentsSection({
+        hasPageDirtyIndicator: true,
         onChange: () => onSettingsEdited(),
         // A judged roster may clear only the validation footer it authored.
         // A cadence or other field error keeps its typed subject and survives.

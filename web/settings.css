@@ -500,10 +500,11 @@
     margin-left: auto;
 }
 
-/* One editor-level intent word whose slot keeps the width of its longest word:
-   the first edit never re-wraps the toolbar above the cards. */
+/* Reserve the intent slot even when Settings' Save bar owns the dirty word:
+   the first edit never re-wraps or collapses a toolbar line above the cards. */
 .available-subagents-intent {
     min-width: 8rem;
+    min-height: calc(var(--type-meta) * var(--line-meta));
 }
 
 .available-subagents-count,
@@ -971,10 +972,6 @@
     .settings-custom-secret-row {
         grid-template-columns: 1fr;
         align-items: stretch;
-    }
-
-    .available-subagent-route {
-        grid-template-columns: 1fr;
     }
 
     .available-subagents-toolbar .btn-default {

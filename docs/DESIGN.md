@@ -1092,6 +1092,8 @@ file (owner choice 1C/2A/3A/4A/5A/6A with mobile first-class).
   visible and finger-sized under a coarse pointer; a long name wraps to two lines
   and the card's dialog shows it whole. Open/Save succeed only when the desktop
   bridge says so; a copied link is a fallback, never reported as opened.
+  The photo's Copy to clipboard puts the image itself there or says it could
+  not (Open in new tab and Download stay); it never copies an address instead.
 - **The same view everywhere:** the sender's bubble, another tab and the replay
   after reload or restart render the one server view of each attachment. The
   stored text still names the files for the model; only the exact tail the web
@@ -1402,9 +1404,10 @@ a server entry):
    card the chip repeats the header and is dropped.
 2. **Name** — `--type-body` semibold, `--text-primary`. The one primary thing.
 3. **Identity detail** (email, plan) — `--type-meta`, `--text-meta`.
-4. **Status** — dot + one short word from the status pairs; the sentence is
-   its title, and is said under the head only when it names more than the word
-   (a pin, a model, a limit).
+4. **Status** — dot + a factual label from the status pairs. On Agents cards,
+   use one short availability label; its sentence is the title, and is said
+   under the head when it adds a specific pin, model or limit. Other row types
+   keep the status wording their own contract requires.
 5. **Meta line** — `--type-meta`, `--text-meta`, on its own line under the
    name. Quantities are stated in human words ("38% used · resets in 2h"), and
    an instant is humanized. A row never leads with a raw ISO timestamp.
@@ -1419,7 +1422,7 @@ section, never as a caption on every row; history, provenance, stored spellings
 and secondary explanations wait behind one explicit disclosure that pointer and
 keyboard open, never behind hover alone. New copy serves a concrete decision or error and adds meaning no
 control or status already carries: a checked box is not re-said beside it, and
-an unsaved draft is one editor fact, not a word on every row. A conditional
+an unsaved draft is said once by the editor or its host page, not on every row. A conditional
 line never moves the control that caused it: controls own stable slots, and a
 line an edit toggles opens beside or below them. Clarity comes from placement,
 never from smaller text, tooltip-only meaning or a line quota; real exceptions

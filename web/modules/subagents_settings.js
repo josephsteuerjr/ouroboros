@@ -363,7 +363,10 @@ const INTENT = {
     saved: { label: 'Saved', tone: 'ok' },
 };
 
-function editorIntent(state) {
+function editorIntent(state, hasPageDirtyIndicator) {
+    // Settings already names the dirty draft in its Save bar; keep this slot empty
+    // there. The wizard has no page indicator and still needs the editor's word.
+    if (state.dirty && hasPageDirtyIndicator) return { label: '', title: '', tone: 'neutral' };
     const intent = INTENT[state.dirty ? 'draft' : state.baseline] || INTENT.saved;
     return { ...intent, title: state.source ? `${intent.label} · source: ${state.source}` : intent.label };
 }
@@ -624,6 +627,7 @@ export function createAvailableSubagentsEditor({
     allowUnloadedOmission = false,
     previewGenerated = null,
     baseline = 'saved',
+    hasPageDirtyIndicator = false,
 } = {}) {
     const getDoc = typeof doc === 'function' ? doc : () => doc;
     const getWin = typeof win === 'function' ? win : () => win;
@@ -714,7 +718,7 @@ export function createAvailableSubagentsEditor({
         if (history) history.hidden = !summary.history;
         const historyText = container.querySelector('[data-review-pool-history-text]');
         if (historyText) historyText.textContent = summary.history;
-        const intent = editorIntent(state);
+        const intent = editorIntent(state, hasPageDirtyIndicator);
         const intentEl = container.querySelector('[data-subagents-intent]');
         if (intentEl) {
             Object.assign(intentEl, { textContent: intent.label, title: intent.title });
@@ -935,7 +939,7 @@ export function createAvailableSubagentsEditor({
         }
         disposeChoosers();
         const pool = reviewPoolSummary(state);
-        const intent = editorIntent(state);
+        const intent = editorIntent(state, hasPageDirtyIndicator);
         // Lines a row edit can toggle (the empty pool, the validation summary) sit below the rows:
         // a conditional line never moves the control that caused it (docs/DESIGN.md §6).
         container.innerHTML = `
@@ -1304,6 +1308,7 @@ export function availableSubagentsHasExplicitDraft(settings) {
 
 export function initSubagentsSection({
     onChange,
+    hasPageDirtyIndicator = false,
     onJudged,
     isOuterDraftClean,
     onGeneratedApply,
@@ -1313,6 +1318,7 @@ export function initSubagentsSection({
     destroySubagentsSection();
     settingsEditor = createAvailableSubagentsEditor({
         store,
+        hasPageDirtyIndicator,
         onChange: typeof onChange === 'function' ? onChange : () => {},
         onJudged: typeof onJudged === 'function' ? onJudged : () => {},
         isOuterDraftClean: typeof isOuterDraftClean === 'function' ? isOuterDraftClean : () => true,
