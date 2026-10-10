@@ -1404,13 +1404,29 @@ a server entry):
    card the chip repeats the header and is dropped.
 2. **Name** — `--type-body` semibold, `--text-primary`. The one primary thing.
 3. **Identity detail** (email, plan) — `--type-meta`, `--text-meta`.
-4. **Status** — dot + text from the status pairs.
+4. **Status** — dot + a factual label from the status pairs. On Agents cards,
+   use one short availability label; its sentence is the title, and is said
+   under the head when it adds a specific pin, model or limit. Other row types
+   keep the status wording their own contract requires.
 5. **Meta line** — `--type-meta`, `--text-meta`, on its own line under the
    name. Quantities are stated in human words ("38% used · resets in 2h"), and
    an instant is humanized. A row never leads with a raw ISO timestamp.
-6. **Actions** — docked right, legible at rest. A control rendered at
-   secondary ink reads as disabled; if the owner can click it, it is
+6. **Actions** — docked right in a slot of their own, legible at rest. A control
+   rendered at secondary ink reads as disabled; if the owner can click it, it is
    `--text-primary`.
+
+**Information has a place, not a permanent caption.** A row keeps its identity,
+primary choices and current exceptions visible (a specific refusal, a mark that
+no longer acts, an error); a rule shared by every row is said once for the
+section, never as a caption on every row; history, provenance, stored spellings
+and secondary explanations wait behind one explicit disclosure that pointer and
+keyboard open, never behind hover alone. New copy serves a concrete decision or error and adds meaning no
+control or status already carries: a checked box is not re-said beside it, and
+an unsaved draft is said once by the editor or its host page, not on every row. A conditional
+line never moves the control that caused it: controls own stable slots, and a
+line an edit toggles opens beside or below them. Clarity comes from placement,
+never from smaller text, tooltip-only meaning or a line quota; real exceptions
+all stay.
 
 For a row with one action and a durable result, the result occupies the flexible
 left side and the neutral action stays docked on the right. Field-level actions
@@ -1456,8 +1472,8 @@ suggestion's transport is the selected source; any id can still be typed. The
 stored spellings (`provider::model`, `claudexor::source=model`,
 `harness=model`) are serialization authored by the editor: never required from
 the owner, never a field placeholder or help-text instruction, never the
-primary displayed value; the exact stored id may appear in a meta line or
-tooltip. A configured-subagent reference is the one place a stored spelling
+primary displayed value; the exact stored id may appear in secondary details
+(Agents use Details & history). A configured-subagent reference is the one place a stored spelling
 names a thing: a roster row is labelled by its handle — its route target plus
 the facets that row really runs with, defaults omitted — because a friendlier
 stored label rots as soon as the owner re-points the row. The route identity chip names the source (API · OpenAI, Codex · model,
