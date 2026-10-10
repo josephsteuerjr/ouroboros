@@ -53,6 +53,7 @@ import {
 import { openConfirmDialog } from './confirm_dialog.js';
 import { chooseAndSendReview } from './review_command.js';
 import { bindEnterSubmit } from './ui_interactions.js';
+import { createComposerOwnerControls } from './composer_owner_controls.js';
 import { mountEmptyChatWelcome } from './welcome_preference.js';
 import {
     captureLiveCardPhaseState,
@@ -2994,38 +2995,8 @@ export function createChatInstance({
 
     swarmBtn?.addEventListener('click', () => setSwarm(!swarmArmed()));
 
-    // Context-mode quick toggle: the owner endpoint hot-applies the setting
-    // without a restart; Max -> Low is accepted only while Ouroboros is idle.
-    const contextModeBtn = byId('context-mode');
-    contextModeBtn?.addEventListener('click', async (event) => {
-        const seg = event.target.closest('.chat-seg');
-        if (!seg || contextModeBtn.dataset.disabled === 'true') return;
-        const next = ['nano', 'low', 'max'].includes(seg.dataset.mode) ? seg.dataset.mode : 'max';
-        const current = ['nano', 'low', 'max'].includes(contextModeBtn.dataset.contextMode) ? contextModeBtn.dataset.contextMode : 'max';
-        if (next === current) return;
-        contextModeBtn.dataset.disabled = 'true';
-        const postMode = (mode) => apiFetch('/api/owner/context-mode', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ mode }),
-        });
-        try {
-            const resp = await postMode(next);
-            if (resp.ok) {
-                contextModeBtn.dataset.contextMode = next;
-            } else {
-                let message = 'Could not change context mode.';
-                try { const p = await resp.json(); if (p?.error) message = p.error; } catch {}
-                showToast(message, 'error');
-            }
-        } catch (e) {
-            showToast(`Could not change context mode: ${e.message || e}`, 'error');
-            /* leave the current value; /api/state refresh will resync */
-        } finally {
-            contextModeBtn.dataset.disabled = 'false';
-            refreshHeaderControlState(true);
-        }
-    });
+    // Nano/Low/Max and the effort range write global owner settings; one module owns them.
+    const ownerControls = createComposerOwnerControls({ byId, apiFetch, showToast, refreshState: refreshHeaderControlState });
 
     // Arrow wrappers avoid MouseEvent leaking into sendMessage(planMode).
     sendBtn.addEventListener('click', () => sendMessage(swarmArmed()));
@@ -3889,6 +3860,7 @@ export function createChatInstance({
             if (destroyed) return;
             destroyed = true;
             composer.destroy();
+            ownerControls.destroy();
             unconfirmed.release();
             emptyWelcome?.dispose();
             readReceipt.cancel();
