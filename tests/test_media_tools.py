@@ -199,7 +199,6 @@ def test_attachment_label_sanitized_for_manifest(tmp_path):
 def test_oversized_attachment_image_not_native_injected(tmp_path):
     """An attachment image over the 8MB native-inject cap stays manifest-readable but is NOT
     base64-injected into the message (no context/provider byte-bomb); a small one IS injected."""
-    import json
     from ouroboros.artifacts import task_artifact_dir_path
     from ouroboros.context import build_user_content
 
