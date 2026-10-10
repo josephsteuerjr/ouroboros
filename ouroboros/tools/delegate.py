@@ -666,8 +666,7 @@ def _delegate_start(ctx: ToolContext, prompt: str, max_seconds: Optional[int] = 
         **actor_facts, **snapshot_facts, processing=processing_info,
         capture_mode=("engine_directory" if resource_ref.get("workspace_kind") == "directory" else
                       _CAPTURE_DELEGATED_SNAPSHOT if snapshot_id else ""),
-        max_seconds_basis=seconds_basis,
-        row_effort=(None if recovering else actor.get("row_effort")),
+        max_seconds_basis=seconds_basis, row_effort=None if recovering else actor.get("row_effort"),
     )
     from ouroboros.tools.control import maybe_emit_delegated_run_fanout
     maybe_emit_delegated_run_fanout(ctx, run_id=run_id, route_id=route.route_id, objective=text, durable=durable)
