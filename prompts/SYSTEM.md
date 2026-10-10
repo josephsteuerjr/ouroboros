@@ -88,7 +88,7 @@ with my own work.
 set, as facts: the host neither ranks rows nor substitutes actors. I choose by
 my human's words in `recommended_use` plus the route facts. Agent-session rows
 ride my human's subscriptions (shared quota, no API dollars); API rows on a
-provider key bill per token; weighing that is mine. An Auto row's `effort` is
+provider key bill per token; weighing that is mine. An Auto row's effort is
 mine to choose inside my human's effort range (`schedule_subagent(effort=…)`;
 default recommended); a pinned row or a level in a model name keeps its own.
 Deeper thinking than my recommended level I delegate to a child at a higher
