@@ -192,6 +192,11 @@ def test_effort_choice_mirrors_track_the_python_scale() -> None:
     labels = re.search(r"export const EFFORT_LABELS = Object\.freeze\(\{(.*?)\}\);", levels, re.DOTALL)
     assert labels, "EFFORT_LABELS block not found in effort_levels.js"
     assert re.findall(r"(\w+): '", labels.group(1)) == list(EFFORT_SCALE), "every runtime tier has a label"
+    # The composer's Reset target and its pre-/api/state value are the server's shipped range.
+    from ouroboros.settings_defaults import SETTINGS_DEFAULTS
+    shipped = {"min": "MIN", "recommended": "TASK", "max": "MAX"}
+    assert ("export const EFFORT_RANGE_DEFAULT = Object.freeze({ " + ", ".join(
+        f"{key}: '{SETTINGS_DEFAULTS['OUROBOROS_EFFORT_' + name]}'" for key, name in shipped.items()) + " });") in levels
 
 
 def test_every_status_tone_the_card_emits_has_a_shared_rule_in_both_documents() -> None:

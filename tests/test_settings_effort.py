@@ -76,11 +76,13 @@ def test_review_effort_default_carriers_stay_in_sync():
     # row); the read seam migrates them, so they are no shipped default any more.
     assert "OUROBOROS_EFFORT_REVIEW" not in SETTINGS_DEFAULTS
     assert "OUROBOROS_EFFORT_SCOPE_REVIEW" not in SETTINGS_DEFAULTS
-    from ouroboros.config import REVIEW_POOL_DEFAULT_EFFORT
     from ouroboros.reviewer_slot_config import ConfiguredReviewerSlot, row_effort
+    from ouroboros.settings_scales import effort_range
 
+    # An Auto reviewer reviews at the top of the owner's range (High by default), not at the
+    # frozen REVIEW_POOL_DEFAULT_EFFORT literal the skill-review fingerprint keeps.
     bare = ConfiguredReviewerSlot(slot_id="r", kind="api", target_id="openai/gpt-5.6-terra")
-    assert row_effort(bare) == REVIEW_POOL_DEFAULT_EFFORT == "high"
+    assert row_effort(bare) == effort_range()["max"] == "high"
 
 
 _RETIRED_EFFORT_KEYS = ("OUROBOROS_EFFORT_REVIEW", "OUROBOROS_EFFORT_SCOPE_REVIEW", "OUROBOROS_EFFORT_DEEP_SELF_REVIEW")
@@ -94,13 +96,12 @@ def test_an_exported_retired_review_effort_key_is_inert_for_the_deep_review(monk
     import inspect
 
     from ouroboros import settings_scales
-    from ouroboros.config import REVIEW_POOL_DEFAULT_EFFORT
     from ouroboros.deep_self_review import main_review_row
     from ouroboros.reviewer_slot_config import row_effort
 
     for key in _RETIRED_EFFORT_KEYS:
         monkeypatch.setenv(key, "low")
-    assert row_effort(main_review_row()) == REVIEW_POOL_DEFAULT_EFFORT
+    assert row_effort(main_review_row()) == settings_scales.effort_range()["max"]
     source = inspect.getsource(settings_scales.resolve_effort)
     assert not any(key in source for key in _RETIRED_EFFORT_KEYS)
     assert "deep_self_review" not in source and "scope_review" not in source

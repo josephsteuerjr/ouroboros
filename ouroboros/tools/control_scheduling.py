@@ -343,12 +343,14 @@ def _effort_request_note(configured: Dict[str, Any], requested: str) -> str:
     named = model_named_effort(RouteSpec(str(route.get("kind") or "api_model"), str(route.get("target_id") or "")))
     pin = str(configured.get("effort") or "")
     if named:
-        fixed = f"the row's model name carries {named}"
-    elif pin:
-        fixed = f"my human pinned the row at {pin}"
-    else:
+        return f"\neffort requested: {requested}; the row's model name carries {named}, which stands in every mode"
+    if not pin:
         return f"\neffort requested: {requested} (decided at dispatch inside my human's range)"
-    return f"\neffort requested: {requested}; {fixed}, which stands outside Cyber Pro"
+    from ouroboros.runtime_mode_policy import effort_range_binds
+
+    if not effort_range_binds():
+        return f"\neffort requested: {requested} (Cyber Pro: it outranks my human's pin {pin})"
+    return f"\neffort requested: {requested}; my human pinned the row at {pin}, which stands outside Cyber Pro"
 
 
 def _build_acting_constraint(
