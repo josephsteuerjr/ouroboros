@@ -923,7 +923,7 @@ export function createAvailableSubagentsEditor({
                 markDirty({ structural: true });
                 paint();
             });
-            for (const field of ['effort', 'processing_preference', 'access']) {
+            for (const field of ['processing_preference', 'access']) {
                 rowElement.querySelector(`[data-subagent-field="${field}"]`)?.addEventListener('change', (event) => {
                     const value = String(event.target.value || '');
                     if (value) row[field] = value;

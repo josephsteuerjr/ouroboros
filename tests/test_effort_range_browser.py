@@ -413,3 +413,5 @@ def test_agents_rows_say_auto_or_the_level_in_the_model_name(role_ui, tmp_path, 
         assert row.locator('[data-subagent-field="effort"]').count() == 0, "a named row offers no select"
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     _shot(page, tmp_path, f"settings-agents-effort-{width}")
+    session_named.locator("[data-subagent-effort-named]").scroll_into_view_if_needed()
+    _shot(page, tmp_path, f"settings-agents-effort-named-{width}")
