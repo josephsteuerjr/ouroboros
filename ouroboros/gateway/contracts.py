@@ -712,6 +712,7 @@ class ActiveChatActivity(ActiveDirectTurn):
     required_question_unavailable: NotRequired[bool]
     project_admission_hold: NotRequired[Dict[str, Any]]
     pause_cause: NotRequired[str]  # budget | owner | restart | sleep | unknown; display only
+    finishing_reviews: NotRequired[bool]  # review work an owner Pause lets finish runs on; display only, no count
 
 class EffortRange(TypedDict):  # min ≤ recommended ≤ max, each an EFFORT_SCALE tier (the tolerant read)
     min: str
