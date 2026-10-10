@@ -232,11 +232,16 @@ export function createEffortRangeControl({
             try {
                 const response = await saveEffortRange(triple);
                 if (state.destroyed) return ok;
-                applyServer(response?.effort_range && typeof response.effort_range === 'object' ? response.effort_range : triple);
+                const saved = response?.effort_range && typeof response.effort_range === 'object' ? response.effort_range : triple;
+                // A newer edit is queued and was built on the draft: the draft stays ahead of this
+                // answer, so the next edit never starts from an older range.
+                if (state.queued) state.stored = normalizeEffortRange(saved);
+                else applyServer(saved);
                 ok = true;
             } catch (error) {
                 if (state.destroyed) return false;
                 ok = false;
+                state.queued = null;  // later edits were built on the refused draft
                 showToast(error?.message || 'Could not change the effort range.', 'error');
                 applyServer(state.stored);  // the server's value, never the unsaved preview
             }

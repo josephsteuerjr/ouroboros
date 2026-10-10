@@ -341,6 +341,37 @@ test('saves are serialized, last wins; Send can wait for them; a refused save re
     assert.equal(m.el.querySelector('.chat-effort-reset').dataset.atDefault, 'true');
 });
 
+test('an edit made while saves are on their way builds on the latest choice, never on an older answer', async () => {
+    const pending = [];
+    const m = mount({ save: (triple) => new Promise((resolve, reject) => pending.push({ triple, resolve, reject })) });
+    m.control.syncState({ effort_range: { min: 'low', recommended: 'medium', max: 'high' } });
+    m.headClick(0);
+    m.key('min', 'Home');        // in flight: none · medium · high
+    m.key('rec', 'ArrowRight');  // queued:    none · high · high
+    pending[0].resolve({ ok: true, effort_range: pending[0].triple });
+    await sleep(0);
+    assert.deepEqual(m.control.shown(), { min: 0, rec: 3, max: 3 }, 'the older answer does not pull the draft back');
+    m.key('max', 'End');         // while the second save is in flight
+    pending[1].resolve({ ok: true, effort_range: pending[1].triple });
+    await sleep(0);
+    pending[2].resolve({ ok: true, effort_range: pending[2].triple });
+    assert.equal(await m.control.pendingSave(), true);
+    assert.deepEqual(pending.map((p) => p.triple), [
+        { min: 'none', recommended: 'medium', max: 'high' },
+        { min: 'none', recommended: 'high', max: 'high' },
+        { min: 'none', recommended: 'high', max: 'ultra' },
+    ]);
+    assert.deepEqual(m.control.stored(), { min: 'none', recommended: 'high', max: 'ultra' });
+    assert.deepEqual(m.control.shown(), { min: 0, rec: 3, max: 6 });
+    // A refusal drops edits queued on top of it and returns to the server's value.
+    m.key('rec', 'ArrowLeft');
+    m.key('rec', 'ArrowLeft');
+    pending[3].reject(new Error('Could not save.'));
+    assert.equal(await m.control.pendingSave(), false);
+    assert.equal(pending.length, 4, 'the edit queued on the refused draft never leaves');
+    assert.deepEqual(m.control.shown(), { min: 0, rec: 3, max: 6 });
+});
+
 test('destroy removes the element, its document listeners and its timers', async () => {
     const m = mount({ hover: true });
     assert.equal(m.doc.count('pointerdown'), 1);
