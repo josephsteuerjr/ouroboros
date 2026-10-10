@@ -368,7 +368,7 @@ function editorIntent(state, hasPageDirtyIndicator) {
     // there. The wizard has no page indicator and still needs the editor's word.
     if (state.dirty && hasPageDirtyIndicator) return { label: '', title: '', tone: 'neutral' };
     const intent = INTENT[state.dirty ? 'draft' : state.baseline] || INTENT.saved;
-    return { ...intent, title: state.source ? `${intent.label} · source: ${state.source}` : intent.label };
+    return { ...intent, title: intent.label };
 }
 
 function reviewDeliveryHtml(row, state, index) {

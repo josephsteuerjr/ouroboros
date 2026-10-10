@@ -164,7 +164,7 @@ test('the toolbar names Delegation and one intent word; edit-toggled pool lines 
     const editor = createAvailableSubagentsEditor({ doc, win: null, baseline: 'generated' });
     editor.load({ enabled: false, items: [api({ review_eligible: true })] }, { source: 'onboarding_default' });
     assert.match(html, /aria-label="Delegation to these subagents"[^>]*>\s*Delegation\s*<\/label>/);
-    assert.match(html, /data-subagents-intent data-tone="neutral" title="Generated draft · source: onboarding_default">Generated draft</);
+    assert.match(html, /data-subagents-intent data-tone="neutral" title="Generated draft">Generated draft</);
     assert.match(html, /data-review-pool-stays >Delegation is off; rows marked Reviewer still review\.</);
     const list = html.indexOf('class="available-subagents-list"');
     assert.ok(html.indexOf('data-review-pool-empty') > list && html.indexOf('data-subagents-validation') > list,

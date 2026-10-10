@@ -1472,8 +1472,8 @@ suggestion's transport is the selected source; any id can still be typed. The
 stored spellings (`provider::model`, `claudexor::source=model`,
 `harness=model`) are serialization authored by the editor: never required from
 the owner, never a field placeholder or help-text instruction, never the
-primary displayed value; the exact stored id may appear in a meta line or
-tooltip. A configured-subagent reference is the one place a stored spelling
+primary displayed value; the exact stored id may appear in secondary details
+(Agents use Details & history). A configured-subagent reference is the one place a stored spelling
 names a thing: a roster row is labelled by its handle — its route target plus
 the facets that row really runs with, defaults omitted — because a friendlier
 stored label rots as soon as the owner re-points the row. The route identity chip names the source (API · OpenAI, Codex · model,

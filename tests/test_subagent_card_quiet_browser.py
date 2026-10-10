@@ -107,7 +107,9 @@ def test_reviewer_keeps_its_place_and_node_under_pointer_and_keyboard(role_ui, v
     box.click()
     assert box.is_checked() and _box(box) == start and _box(card) == card_top
     assert intent.inner_text() == ""
-    assert page.locator("#settings-unsaved-indicator").is_visible()
+    dirty = page.locator("#settings-unsaved-indicator")
+    assert dirty.is_visible() and dirty.get_attribute("aria-hidden") != "true"
+    assert "Unsaved changes" in dirty.aria_snapshot(), "the one dirty indication remains accessible"
     roles.capture(page, f"quiet-{viewport}-{scheme}-marked")
     box.click()
     assert not box.is_checked() and _box(box) == start and _box(card) == card_top
