@@ -130,8 +130,13 @@ def _snapshot(target: dict, update: dict) -> None:
             target[key] = copy.deepcopy(value)
 
 
-def _delta(target: dict, update: dict, note: Callable[[str], None]) -> None:
-    """Fold one delta into the assembly; a shape or identity conflict is noted, never raised."""
+def _delta(target: dict, update: dict, note: Callable[[str], None], *,
+           chat_path: tuple | None = None) -> None:
+    """Fold a delta; disclose shape/identity conflicts without raising.
+
+    Only Chat messages supply ``chat_path`` (choice, index, then wire fields),
+    so call-name compatibility cannot change unrelated names or native deltas.
+    """
     for key, value in update.items():
         current = target.get(key)
         if value is None:
@@ -142,7 +147,7 @@ def _delta(target: dict, update: dict, note: Callable[[str], None]) -> None:
             if not isinstance(current, dict):
                 note(f"{key}: object delta onto {type(current).__name__}; kept first shape")
                 continue
-            _delta(current, value, note)
+            _delta(current, value, note, chat_path=(*chat_path, key) if chat_path is not None else None)
         elif isinstance(value, list):
             if current is None:
                 current = target[key] = []
@@ -150,11 +155,24 @@ def _delta(target: dict, update: dict, note: Callable[[str], None]) -> None:
                 note(f"{key}: list delta onto {type(current).__name__}; kept first shape")
                 continue
             for item in value:
-                _merge_list_item(key, current, item, note)
+                _merge_list_item(key, current, item, note,
+                                 chat_path=(*chat_path, key) if chat_path is not None else None)
         elif isinstance(value, str) and key not in _IDENTITY_KEYS:
             if current is not None and not isinstance(current, str):
                 note(f"{key}: text delta onto {type(current).__name__}; kept first shape")
                 continue
+            if key == "name" and current and value and chat_path is not None and (
+                    (len(chat_path) == 3 and chat_path[2] == "function_call")
+                    or (len(chat_path) == 5 and chat_path[2] == "tool_calls"
+                        and chat_path[4] in {"function", "custom"})):
+                # Chat call names alone tolerate a repeat of the accumulated value.
+                # This compatibility choice interprets a,a as a rather than aa;
+                # other fragments still append, without guessing a callable name.
+                address = ".".join(str(part) for part in (*chat_path, key))
+                if current == value:
+                    note(f"{address}: equal name value not appended")
+                    continue
+                note(f"{address}: different name values concatenated")
             target[key] = (current or "") + value
         elif key in _IDENTITY_KEYS:
             if current is None:
@@ -167,7 +185,8 @@ def _delta(target: dict, update: dict, note: Callable[[str], None]) -> None:
             target[key] = copy.deepcopy(value)
 
 
-def _merge_list_item(key: str, current: list, item: Any, note: Callable[[str], None]) -> None:
+def _merge_list_item(key: str, current: list, item: Any, note: Callable[[str], None], *,
+                     chat_path: tuple | None = None) -> None:
     """List identity is a property of the wire field: ``reasoning_details`` records are
     reassembled by type transition (every delta repeats a frame-local ``index`` that is
     not a record key, as the wire's own reference client documents); every other list
@@ -198,7 +217,8 @@ def _merge_list_item(key: str, current: list, item: Any, note: Callable[[str], N
     if match is None:
         current.append(copy.deepcopy(item))
     else:
-        _delta(match, item, note)
+        _delta(match, item, note,
+               chat_path=(*chat_path, match.get("index", "last")) if chat_path is not None else None)
 
 
 def _tool_call_problem(call: Any) -> str:
@@ -304,7 +324,7 @@ class ChatAccumulator(_Accumulator):
         substantive = any(value not in (None, "", [], {}) for key, value in delta.items() if key != "role")
         if choice.get("finish_reason") and substantive:
             self._note(f"choice {index}: content after finish_reason {choice['finish_reason']!r}; accepted")
-        _delta(choice["message"], delta, self._note)
+        _delta(choice["message"], delta, self._note, chat_path=("choice", index))
         logprobs = update.get("logprobs")
         if isinstance(logprobs, dict):
             _delta(choice.setdefault("logprobs", {}), logprobs, self._note)

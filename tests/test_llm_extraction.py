@@ -167,6 +167,11 @@ def test_llm_facade_reexports_every_moved_module_identity():
     assert llm.CONTEXT_OVERFLOW_CODES is context_budget.CONTEXT_OVERFLOW_CODES
 
 
+def test_claudexor_catalog_aliases_keep_the_metadata_owner_identity():
+    for name in ("model_catalog", "catalog_admits_model"):
+        assert getattr(llm_claudexor, name) is getattr(llm_capability_policy, name)
+
+
 def _defined_members(path: pathlib.Path, class_name: str) -> set[str]:
     """Members a class DEFINES in source — immune to monkeypatch residue that an
     earlier test in the same process may have left on the class object."""
