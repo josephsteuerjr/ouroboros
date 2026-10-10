@@ -1172,6 +1172,9 @@ class ClaudexorStatusResponse(TypedDict, total=False):
     profiles: Dict[str, Any]
     quota: List[Dict[str, Any]]
     quota_absences: List[Dict[str, Any]]
+    resources: List[Dict[str, Any]]
+    resource_capabilities: Dict[str, bool]
+    resource_capabilities_read: ClaudexorReadState
     reads: ClaudexorStatusReads
     # UNIFIED ACCOUNT MODEL feature fact (additive-optional): True only when the engine's own
     # /v2/operations catalog was read and advertises `GET /v2/account-pools` (every default CLI login

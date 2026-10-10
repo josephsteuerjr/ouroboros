@@ -89,6 +89,8 @@ HTTP_ENDPOINTS: tuple[str, ...] = (
     "GET /api/claudexor/maintenance/operations/{operation_id}",
     "POST /api/claudexor/maintenance/operations/{operation_id}/cancel",
     "POST /api/claudexor/quota/refresh",
+    "POST /api/claudexor/account-resets",
+    "GET /api/claudexor/account-resets/{operation_id}",
     "POST /api/claudexor/wake",
     "POST /api/claudexor/login",
     "GET /api/claudexor/login/{job_id}",
