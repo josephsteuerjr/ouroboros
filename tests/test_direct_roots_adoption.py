@@ -150,3 +150,27 @@ def test_boot_adoption_failure_keeps_row_unsettled(monkeypatch, tmp_path):
     # The durable row is untouched: unknown, never a fabricated terminal.
     from ouroboros.task_results import load_task_result
     assert load_task_result(tmp_path, "orphan-adopt-fail")["status"] == "running"
+
+
+def test_boot_never_adopts_a_live_turn_of_this_process(monkeypatch, tmp_path):
+    """An in-process revival re-runs queue.init beside live turns (N3)."""
+    queue_mod, _ = _isolated_queue(monkeypatch, tmp_path)
+    _write_running_direct_result(tmp_path, "live-turn")
+    _write_roster_fragment(tmp_path, [])
+    _write_restore_snapshot(tmp_path, [])
+
+    class _Registry:
+        @staticmethod
+        def snapshot():
+            return [{"activity_id": "live-turn"}]
+
+    import supervisor.active_activity as active_activity
+    monkeypatch.setattr(active_activity, "get_direct_activity_registry", lambda: _Registry)
+
+    queue_mod.init(tmp_path)
+
+    assert dict(queue_mod.PRIOR_DIRECT_ROOTS)["task_ids"] == []
+    events_path = tmp_path / "logs" / "supervisor.jsonl"
+    events = ([json.loads(line) for line in events_path.read_text().splitlines()]
+              if events_path.exists() else [])
+    assert not [e for e in events if e.get("type") == "direct_roots_adopted_orphans"]

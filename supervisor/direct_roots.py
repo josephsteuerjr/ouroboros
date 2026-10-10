@@ -132,8 +132,9 @@ def adopt_orphaned_direct_results(drive_root: Any, taken: Dict[str, Any]) -> Dic
     rows have a boot sweep of their own (snapshot restore fences surviving
     RUNNING rows); direct rows had none — the row outlived every registry that
     named it.  This closes that class at the same seam the roster already
-    feeds: durable results with direct execution ownership and a nonterminal
-    status, named by neither the taken roster nor the queue snapshot, are
+    feeds: durable results with direct execution ownership and a ``running``
+    status, named by neither the taken roster nor the queue snapshot (a live
+    turn of THIS process is skipped too, so the event never names live work),
     adopted into the restore list so ``_fence_snapshot_running_rows`` settles
     them through the one intent-then-custody path every other interrupted row
     takes.  The handover the roster already made is preserved untouched and
@@ -142,9 +143,14 @@ def adopt_orphaned_direct_results(drive_root: Any, taken: Dict[str, Any]) -> Dic
     terminal. Never raises.
     """
     from ouroboros.task_results import STATUS_RUNNING, list_task_results
+    from supervisor.active_activity import get_direct_activity_registry
 
     handed_over = [str(task_id) for task_id in taken.get("task_ids") or [] if str(task_id)]
     known = set(handed_over)
+    # An in-process supervisor revival re-runs queue init while direct turns of
+    # THIS process are alive: their rows belong to the live registry, not to the
+    # crash-orphan class, and must not be named as adopted orphans.
+    live_direct = {str(row.get("activity_id") or "") for row in get_direct_activity_registry().snapshot()}
     snapshot_ids: set = set()
     adopted: list = []
     try:
@@ -160,7 +166,7 @@ def adopt_orphaned_direct_results(drive_root: Any, taken: Dict[str, Any]) -> Dic
         for row in list_task_results(drive_root, statuses=[STATUS_RUNNING]):
             task_id = str(row.get("task_id") or "")
             owner = row.get("execution_owner")
-            if (not task_id or task_id in known or task_id in snapshot_ids
+            if (not task_id or task_id in known or task_id in snapshot_ids or task_id in live_direct
                     or not isinstance(owner, dict) or str(owner.get("kind") or "") != "direct"):
                 continue
             known.add(task_id)
