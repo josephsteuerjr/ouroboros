@@ -844,9 +844,7 @@
  * @typedef {Object} OwnerEffortRangeResponse
  * @property {boolean} ok
  * @property {EffortRange} effort_range
- */
-
-/**
+ *
  * @typedef {Object} OwnerSafetyModeResponse
  * @property {boolean} ok
  * @property {string} safety_mode  // full | light | off (v6.54.3)
