@@ -7505,6 +7505,17 @@ textarea.chat-input {
 /* === design-system:migrated-end === */
 
 /* === design-system:migrated-begin (chat: executor chip, structured delivery, quiz card) === */
+/* The child card's effort chip: one text part of the meta line; a pinned level wears the pin glyph. */
+.chat-live-effort {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+}
+.chat-live-effort-pin {
+    flex: 0 0 auto;
+    width: 11px;
+    height: 11px;
+}
 
 /* Phase 6: per-bubble/subagent executor chip (owner directive: a small chip
    like Claudexor's, never a promotional badge). Reuses .harness-chip, sized on

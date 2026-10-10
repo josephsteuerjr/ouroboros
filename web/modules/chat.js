@@ -54,6 +54,7 @@ import { openConfirmDialog } from './confirm_dialog.js';
 import { chooseAndSendReview } from './review_command.js';
 import { bindEnterSubmit } from './ui_interactions.js';
 import { createComposerOwnerControls } from './composer_owner_controls.js';
+import { effortFact } from './effort_chip.js';
 import { mountEmptyChatWelcome } from './welcome_preference.js';
 import {
     captureLiveCardPhaseState,
@@ -1767,6 +1768,7 @@ export function createChatInstance({
             record.executorChip = summary.executorChip;
         }
         if (summary.modelExecution) record.modelExecution = summary.modelExecution;
+        if (summary.effort) record.effort = summary.effort;
         if (Number.isInteger(summary.toolCalls)) record.toolCalls = summary.toolCalls;
         record._lastFrameMeta = Array.isArray(summary.meta) ? summary.meta : [];
         if (rawTs) record.latestSourceTs = rawTs;
@@ -1937,7 +1939,8 @@ export function createChatInstance({
             model,
             ...overrides,
         });
-        return summary ? withTaskCostMeta(summary, evt, { rawTs }) : null;
+        // The child's effort fact rides every frame that states a level (live, terminal, replay).
+        return summary ? withTaskCostMeta({ ...summary, ...(evt.effort_level ? { effort: effortFact(evt) } : {}) }, evt, { rawTs }) : null;
     }
 
     // A child's title is its lineage identity plus, for twins (same displayed identity
