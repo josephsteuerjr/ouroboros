@@ -16,6 +16,8 @@ import {
     sourceIdentityLabel,
     splitSessionTarget,
     accountScopedModelCatalog,
+    sessionModelMatches,
+    CLAUDE_BASE_QUALIFIER,
 } from './route_editor_primitives.js';
 
 /**
@@ -85,12 +87,6 @@ function routeQuotaFact(snapshot, harness, model, profileId = '', nowMs = Date.n
     return { known: usable || (observed && !unknown), exhausted: spent && !usable && !unknown };
 }
 
-function modelIsPresent(harness, model) {
-    if (!model) return true;
-    return (harness?.models || []).some((entry) =>
-        String(entry?.id || entry?.value || entry || '') === String(model));
-}
-
 // One verdict per branch: the short `label` (what a card head has room for),
 // the status `tone`, the full `text` (the sentence a tooltip carries) and the
 // `reason` a branch names beyond its label (a pin, a model). The four are
@@ -123,7 +119,13 @@ export function sessionRouteVerdict(row, state, nowMs = Date.now()) {
     if (!harnessModelsKnown(harnessEntry, state.catalogKnown)) {
         return verdict(NOT_CHECKED, `${harness} · model availability not checked`);
     }
-    if (!modelIsPresent(harnessEntry, model)) {
+    const matches = sessionModelMatches(harnessEntry, model);
+    const available = (text, applicable = matches) => {
+        const baseOnly = applicable.length && applicable.every((match) => match.basis === 'claude_1m_base');
+        return { ...verdict(AVAILABLE, `${text}${baseOnly ? ` · ${CLAUDE_BASE_QUALIFIER}` : ''}`),
+            ...(baseOnly ? { qualifier: CLAUDE_BASE_QUALIFIER } : {}) };
+    };
+    if (model && !matches.length) {
         return verdict(UNAVAILABLE, `${harness} · selected model ${model} currently unavailable`, { specific: true });
     }
 
@@ -138,7 +140,7 @@ export function sessionRouteVerdict(row, state, nowMs = Date.now()) {
         const quota = routeQuotaFact(state.snapshot, harness, model, pin, nowMs);
         if (quota.exhausted) return verdict(LIMIT, `${harness} · pinned account ${pin} limit reached`, { specific: true });
         if (!quota.known) return verdict(NOT_CHECKED, `${harness} · pinned account ready; quota availability not proven`);
-        return verdict(AVAILABLE, `${harness} · available now`);
+        return available(`${harness} · available now`);
     }
 
     if (harnessEntry.enabled === false
@@ -154,11 +156,8 @@ export function sessionRouteVerdict(row, state, nowMs = Date.now()) {
     // account-view catalog stamps each entry with the account that carries it,
     // so the two sets are intersected here; a legacy catalog carries no such
     // provenance (empty `carriers`) and keeps the older, weaker rule.
-    const carriers = new Set((model ? (harnessEntry.models || []) : [])
-        .filter((entry) => String(entry?.id || entry?.value || entry || '') === String(model))
-        .map((entry) => String(entry?.credential_profile_id || ''))
-        .filter(Boolean));
-    if (carriers.size && !usable.some((account) => carriers.has(String(account.profile_id || '')))) {
+    const applicable = sessionModelMatches(harnessEntry, model, { snapshot: state.snapshot });
+    if (matches.length && !applicable.length) {
         return verdict(NO_ACCOUNT, `${harness} · no usable account currently carries ${model}`, { specific: true });
     }
     if (!state.quotaKnown) return verdict(NOT_CHECKED, `${harness} · account ready; quota not checked`);
@@ -166,12 +165,15 @@ export function sessionRouteVerdict(row, state, nowMs = Date.now()) {
     if (pool?.kind === 'none' || pool?.kind === 'api_key_route') {
         return verdict(NO_ACCOUNT, `${harness} · no usable subscription account currently`);
     }
-    if (pool?.kind === 'profile' || pool?.kind === 'native') {
-        return verdict(AVAILABLE, `${harness} · compatible account selected; exact model quota checked at start`);
+    const carriers = new Set(applicable.map((match) => match.profile));
+    const attributed = carriers.size && !carriers.has('');
+    if (!attributed && (pool?.kind === 'profile' || pool?.kind === 'native')) {
+        return available(`${harness} · compatible account selected; exact model quota checked at start`, applicable);
     }
-    const quota = routeQuotaFact(state.snapshot, harness, model, '', nowMs);
+    const quotaSnapshot = attributed ? { ...state.snapshot, quota: (state.snapshot.quota || []).filter((row) => carriers.has(String(row?.subject?.subject_id || ''))) } : state.snapshot;
+    const quota = routeQuotaFact(quotaSnapshot, harness, model, '', nowMs);
     if (quota.exhausted) return verdict(LIMIT, `${harness} · all known accounts reached a limit`, { specific: true });
-    if (quota.known) return verdict(AVAILABLE, `${harness} · available now`);
+    if (quota.known) return available(`${harness} · available now`, applicable);
     return verdict(NOT_CHECKED, `${harness} · live availability not checked`);
 }
 
@@ -229,7 +231,9 @@ function executionFor(snapshot, subagentId) {
 // the row's own error once the owner tried to save THIS row (`_uiAttempted`,
 // stamped by the save attempt on the rows that existed then — an entry added
 // afterwards is fresh again); the neutral hint while its route is still
-// unchosen (a fresh entry is an invitation, not an error); a twin; nothing.
+// unchosen (a fresh entry is an invitation, not an error); a twin; the
+// conditional qualifier of an Available session verdict (a Claude `[1m]`
+// judged by its listed base); nothing.
 // History and the stored spelling live in the card's Details (`rowTaskRun`).
 export function rowMeta(row, state, errors) {
     if (row._uiAttempted && errors.length) return { text: errors[0], tone: 'error' };
@@ -242,7 +246,9 @@ export function rowMeta(row, state, errors) {
     const items = state.setting?.items || [];
     const twin = sameEngineAs(items, items.indexOf(row), state.processingPreference);
     if (twin >= 0 && !reviewTwinAllowed(items[twin], row)) return { text: `Runs the same engine as Subagent ${twin + 1} — change one of them to tell them apart.`, tone: '' };
-    return { text: '', tone: '' };
+    // A conditional availability qualifier must stay readable where no hover exists.
+    const qualifier = session ? sessionRouteVerdict(row, state).qualifier : '';
+    return qualifier ? { text: qualifier, tone: '', qualifier: true } : { text: '', tone: '' };
 }
 
 /**

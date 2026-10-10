@@ -214,6 +214,14 @@ without becoming an allowlist. A saved unknown model remains editable; a
 catalog refresh preserves the real input, selection and composition. Escape
 or blur closes suggestions without assigning a value. Selected, hover, focus,
 disabled and invalid states have different meanings and remain distinguishable.
+Availability never rewrites a selection: a Claude `[1m]` variant whose base
+model a usable account lists reads Available, noting that the engine checks the
+variant at session start, and an unread catalog reads Not checked. Maximum
+response sits beside the context window as Auto or a whole number for this
+exact model, server and account; Apply acknowledges it outside the Settings
+draft, and a route change clears it. Web search is its own Source and Model:
+Auto lists the routes it may use, a chosen source is strict, and skills, MCP
+and browser tools stay independent.
 
 Tabs expose one selected view and one keyboard entry point. Arrow keys and
 Home/End move through available tabs; restoring a selected tab reveals it by
@@ -1299,7 +1307,9 @@ retains the engine's reset forecast and keeps automatic continuation without
 claiming quota exhaustion or guaranteed availability. It never offers sign-in.
 Only confirmed quota pauses the execution clock; authentication and unconfirmed
 availability waits consume it. Calendar deadlines remain fixed. Configured
-fallback routes are tried before a wait card is shown.
+fallback routes are tried before a wait card is shown. Work continuing on a
+fallback is not a wait: nothing claims the primary recovered, the model alone
+asks to return, and only the primary's own accepted reply counts as a return.
 
 A submitted action is shown as pending until the task reports its application.
 A saved Settings change and a still-pending task change are disclosed separately.

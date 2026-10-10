@@ -506,7 +506,8 @@ export function profileEntry(entry) {
 /** Native model discovery is per account; an unread account is not an empty catalog. */
 export function accountScopedModelCatalog(harness, pin = '') {
     const envelope = harness?.model_catalog;
-    if (!Array.isArray(envelope?.accounts)) return harness;
+    if (!Array.isArray(envelope?.accounts)) return pin && harness?.models?.some((item) => item.credential_profile_id)
+        ? { ...harness, models: harness.models.filter((item) => !item.credential_profile_id || item.credential_profile_id === pin) } : harness;
     const accounts = envelope.accounts.filter((account) => !pin || account.credentialProfileId === pin);
     const gaps = accounts.filter((account) => !account.catalog);
     const error = gaps.map((account) => account.problem?.message || 'Account model list could not be read').join('; ')
@@ -524,16 +525,45 @@ export function modelsGapNote(harness, catalogKnown = true) {
         ? 'model list could not be read' : '';
 }
 
-export function sessionModelOptions(harness, currentModel, { catalogKnown = true } = {}) {
+/** Catalog evidence, per supplying account. Never rewrites the selected route. */
+export function sessionModelMatches(harness, model, { snapshot = null, pin = '' } = {}) {
+    const selected = String(model || '');
+    const claude = harness?.id === 'claude';
+    // Claude documents only this terminal modifier as case insensitive.
+    const spelling = (value) => claude ? String(value || '').replace(/\[1m\]$/i, '[1m]') : String(value || '');
+    const target = spelling(selected);
+    const base = claude && target.endsWith('[1m]') ? target.slice(0, -4) : '';
+    const usable = snapshot ? accountRows(snapshot).filter((account) => account.harness === harness?.id
+        && account.enabled !== false && account.status?.verification === 'passed').map((account) => account.profile_id) : null;
+    return (harness?.models || []).flatMap((entry) => {
+        const profile = String(entry?.credential_profile_id || '');
+        if (profile && ((pin && profile !== pin) || (usable && !usable.includes(profile)))) return [];
+        const id = spelling(entry?.id || entry?.value || entry);
+        const resolved = spelling(entry?.resolved_model);
+        const basis = id === target ? 'exact' : resolved && resolved === target ? 'resolved'
+            : base && (id === base || resolved === base) ? 'claude_1m_base' : '';
+        return basis ? [{ entry, basis, profile }] : [];
+    });
+}
+
+export const CLAUDE_BASE_QUALIFIER = 'Base model listed; access to the [1m] variant is checked by the engine at session start';
+
+export function sessionModelOptions(harness, currentModel, { catalogKnown = true, snapshot = null, pin = '' } = {}) {
     const models = harness?.models || [];
     const options = [
         { value: '', label: 'Engine default model' },
         ...catalogModelOptions(models),
     ];
-    if (currentModel && !options.some((option) => option.value === currentModel)) {
-        options.push({
+    if (currentModel) {
+        const matches = sessionModelMatches(harness, currentModel, { snapshot, pin });
+        const existing = options.find((option) => option.value === currentModel);
+        const baseOnly = matches.length && matches.every((match) => match.basis === 'claude_1m_base');
+        if (existing && baseOnly && harnessModelsKnown(harness, catalogKnown)) existing.label = `${currentModel} (base model listed; variant checked at start)`;
+        if (!existing) options.push({
             value: currentModel,
-            label: undiscoveredLabel(currentModel, harnessModelsKnown(harness, catalogKnown)),
+            label: harnessModelsKnown(harness, catalogKnown) && matches.length
+                ? `${currentModel}${matches.every((match) => match.basis === 'claude_1m_base') ? ' (base model listed; variant checked at start)' : ''}`
+                : undiscoveredLabel(currentModel, harnessModelsKnown(harness, catalogKnown)),
         });
     }
     return options;

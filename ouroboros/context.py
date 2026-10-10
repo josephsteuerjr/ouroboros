@@ -438,6 +438,7 @@ def build_runtime_section(env: Any, task: Dict[str, Any], *, ctx: Any = None, sc
             "artifact transport; do not use runtime_data/uploads as artifact transport"
         )
     try:
+        from ouroboros.search_routes import resolve_web_search_route
         from ouroboros.config import get_allow_mutative_subagents
         from ouroboros.contracts.task_constraint import VALID_WRITE_SURFACES
         from ouroboros.workspace_copies import workspace_copy_source_is_system
@@ -451,6 +452,7 @@ def build_runtime_section(env: Any, task: Dict[str, Any], *, ctx: Any = None, sc
             ),
             "write_surfaces": sorted(VALID_WRITE_SURFACES),
             "web_search_backend": runtime_setting("OUROBOROS_WEBSEARCH_BACKEND", "auto"),
+            "web_search_route": resolve_web_search_route(),
             "main_web_search": {
                 "mode": runtime_setting("OUROBOROS_MAIN_WEB_SEARCH", "off"),
                 "engine": runtime_setting("OUROBOROS_MAIN_WEB_SEARCH_ENGINE", "auto"),
