@@ -9,7 +9,7 @@ The manifest is the SSOT of the module→domain assignment (1:1, complete over t
 | domain | name | modules | proposed |
 |---|---|---:|---:|
 | D01 | Agent core & main loop | 44 | 0 |
-| D02 | LLM client, routing & providers | 40 | 0 |
+| D02 | LLM client, routing & providers | 42 | 0 |
 | D03 | Context assembly, fit & compaction | 15 | 0 |
 | D04 | Tool execution: registry, access & typed results | 22 | 0 |
 | D05 | Tool surfaces: files, code, shell, media, external | 33 | 0 |
@@ -28,7 +28,7 @@ The manifest is the SSOT of the module→domain assignment (1:1, complete over t
 | D18 | Launcher, packaging, platform & shared substrate | 23 | 0 |
 | D19 | Frozen contracts (ABI) | 11 | 0 |
 | D20 | Presence | 12 | 0 |
-| **total** | | **676** | **0** |
+| **total** | | **678** | **0** |
 
 ## Dependency direction matrix (strict, pinned)
 
@@ -65,10 +65,11 @@ Rows may import columns (`[graph].allowed`). `·` = forbidden direction.
 
 ## Hidden coupling (classified out of the strict graph)
 
-- lazy-only cross-domain pairs: **120**
+- lazy-only cross-domain pairs: **121**
   - D01->D08
   - D01->D10
   - D01->D11
+  - D02->D05
   - D02->D11
   - D03->D05
   - D03->D06
@@ -247,6 +248,7 @@ No function body (≥ 10 normalized lines) is shared verbatim across domains. Ne
 
 - `ouroboros/anthropic_native_custody.py`
 - `ouroboros/fallback_cooldown.py`
+- `ouroboros/image_preparation.py`
 - `ouroboros/llm.py`
 - `ouroboros/llm_anthropic.py`
 - `ouroboros/llm_attempt.py`
@@ -284,6 +286,7 @@ No function body (≥ 10 normalized lines) is shared verbatim across domains. Ne
 - `ouroboros/route_spec.py`
 - `ouroboros/send_clock.py`
 - `ouroboros/transport_custody.py`
+- `ouroboros/vision_image_limits.py`
 - `ouroboros/vision_routing.py`
 
 ### D03 — Context assembly, fit & compaction
