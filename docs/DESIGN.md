@@ -1092,6 +1092,8 @@ file (owner choice 1C/2A/3A/4A/5A/6A with mobile first-class).
   visible and finger-sized under a coarse pointer; a long name wraps to two lines
   and the card's dialog shows it whole. Open/Save succeed only when the desktop
   bridge says so; a copied link is a fallback, never reported as opened.
+  The photo's Copy to clipboard puts the image itself there or says it could
+  not (Open in new tab and Download stay); it never copies an address instead.
 - **The same view everywhere:** the sender's bubble, another tab and the replay
   after reload or restart render the one server view of each attachment. The
   stored text still names the files for the model; only the exact tail the web
