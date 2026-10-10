@@ -27,7 +27,8 @@ metadata; released 3.25 engines reject it with HTTP 400. Only that explicit
 HTTP status permits one plain `GET /v2/quota` fallback. Another refusal fails
 the facet; transport failures, 5xx and malformed success never cause a second
 request. Both responses use the same metadata checks. The fallback is passive,
-not a provider refresh. Accounts and other quota readers keep their plain GET.
+not a provider refresh. Other quota readers never send this selector: full
+Accounts status keeps its catalog-negotiated `view=resources` read or plain GET.
 
 ## Response contract
 
