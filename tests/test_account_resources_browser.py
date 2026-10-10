@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import json
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 
 import pytest
 
@@ -239,6 +240,52 @@ def test_timeout_before_receipt_survives_session_storage_loss_and_recovers_same_
     row.locator("[data-recover-reset]").click()
     expect(row).to_contain_text("Reset applied")
     assert ui["reset_calls"] == [original] * 3
+
+
+@pytest.mark.parametrize("scheme", ["http", "https"])
+@pytest.mark.parametrize("offer_id", ["opaque-grant", "opaque-refill"])
+def test_non_loopback_reset_keeps_original_request_after_reload(resources_ui, scheme, offer_id):
+    from playwright.sync_api import expect
+
+    ui = resources_ui
+    page = ui["page"]
+    fixture_url = ui["url"]
+    origin = f"{scheme}://ouroboros-browser.invalid"
+
+    def serve_fixture(route):
+        path = urlparse(route.request.url).path
+        if path.startswith("/api/"):
+            route.fallback()  # Existing synthetic API routes own every account action.
+        else:
+            route.fulfill(response=route.fetch(url=fixture_url + route.request.url[len(origin):]))
+
+    page.route(origin + "/**", serve_fixture)
+    ui["url"] = origin
+    page, row = open_accounts(ui, width=390)
+    assert page.evaluate("isSecureContext") is (scheme == "https")
+    assert page.evaluate("typeof crypto.randomUUID") == ("function" if scheme == "https" else "undefined")
+    row.locator("[data-resources]").click()
+    ui["reset_replies"].append("timeout")
+    row.locator(f'[data-resource-reset="{offer_id}"]').click()
+    expect(page.get_by_role("dialog")).to_have_count(1)
+    page.locator("[data-confirm-ok]").click()
+    expect(row).to_contain_text("Reset outcome is unconfirmed")
+    assert len(ui["reset_calls"]) == 1
+    original = ui["reset_calls"][0]
+    assert original[0] and original[1]["offer_id"] == offer_id and original[1]["target"] == TARGET
+    page.reload()
+    page.locator('[data-settings-tab="providers"]').click()
+    row.locator("[data-resources]").click()
+    expect(row).to_contain_text("Reset outcome is unconfirmed")
+    assert len(ui["reset_calls"]) == 1, "reload must not resend an unresolved request"
+    reply = {**ui["wire"]["receipt"], "request": original[1], "outcome": "no_credit", "resources": None}
+    ui["reset_replies"].append(reply)
+    row.locator("[data-recover-reset]").click()
+    expect(row).to_contain_text("No reset available")
+    assert ui["reset_calls"] == [original, original]
+    expect(page.get_by_role("dialog")).to_have_count(0)
+    frame_section(row.locator(".account-resource-panel"))
+    capture(page, f"resources-{scheme}-{offer_id}-same-request-recovered")
 
 
 def test_deliberate_refill_no_effect_keeps_lost_first_request_after_client_reopen(resources_ui):

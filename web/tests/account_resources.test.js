@@ -225,6 +225,59 @@ test('one shared confirmation authorizes new reset, cancel creates no key or ope
     assert.deepEqual(calls, [{ target, offer_id: 'opaque-refill' }]);
 });
 
+for (const nativeUuid of [true, false]) {
+    for (const offer of fixture.quota.resources[0].resets.value) {
+        test(`confirmed ${offer.kind} retains its generated key through lost-reply recovery (native UUID: ${nativeUuid})`, async () => {
+            const priorCrypto = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
+            let generated = 0;
+            Object.defineProperty(globalThis, 'crypto', { configurable: true,
+                value: nativeUuid ? { randomUUID: () => `native-request-${++generated}` } : {} });
+            const values = new Map(), calls = [];
+            const storage = () => ({ getItem: key => values.get(key), setItem: (key, value) => values.set(key, value) });
+            const grant = offer.grants?.[0] || null;
+            const request = { target, offer_id: offer.id, ...(grant ? { grant_id: grant.id } : {}) };
+            const fetchImpl = async (url, init) => {
+                const key = init.headers['Idempotency-Key'];
+                assert.ok(key);
+                assert.ok(JSON.parse(values.get('ouroboros.account-reset-requests'))
+                    .some(entry => entry.key === key && JSON.stringify(entry.request) === init.body),
+                'the original key and body must be saved before transport');
+                calls.push({ url, key, body: JSON.parse(init.body) });
+                if (calls.length === 1) throw new Error('lost response');
+                return response({ ...fixture.receipt, request, outcome: 'no_credit', resources: null });
+            };
+            let store = createClaudexorStatusStore({ doc: null, storage, fetchImpl });
+            try {
+                await confirmAccountReset(row, offer, grant, { store, dialogImpl: async () => false });
+                assert.equal(calls.length, 0);
+                assert.equal(values.size, 0);
+                assert.equal(generated, 0);
+                let confirmations = 0;
+                const confirm = () => { confirmations += 1; return true; };
+                await confirmAccountReset(row, offer, grant, { store, dialogImpl: confirm });
+                assert.equal(confirmations, 1);
+                assert.deepEqual(calls[0].body, request);
+                const original = calls[0];
+                assert.equal(store.resourceAction(target).key, original.key);
+                store.dispose();
+                store = createClaudexorStatusStore({ doc: null, storage, fetchImpl });
+                assert.equal(calls.length, 1, 'reopening must not resend a reset');
+                await store.resetAccount(request, { recover: true });
+                assert.deepEqual(calls[1], original);
+                assert.equal(generated, nativeUuid ? 1 : 0, 'recovery never mints a new key');
+                await confirmAccountReset(row, offer, grant, { store, dialogImpl: confirm });
+                assert.equal(confirmations, 2);
+                assert.notEqual(calls[2].key, original.key, 'a deliberate new intent has its own key');
+                assert.deepEqual(calls[2].body, request);
+            } finally {
+                store.dispose();
+                if (priorCrypto) Object.defineProperty(globalThis, 'crypto', priorCrypto);
+                else delete globalThis.crypto;
+            }
+        });
+    }
+}
+
 const atTime = (at, used, count) => {
     const envelope = structuredClone(fixture.quota);
     for (const quota of envelope.snapshots) {

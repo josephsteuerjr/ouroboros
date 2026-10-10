@@ -934,9 +934,10 @@ export function createClaudexorStatusStore({
         const target = request.target;
         const prior = resourceAction(target);
         if (prior.busy) return Promise.resolve(null);
-        // Recovery never reselects an offer/grant or generates another key.
+        // Recovery reuses its key; new opaque keys also work on plain HTTP LAN clients.
         const entry = recover ? (key ? resetReferences(prior).find(entry => entry.key === key) : prior)
-            : { request: structuredClone(request), key: key || globalThis.crypto.randomUUID(), refreshed: false,
+            : { request: structuredClone(request), key: key || globalThis.crypto?.randomUUID?.()
+                || `account-reset-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`, refreshed: false,
                 earlierRequests: resetReferences(prior).filter(retainResetRequest).map(resetReference) };
         if (!entry?.request || !entry.key) return Promise.resolve(null);
         entry.busy = true;
