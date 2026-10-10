@@ -699,9 +699,8 @@ def preset_saving(preset: SubscriptionInstallPreset, catalog: Mapping[str, Any])
 
 def review_rows_on_main(catalog: Mapping[str, Any], settings: Mapping[str, Any]) -> Dict[str, Any]:
     """Finishing without agent defaults while subscriptions are connected: every marked row runs
-    on Main, the count kept, keeping its identity and effort (a session's compound effort becomes
-    the row effort; a Main whose model name carries a level keeps that level instead), with
-    Main's account pin and processing; unmarked rows are untouched."""
+    on Main, the count kept, keeping its identity and effort (a session's compound effort becomes the
+    row effort; a model-named Main keeps its name's level), with Main's pin and processing."""
     from ouroboros.model_slots import MODEL_ACCOUNTS_KEY, model_role_option, resolve_processing_preference
     from ouroboros.provider_models import provider_for_model
     from ouroboros.route_spec import ROUTE_KIND_AGENT_SESSION, RouteSpec, api_model_named_effort, compound_session_effort
@@ -718,9 +717,8 @@ def review_rows_on_main(catalog: Mapping[str, Any], settings: Mapping[str, Any])
 
     def on_main(item: Mapping[str, Any]) -> Dict[str, Any]:
         old = item.get("route") or {}
-        effort = "" if main_named else (
-            item.get("effort") or (compound_session_effort(RouteSpec(ROUTE_KIND_AGENT_SESSION, str(old.get("target_id") or "")))
-                                   if old.get("kind") == ROUTE_KIND_AGENT_SESSION else ""))
+        effort = "" if main_named else (item.get("effort") or (compound_session_effort(RouteSpec(
+            ROUTE_KIND_AGENT_SESSION, str(old.get("target_id") or ""))) if old.get("kind") == ROUTE_KIND_AGENT_SESSION else ""))
         kept = ("subagent_id", "recommended_use", "enabled", "review_eligible", "minted_from")
         return {**{key: item[key] for key in kept if key in item},
                 "route": {"kind": "api_model", "target_id": main, **({"credential_profile_id": profile} if profile else {})},

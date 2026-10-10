@@ -32,6 +32,7 @@
  * @property {string} runtime_mode
  * @property {string} context_mode
  * @property {boolean} context_mode_auto_low  // frozen compatibility field; always false
+ * @property {EffortRange} effort_range  // the owner's effort range (POST /api/owner/effort-range), the tolerant read
  * @property {string} safety_mode
  * @property {boolean} skills_repo_configured
  * @property {boolean} github_token_configured
@@ -832,6 +833,17 @@
  * @typedef {Object} OwnerContextModeResponse
  * @property {boolean} ok
  * @property {string} context_mode
+ */
+
+/**
+ * @typedef {Object} EffortRange  min ≤ recommended ≤ max, each an EFFORT_SCALE tier (the tolerant read)
+ * @property {string} min
+ * @property {string} recommended
+ * @property {string} max
+ *
+ * @typedef {Object} OwnerEffortRangeResponse
+ * @property {boolean} ok
+ * @property {EffortRange} effort_range
  */
 
 /**

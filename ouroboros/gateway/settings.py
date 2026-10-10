@@ -1210,6 +1210,21 @@ def _network_settings_error(request: Request, current: dict, old_settings: dict)
     return None
 
 
+def _effort_range_tiers(body: Dict[str, Any]) -> tuple[Dict[str, Any], str]:
+    """Lower-case each supplied effort-range key (benchmarks and Cyber write TASK here) and
+    name the first non-tier; order is not judged on this path, the read is tolerant
+    (`POST /api/owner/effort-range` is the strict writer)."""
+    from ouroboros.settings_scales import EFFORT_RANGE_KEYS, EFFORT_SCALE
+
+    for effort_key in (key for key in EFFORT_RANGE_KEYS if key in body):
+        tier = str(body.get(effort_key) or "").strip().lower()
+        if tier not in EFFORT_SCALE:
+            return body, f"{effort_key} must be one of: {', '.join(EFFORT_SCALE)}."
+        body = dict(body)
+        body[effort_key] = tier
+    return body, ""
+
+
 def _api_settings_post_locked(request: Request, body: Any) -> JSONResponse:
     # Everything below the write is a POST-commit step. The broad handler at the
     # bottom used to answer a failure there with "400, nothing saved" while the
@@ -1266,6 +1281,9 @@ def _api_settings_post_locked(request: Request, body: Any) -> JSONResponse:
                 return unsaved_error(f"{bound_key} must be a positive integer or 'unlimited'.", 400)
             body = dict(body)
             body[bound_key] = UNLIMITED if bound is None else bound
+        body, effort_error = _effort_range_tiers(body)
+        if effort_error:
+            return unsaved_error(effort_error, 400)
         # The catalog is judged as THIS save produces it: twins, then the review pool.
         subagents_key = "OUROBOROS_SUBAGENTS"
         catalog_saved = subagents_key in body and body.get(subagents_key) not in (None, "")

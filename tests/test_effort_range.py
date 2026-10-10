@@ -722,3 +722,133 @@ def test_review_rows_on_a_named_main_keep_the_names_level(monkeypatch):
     named = review_rows_on_main(catalog, {"CLAUDEXOR_MODELS_ENABLED": "true",
                                           "OUROBOROS_MODEL": "claudexor::cursor=grok-4.7-max-fast"})
     assert [row.get("effort") for row in named["items"]] == [None, None]
+
+
+# --- the gateway: the owner endpoint, the state field, the generic save ----------------------
+
+
+def _effort_app(isolated_settings):
+    from starlette.applications import Starlette
+    from starlette.routing import Route
+
+    from ouroboros.gateway.owner_effort import api_owner_effort_range
+
+    app = Starlette(routes=[Route("/api/owner/effort-range", endpoint=api_owner_effort_range, methods=["POST"])])
+    app.state.drive_root = isolated_settings.parent
+    return app
+
+
+def test_the_owner_endpoint_writes_the_triple_atomically_projects_it_and_audits(monkeypatch, tmp_path):
+    from starlette.testclient import TestClient
+
+    from ouroboros import config as cfg
+    from ouroboros.gateway.state import effort_range as state_effort_range
+    from tests.test_owner_settings_write_seam import isolated_settings as _fixture  # noqa: F401
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    settings_path = data_dir / "settings.json"
+    monkeypatch.setattr(cfg, "DATA_DIR", data_dir, raising=True)
+    monkeypatch.setattr(cfg, "SETTINGS_PATH", settings_path, raising=True)
+    settings_path.write_text(json.dumps({"OUROBOROS_EFFORT_TASK": "high", "OUROBOROS_MODEL": "openai/x"}), encoding="utf-8")
+    _env(monkeypatch)
+    client = TestClient(_effort_app(settings_path))
+
+    ok = client.post("/api/owner/effort-range", json={"min": "none", "recommended": "medium", "max": "ultra"})
+    assert ok.status_code == 200, ok.text
+    assert ok.json() == {"ok": True, "effort_range": {"min": "none", "recommended": "medium", "max": "ultra"}}
+    stored = json.loads(settings_path.read_text(encoding="utf-8"))
+    assert (stored["OUROBOROS_EFFORT_MIN"], stored["OUROBOROS_EFFORT_TASK"], stored["OUROBOROS_EFFORT_MAX"]) == ("none", "medium", "ultra")
+    assert stored["OUROBOROS_MODEL"] == "openai/x"  # the rest of the document is untouched
+    import os
+
+    assert (os.environ["OUROBOROS_EFFORT_MIN"], os.environ["OUROBOROS_EFFORT_MAX"]) == ("none", "ultra")  # same-lock projection
+    assert state_effort_range() == {"min": "none", "recommended": "medium", "max": "ultra"}  # GET /api/state reads it
+    events = [json.loads(line) for line in (data_dir / "logs" / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+    audit = [e for e in events if e.get("type") == "owner_api_action" and e.get("action") == "effort_range"]
+    assert audit and audit[-1]["effort_range"]["max"] == "ultra" and audit[-1]["previous_effort_range"]["recommended"] == "high"
+    # Every tier is accepted, minimal included; the owner's TASK stays the recommended key.
+    assert client.post("/api/owner/effort-range", json={"min": "minimal", "recommended": "minimal", "max": "low"}).status_code == 200
+    assert json.loads(settings_path.read_text(encoding="utf-8"))["OUROBOROS_EFFORT_TASK"] == "minimal"
+
+
+@pytest.mark.parametrize("body, fragment", [
+    ({"min": "low", "recommended": "turbo", "max": "high"}, "'recommended' must be one of"),
+    ({"min": "high", "recommended": "medium", "max": "ultra"}, "ordered min"),
+    ({"min": "low", "recommended": "high", "max": "medium"}, "ordered min"),
+    ({"recommended": "medium"}, "'min' must be one of"),
+    (["not", "an", "object"], "JSON body must be an object"),
+])
+def test_the_owner_endpoint_refuses_an_incomplete_or_unordered_triple(monkeypatch, tmp_path, body, fragment):
+    from starlette.testclient import TestClient
+
+    from ouroboros import config as cfg
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    settings_path = data_dir / "settings.json"
+    monkeypatch.setattr(cfg, "DATA_DIR", data_dir, raising=True)
+    monkeypatch.setattr(cfg, "SETTINGS_PATH", settings_path, raising=True)
+    resp = TestClient(_effort_app(settings_path)).post("/api/owner/effort-range", json=body)
+    assert resp.status_code == 400, resp.text
+    assert resp.json()["saved"] is False and resp.json()["code"] == "effort_range_invalid" and fragment in resp.json()["error"]
+    assert not settings_path.exists()
+
+
+def test_the_owner_endpoint_shares_the_write_seam_refusals(monkeypatch, tmp_path):
+    from starlette.testclient import TestClient
+
+    from ouroboros import config as cfg
+    from tests.test_owner_settings_write_seam import _foreign_lock
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    settings_path = data_dir / "settings.json"
+    monkeypatch.setattr(cfg, "DATA_DIR", data_dir, raising=True)
+    monkeypatch.setattr(cfg, "SETTINGS_PATH", settings_path, raising=True)
+    with _foreign_lock(settings_path):
+        resp = TestClient(_effort_app(settings_path)).post(
+            "/api/owner/effort-range", json={"min": "low", "recommended": "medium", "max": "high"})
+    assert resp.status_code == 503 and resp.json()["code"] == "settings_locked" and resp.json()["saved"] is False
+    assert not settings_path.exists()
+
+
+def test_the_generic_save_accepts_a_tier_per_key_and_refuses_anything_else(monkeypatch, tmp_path):
+    from starlette.testclient import TestClient
+
+    from ouroboros import config as cfg
+    from tests.test_owner_settings_write_seam import _settings_app
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    settings_path = data_dir / "settings.json"
+    monkeypatch.setattr(cfg, "DATA_DIR", data_dir, raising=True)
+    monkeypatch.setattr(cfg, "SETTINGS_PATH", settings_path, raising=True)
+    client = TestClient(_settings_app(monkeypatch, settings_path))
+    refused = client.post("/api/settings", json={"OUROBOROS_EFFORT_TASK": "turbo"})
+    assert refused.status_code == 400 and "OUROBOROS_EFFORT_TASK must be one of" in refused.json()["error"]
+    assert not settings_path.exists()
+    # The order is not judged here (the read is tolerant): TASK above MAX saves, and reads as a widened top.
+    saved = client.post("/api/settings", json={"OUROBOROS_EFFORT_TASK": " ULTRA ", "OUROBOROS_EFFORT_MAX": "high"})
+    assert saved.status_code == 200, saved.text
+    stored = json.loads(settings_path.read_text(encoding="utf-8"))
+    assert (stored["OUROBOROS_EFFORT_TASK"], stored["OUROBOROS_EFFORT_MAX"]) == ("ultra", "high")
+    assert effort_range(stored) == {"min": "low", "recommended": "ultra", "max": "ultra"}
+
+
+def test_the_endpoint_is_indexed_mirrored_and_owner_only_for_the_browser():
+    from types import SimpleNamespace
+
+    from ouroboros.browser_policy import _is_effort_range_owner_post
+    from ouroboros.gateway.contracts import EffortRange, OwnerEffortRangeResponse, StateResponse
+    from ouroboros.gateway.endpoint_index import HTTP_ENDPOINTS
+
+    assert "POST /api/owner/effort-range" in HTTP_ENDPOINTS
+    from typing import get_type_hints
+
+    assert set(EffortRange.__annotations__) == {"min", "recommended", "max"}
+    assert get_type_hints(OwnerEffortRangeResponse)["effort_range"] is EffortRange
+    assert get_type_hints(StateResponse)["effort_range"] is EffortRange
+    assert _is_effort_range_owner_post(SimpleNamespace(method="POST", url="http://127.0.0.1:8765/api/owner/effort-range"))
+    assert _is_effort_range_owner_post(SimpleNamespace(method="POST", url="http://127.0.0.1:8765/api/owner/effort%2Drange/"))
+    assert not _is_effort_range_owner_post(SimpleNamespace(method="GET", url="http://127.0.0.1:8765/api/owner/effort-range"))
